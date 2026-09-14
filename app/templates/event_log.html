@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"primary":"#264a42","outline-variant":"#c1c8c5","on-background":"#151c24","on-secondary":"#ffffff","on-primary-fixed":"#00201a","surface-container":"#e8eefa","tertiary-fixed-dim":"#bac8d8","surface":"#f8f9ff","background":"#f8f9ff","secondary-fixed-dim":"#ffb4a5","surface-dim":"#d4dae6","on-tertiary":"#ffffff","on-secondary-fixed-variant":"#842514","primary-fixed":"#c3ebdf","inverse-surface":"#2a3139","on-surface":"#151c24","surface-container-highest":"#dce3ee","on-primary-container":"#b5dcd0","error-container":"#ffdad6","surface-container-high":"#e2e9f4","on-secondary-container":"#711708","secondary-container":"#fd7e65","on-secondary-fixed":"#3f0400","error":"#ba1a1a","tertiary-container":"#505d6b","on-error-container":"#93000a","on-tertiary-container":"#c8d6e6","tertiary":"#394553","primary-container":"#3e6259","on-tertiary-fixed":"#101d29","secondary":"#a43c29","surface-variant":"#dce3ee","on-primary-fixed-variant":"#294d45","outline":"#717976","surface-container-lowest":"#ffffff","tertiary-fixed":"#d6e4f5","surface-tint":"#41655c","on-surface-variant":"#414846","inverse-on-surface":"#eaf1fc","surface-bright":"#f8f9ff","on-error":"#ffffff","surface-container-low":"#eef4ff","inverse-primary":"#a8cfc3","on-tertiary-fixed-variant":"#3b4855","on-primary":"#ffffff","primary-fixed-dim":"#a8cfc3","secondary-fixed":"#ffdad3"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"space-xs":"0.25rem","space-sm":"0.5rem","space-md":"0.75rem","space-xl":"2rem","space-lg":"1.25rem","gutter":"1rem","margin":"2rem","margin-mobile":"1rem","gutter-mobile":"0.5rem"},"fontFamily":{"headline-xl-mobile":["\"Source Serif 4\""],"headline-md":["\"Source Serif 4\""],"headline-xl":["\"Source Serif 4\""],"body-sm":["JetBrains Mono"],"body-md":["JetBrains Mono"],"numeric-data":["JetBrains Mono"],"label-sm":["JetBrains Mono"],"label-lg":["JetBrains Mono"],"body-lg":["JetBrains Mono"],"headline-sm":["\"Source Serif 4\""],"label-md":["JetBrains Mono"],"headline-lg":["\"Source Serif 4\""]},"fontSize":{"headline-xl-mobile":["28px",{"lineHeight":"36px","letterSpacing":"-0.01em","fontWeight":"600"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"headline-xl":["36px",{"lineHeight":"44px","letterSpacing":"-0.015em","fontWeight":"600"}],"body-sm":["11px",{"lineHeight":"16px","fontWeight":"400"}],"body-md":["13px",{"lineHeight":"20px","fontWeight":"400"}],"numeric-data":["13px",{"lineHeight":"18px","fontWeight":"500"}],"label-sm":["10px",{"lineHeight":"12px","fontWeight":"500"}],"label-lg":["12px",{"lineHeight":"16px","fontWeight":"600"}],"body-lg":["14px",{"lineHeight":"22px","fontWeight":"400"}],"headline-sm":["16px",{"lineHeight":"24px","fontWeight":"600"}],"label-md":["11px",{"lineHeight":"14px","fontWeight":"500"}],"headline-lg":["26px",{"lineHeight":"32px","letterSpacing":"-0.01em","fontWeight":"600"}]}}}}</script></head><body class="bg-surface font-body-md text-body-md text-on-surface antialiased"><header class="fixed top-0 w-full z-50 bg-surface-container-lowest border-b border-outline-variant"><div class="h-16 w-full px-margin flex items-center justify-between"><div class="flex items-center gap-space-md"><img alt="Keel Ledger Logo" class="h-8 w-auto object-contain" src="/static/logo.svg"/><span class="font-headline-sm text-headline-sm tracking-tight text-on-surface uppercase">Keel</span><span class="h-4 w-px bg-outline-variant"></span><div class="flex items-center gap-space-md font-label-sm text-label-sm text-on-surface-variant"><span class="flex items-center gap-space-xs"><span class="text-outline">env:</span><span class="text-on-surface font-semibold">production-useast1</span></span><span class="text-outline-variant">/</span><span class="flex items-center gap-space-xs"><span class="text-outline">seq:</span><span class="font-numeric-data text-numeric-data text-on-surface">8,492,104</span></span></div></div><nav class="hidden lg:flex items-center h-full gap-space-lg" data-active-classes="border-b-2 border-primary text-on-surface font-semibold"><a class="h-full flex items-center px-space-xs font-label-lg text-label-lg text-on-surface-variant hover:text-on-surface transition-colors" data-path="overview" href="/">Overview</a><a class="h-full flex items-center px-space-xs font-label-lg text-label-lg text-on-surface-variant hover:text-on-surface transition-colors" data-path="transaction-detail" href="/transaction-detail">Transaction Detail</a><a class="h-full flex items-center px-space-xs font-label-lg text-label-lg text-on-surface-variant hover:text-on-surface transition-colors" data-path="post-transaction" href="/post-transaction">Post Transaction</a><a aria-current="page" class="h-full flex items-center px-space-xs transition-colors border-b-2 border-primary text-on-surface font-semibold" data-path="event-log" href="/event-log">Event Log</a></nav><div class="flex items-center gap-space-md"><div class="hidden sm:flex items-center gap-space-sm border border-outline-variant bg-surface-container-lowest px-space-sm py-1"><span class="w-2 h-2 bg-primary-container inline-block"></span><span class="font-label-sm text-label-sm text-primary">[BALANCED] invariant: balanced (0.00 delta)</span></div><div class="hidden md:flex flex-col text-right font-label-sm text-label-sm leading-none gap-0.5"><span class="text-on-surface font-medium">usr_ops_0921</span><span class="font-numeric-data text-numeric-data text-outline">14:28:49.022 UTC</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-16 bg-surface min-h-screen"><div class="flex flex-col w-full">
+<!-- Folio Header / Ledger Title Banner -->
+<section class="w-full bg-surface-container-lowest border-b border-outline-variant px-margin py-space-lg">
+<div class="flex flex-col lg:flex-row lg:items-end justify-between gap-space-md">
+<div>
+<div class="flex items-center gap-space-xs font-label-sm text-label-sm text-outline mb-1 uppercase tracking-wider">
+<span>Audit Stream Terminal</span>
+<span>/</span>
+<span>Crypto-Signed Sequence</span>
+<span>/</span>
+<span class="text-primary font-semibold">Live Mode</span>
+</div>
+<h1 class="font-headline-xl text-headline-xl text-on-surface tracking-tight leading-none">
+          Immutable Event Stream
+        </h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-2">
+<span class="text-outline">partition:</span> <span class="font-semibold text-on-surface">ledger.journal.events</span>
+<span class="text-outline-variant mx-1">|</span>
+<span class="text-outline">total_events:</span> <span class="font-numeric-data text-numeric-data text-on-surface font-semibold">8,492,104</span>
+<span class="text-outline-variant mx-1">|</span>
+<span class="text-outline">state:</span> <span class="text-primary font-semibold font-label-sm text-label-sm">[STRICTLY_ORDERED_APPEND_ONLY]</span>
+</p>
+</div>
+<!-- Real-time Status Card & Stream Poller Indicator -->
+<div class="flex flex-col sm:flex-row sm:items-center gap-space-sm font-label-sm text-label-sm">
+<div class="border border-outline-variant bg-surface px-space-md py-2 flex items-center justify-between gap-space-md">
+<div class="flex items-center gap-2">
+<span class="inline-block w-2 h-2 rounded-none bg-primary animate-pulse"></span>
+<span class="text-outline">STREAM_HEAD:</span>
+<span class="font-numeric-data text-numeric-data text-on-surface font-semibold" id="stream-head-counter">8,492,104</span>
+</div>
+<span class="text-primary font-semibold">[CONNECTED] (0.2s poll)</span>
+</div>
+<button class="bg-surface-container border border-outline-variant text-on-surface hover:bg-surface-container-high px-space-md py-2 font-label-lg text-label-lg transition-colors flex items-center justify-center gap-1" id="btn-pause-stream">
+<span class="material-symbols-outlined text-[15px] leading-none">pause</span>
+<span>FREEZE TAPE</span>
+</button>
+</div>
+</div>
+</section>
+<!-- Control Folio / Filter Matrix -->
+<section class="w-full bg-surface-container-low border-b border-outline-variant px-margin py-space-md">
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-space-md items-end">
+<div class="lg:col-span-3 flex flex-col gap-1">
+<label class="font-label-sm text-label-sm text-outline flex items-center justify-between" for="seq-seek">
+<span>SEQUENCE JUMP (SEQ#)</span>
+<span class="text-on-surface-variant font-numeric-data text-numeric-data">RANGE: 1..HEAD</span>
+</label>
+<div class="relative flex items-center">
+<span class="absolute left-2 font-label-sm text-label-sm text-outline pointer-events-none">#</span>
+<input class="w-full bg-surface-container-lowest border border-outline-variant text-on-surface font-numeric-data text-numeric-data pl-6 pr-2 py-1.5 focus:outline-none focus:border-on-surface" id="seq-seek" placeholder="8492104" type="text" value="8492104"/>
+</div>
+</div>
+<div class="lg:col-span-3 flex flex-col gap-1">
+<label class="font-label-sm text-label-sm text-outline" for="seek-time">SEEK TIMESTAMP (UTC)</label>
+<input class="w-full bg-surface-container-lowest border border-outline-variant text-on-surface font-numeric-data text-numeric-data px-2 py-1.5 focus:outline-none focus:border-on-surface" id="seek-time" placeholder="YYYY-MM-DDTHH:MM:SS" type="text" value="2025-05-18T14:42:01"/>
+</div>
+<div class="lg:col-span-3 flex flex-col gap-1">
+<label class="font-label-sm text-label-sm text-outline" for="filter-type">EVENT TYPE FILTER</label>
+<select class="w-full bg-surface-container-lowest border border-outline-variant text-on-surface font-label-md text-label-md px-2 py-1.5 focus:outline-none focus:border-on-surface rounded-none" id="filter-type">
+<option value="ALL">ALL_EVENT_TYPES (SHOW ALL)</option>
+<option value="JOURNAL_POSTED">JOURNAL_POSTED</option>
+<option value="ACCOUNT_FROZEN">ACCOUNT_FROZEN</option>
+<option value="EXCHANGE_RATE_PUBLISHED">EXCHANGE_RATE_PUBLISHED</option>
+<option value="TRANSACTION_REJECTED">TRANSACTION_REJECTED</option>
+</select>
+</div>
+<div class="lg:col-span-2 flex flex-col gap-1">
+<label class="font-label-sm text-label-sm text-outline" for="filter-actor">ACTOR / ORIGIN</label>
+<input class="w-full bg-surface-container-lowest border border-outline-variant text-on-surface font-body-sm text-body-sm px-2 py-1.5 focus:outline-none focus:border-on-surface" id="filter-actor" placeholder="service:*, user:*" type="text"/>
+</div>
+<div class="lg:col-span-1 flex gap-1">
+<button class="w-full bg-primary text-on-primary hover:bg-primary-container border border-primary font-label-lg text-label-lg py-1.5 transition-colors" id="btn-apply-filters">
+          SEEK
+        </button>
+</div>
+</div>
+</section>
+<!-- Timeline Tape Body -->
+<section class="w-full px-margin py-space-lg">
+<div class="flex flex-col lg:flex-row gap-space-lg items-start">
+<!-- Main Audit Continuous Tape (Left Folio: 8 Cols) -->
+<div class="w-full lg:w-3/4 flex flex-col">
+<!-- Cryptographic Continuity Header -->
+<div class="flex items-center justify-between border-t border-b border-on-surface bg-surface-container-lowest px-space-md py-2 font-label-sm text-label-sm">
+<div class="flex items-center gap-2">
+<span class="text-outline">TOPOLOGICAL ORDER:</span>
+<span class="text-on-surface font-semibold">DESCENDING (STREAM HEAD → GENESIS)</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-outline">MERKLE_ROOT:</span>
+<span class="font-numeric-data text-numeric-data text-on-surface">6a80d4f2...33c9</span>
+<span class="text-primary font-semibold">[VERIFIED]</span>
+</div>
+</div>
+<!-- Ledger Rail & Chronological Stream Items -->
+<div class="relative border-l border-outline-variant ml-4 sm:ml-6 pl-4 sm:pl-8 space-y-space-md py-space-md" id="event-stream-container">
+<!-- Item 1: Seq #8,492,104 -->
+<article class="relative bg-surface-container-lowest border border-outline-variant p-space-md transition-colors hover:border-on-surface" data-event-type="JOURNAL_POSTED">
+<!-- Timeline Anchor Marker -->
+<div class="absolute -left-[21px] sm:-left-[37px] top-4 w-2.5 h-2.5 bg-primary border-2 border-surface"></div>
+<div class="flex flex-wrap items-center justify-between gap-2 border-b border-outline-variant pb-2 mb-3">
+<div class="flex flex-wrap items-center gap-space-sm font-label-sm text-label-sm">
+<span class="border border-on-surface bg-inverse-surface text-inverse-on-surface px-1.5 py-0.5 font-numeric-data text-numeric-data font-semibold">#8,492,104</span>
+<span class="border border-primary text-primary px-1.5 py-0.5 font-semibold tracking-wider">[JOURNAL_POSTED]</span>
+<span class="font-numeric-data text-numeric-data text-outline">2025-05-18 14:42:01.002 UTC</span>
+</div>
+<div class="font-label-sm text-label-sm text-outline">
+<span>actor:</span> <span class="text-on-surface font-semibold">service: settlement-worker-03</span>
+</div>
+</div>
+<!-- Event Details Body -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md mb-3 font-body-sm text-body-sm">
+<div class="space-y-1">
+<div class="text-outline">TARGET ENTITY:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface font-semibold">tx_01HX9J9914</div>
+<div class="text-on-surface-variant mt-1">Delta: <span class="font-numeric-data text-numeric-data text-primary font-semibold">$45,000.00 USD</span> (2 Dr, 2 Cr balanced)</div>
+</div>
+<div class="space-y-1 md:text-right">
+<div class="text-outline">CRYPTOGRAPHIC SEAL:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface">sha256:e14b...01 <span class="text-primary font-semibold">[VALID]</span></div>
+<div class="text-outline font-label-sm text-label-sm">prev_hash: c7a8...92 • height: 8492104</div>
+</div>
+</div>
+<!-- Raw Schema Payload Accordion -->
+<div class="border border-outline-variant bg-surface">
+<button class="w-full flex items-center justify-between px-3 py-1.5 text-left font-label-sm text-label-sm text-on-surface hover:bg-surface-container-high transition-colors" onclick="togglePayload('payload-1', this)" type="button">
+<span class="flex items-center gap-1 font-semibold">
+<span class="material-symbols-outlined text-[14px]">code</span>
+                  RAW EVENT SCHEMA / CANONICAL PAYLOAD
+                </span>
+<span class="font-label-sm text-label-sm text-outline toggle-indicator">[+] EXPAND JSON</span>
+</button>
+<div class="hidden p-3 border-t border-outline-variant bg-surface-container-lowest font-numeric-data text-numeric-data text-body-sm overflow-x-auto" id="payload-1">
+<pre class="text-on-surface leading-relaxed"><code>{
+  "event_id": "evt_01HX9JA78MKB001",
+  "sequence": 8492104,
+  "timestamp": "2025-05-18T14:42:01.002Z",
+  "type": "JOURNAL_POSTED",
+  "actor": "service:settlement-worker-03",
+  "journal_id": "tx_01HX9J9914",
+  "currency": "USD",
+  "entries": [
+    {"account": "1010-CASH-OPERATING", "direction": "DEBIT", "amount": "45000.00"},
+    {"account": "2010-ACCOUNTS-PAYABLE", "direction": "CREDIT", "amount": "45000.00"}
+  ],
+  "hash_prev": "c7a8b341f712bb9210d32f990a44bfec0901e129881023d87042be0199201492",
+  "hash_curr": "e14ba790382ff1904a431c900eefd8902095d31481b2a95c991204ebfa410901",
+  "signature": "MEQCIFq912e7Y/HkO1mB9Uv83QcKp..."
+}</code></pre>
+</div>
+</div>
+</article>
+<!-- Item 2: Seq #8,492,103 -->
+<article class="relative bg-surface-container-lowest border border-outline-variant p-space-md transition-colors hover:border-on-surface" data-event-type="ACCOUNT_FROZEN">
+<div class="absolute -left-[21px] sm:-left-[37px] top-4 w-2.5 h-2.5 bg-outline border-2 border-surface"></div>
+<div class="flex flex-wrap items-center justify-between gap-2 border-b border-outline-variant pb-2 mb-3">
+<div class="flex flex-wrap items-center gap-space-sm font-label-sm text-label-sm">
+<span class="border border-outline bg-surface-container-high text-on-surface px-1.5 py-0.5 font-numeric-data text-numeric-data font-semibold">#8,492,103</span>
+<span class="border border-outline text-on-surface-variant px-1.5 py-0.5 font-semibold tracking-wider">[ACCOUNT_FROZEN]</span>
+<span class="font-numeric-data text-numeric-data text-outline">2025-05-18 14:41:48.810 UTC</span>
+</div>
+<div class="font-label-sm text-label-sm text-outline">
+<span>actor:</span> <span class="text-on-surface font-semibold">user: compliance_officer_4</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md font-body-sm text-body-sm">
+<div class="space-y-1">
+<div class="text-outline">TARGET ACCOUNT:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface font-semibold">acc_2090_escrow_hold</div>
+<div class="text-on-surface mt-1 italic">“Regulatory hold per OFAC advisory memo #2025-A11”</div>
+</div>
+<div class="space-y-1 md:text-right">
+<div class="text-outline">INVARIANT IMPACT:</div>
+<div class="text-on-surface">Posting suspended • Ledger locked</div>
+<div class="font-numeric-data text-numeric-data text-outline">sha256:c7a8...92 <span class="text-primary font-semibold">[VALID]</span></div>
+</div>
+</div>
+</article>
+<!-- Item 3: Seq #8,492,102 -->
+<article class="relative bg-surface-container-lowest border border-outline-variant p-space-md transition-colors hover:border-on-surface" data-event-type="EXCHANGE_RATE_PUBLISHED">
+<div class="absolute -left-[21px] sm:-left-[37px] top-4 w-2.5 h-2.5 bg-outline border-2 border-surface"></div>
+<div class="flex flex-wrap items-center justify-between gap-2 border-b border-outline-variant pb-2 mb-3">
+<div class="flex flex-wrap items-center gap-space-sm font-label-sm text-label-sm">
+<span class="border border-outline bg-surface-container-high text-on-surface px-1.5 py-0.5 font-numeric-data text-numeric-data font-semibold">#8,492,102</span>
+<span class="border border-outline text-on-surface-variant px-1.5 py-0.5 font-semibold tracking-wider">[EXCHANGE_RATE_PUBLISHED]</span>
+<span class="font-numeric-data text-numeric-data text-outline">2025-05-18 14:40:15.549 UTC</span>
+</div>
+<div class="font-label-sm text-label-sm text-outline">
+<span>actor:</span> <span class="text-on-surface font-semibold">oracle: reuters-ecb-feed</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md font-body-sm text-body-sm">
+<div class="space-y-1">
+<div class="text-outline">ORACLE PAIR SPEC:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface font-semibold">rate_pair: EUR/USD = 1.084200</div>
+<div class="text-outline font-label-sm text-label-sm">source_timestamp: 2025-05-18T14:40:00Z</div>
+</div>
+<div class="space-y-1 md:text-right">
+<div class="text-outline">FEED ATTESTATION:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface">ed25519:3b04...99 <span class="text-primary font-semibold">[VERIFIED]</span></div>
+<div class="font-numeric-data text-numeric-data text-outline">sha256:92fd...aa</div>
+</div>
+</div>
+</article>
+<!-- Item 4: Seq #8,492,101 (REJECTED / VOID EVENT) -->
+<article class="relative bg-error-container/30 border border-secondary p-space-md transition-colors" data-event-type="TRANSACTION_REJECTED">
+<div class="absolute -left-[21px] sm:-left-[37px] top-4 w-2.5 h-2.5 bg-secondary border-2 border-surface"></div>
+<div class="flex flex-wrap items-center justify-between gap-2 border-b border-secondary/30 pb-2 mb-3">
+<div class="flex flex-wrap items-center gap-space-sm font-label-sm text-label-sm">
+<span class="border border-secondary bg-secondary text-on-secondary px-1.5 py-0.5 font-numeric-data text-numeric-data font-semibold">#8,492,101</span>
+<span class="border border-secondary text-secondary px-1.5 py-0.5 font-semibold tracking-wider">[!] [TRANSACTION_REJECTED]</span>
+<span class="font-numeric-data text-numeric-data text-outline">2025-05-18 14:38:00.119 UTC</span>
+</div>
+<div class="font-label-sm text-label-sm text-secondary">
+<span>actor:</span> <span class="font-semibold">service: transaction-gateway-01</span>
+</div>
+</div>
+<div class="space-y-2 font-body-sm text-body-sm">
+<div class="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+<div>
+<span class="text-outline">REJECTED ENTITY:</span>
+<span class="font-numeric-data text-numeric-data text-secondary font-semibold ml-2">attempt_tx_01HX9J8810</span>
+</div>
+<span class="font-label-sm text-label-sm text-secondary font-semibold uppercase">Ledger contamination prevented</span>
+</div>
+<!-- Explicit Audit Error Box -->
+<div class="border border-secondary/40 bg-surface-container-lowest p-space-sm font-numeric-data text-numeric-data text-secondary">
+<div class="font-semibold">REJECTION_CODE: ERR_DOUBLE_ENTRY_IMBALANCE</div>
+<div class="text-on-surface mt-0.5">Debits ($10,000.00) != Credits ($9,950.00). Discrepancy: $50.00 USD.</div>
+</div>
+<div class="flex items-center justify-between text-outline font-label-sm text-label-sm pt-1">
+<span>INSPECTION NOTE: Rejected prior to commit. Merkle state unmodified.</span>
+<span class="font-numeric-data text-numeric-data">sha256:773a...41 [AUDITED]</span>
+</div>
+</div>
+</article>
+<!-- Item 5: Seq #8,492,100 -->
+<article class="relative bg-surface-container-lowest border border-outline-variant p-space-md transition-colors hover:border-on-surface" data-event-type="JOURNAL_POSTED">
+<div class="absolute -left-[21px] sm:-left-[37px] top-4 w-2.5 h-2.5 bg-primary border-2 border-surface"></div>
+<div class="flex flex-wrap items-center justify-between gap-2 border-b border-outline-variant pb-2 mb-3">
+<div class="flex flex-wrap items-center gap-space-sm font-label-sm text-label-sm">
+<span class="border border-outline bg-surface-container-high text-on-surface px-1.5 py-0.5 font-numeric-data text-numeric-data font-semibold">#8,492,100</span>
+<span class="border border-primary text-primary px-1.5 py-0.5 font-semibold tracking-wider">[JOURNAL_POSTED]</span>
+<span class="font-numeric-data text-numeric-data text-outline">2025-05-18 14:35:12.004 UTC</span>
+</div>
+<div class="font-label-sm text-label-sm text-outline">
+<span>actor:</span> <span class="text-on-surface font-semibold">service: treasury-rebalancer-a</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md mb-2 font-body-sm text-body-sm">
+<div class="space-y-1">
+<div class="text-outline">TARGET ENTITY:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface font-semibold">tx_01HX9J7722</div>
+<div class="text-on-surface-variant">Volume: <span class="font-numeric-data text-numeric-data text-on-surface font-semibold">$1,250,000.00 USD</span> (Inter-bank nostro wire)</div>
+</div>
+<div class="space-y-1 md:text-right">
+<div class="text-outline">CRYPTOGRAPHIC SEAL:</div>
+<div class="font-numeric-data text-numeric-data text-on-surface">sha256:09da...77 <span class="text-primary font-semibold">[VALID]</span></div>
+<div class="text-outline font-label-sm text-label-sm">prev_hash: fa33...11 • height: 8492100</div>
+</div>
+</div>
+</article>
+</div>
+<!-- End of Loaded Stream Segment Footer -->
+<div class="border-t-2 border-dashed border-outline-variant pt-space-md flex flex-col sm:flex-row items-center justify-between gap-space-sm font-label-sm text-label-sm text-outline">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px]">sync</span>
+<span>SHOWING 5 OF 8,492,104 EVENTS (PAGINATED BUFFER: 50 ENTRIES)</span>
+</div>
+<div class="flex items-center gap-space-xs">
+<button class="border border-outline-variant bg-surface-container-lowest px-space-md py-1.5 text-on-surface hover:bg-surface-container transition-colors font-semibold">
+              ↑ LOAD PREVIOUS BATCH (100)
+            </button>
+<button class="border border-outline-variant bg-surface-container-lowest px-space-md py-1.5 text-on-surface hover:bg-surface-container transition-colors font-semibold">
+              SEEK TO GENESIS (#1)
+            </button>
+</div>
+</div>
+</div>
+<!-- Right Sidebar: Verification Folio & Cryptographic Health (4 Cols) -->
+<aside class="w-full lg:w-1/4 flex flex-col gap-space-md">
+<!-- Stream Attestation Summary -->
+<div class="border border-outline-variant bg-surface-container-lowest p-space-md">
+<div class="border-b border-outline-variant pb-2 mb-3 flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-outline uppercase font-semibold">Attestation Health</span>
+<span class="text-primary font-label-sm text-label-sm font-semibold">[OK]</span>
+</div>
+<div class="space-y-3 font-body-sm text-body-sm">
+<div>
+<div class="text-outline font-label-sm text-label-sm">INTEGRITY CHECK</div>
+<div class="font-numeric-data text-numeric-data text-on-surface font-semibold mt-0.5">100.000% VERIFIED</div>
+<div class="w-full bg-surface-container h-1.5 mt-1">
+<div class="bg-primary h-1.5 w-full"></div>
+</div>
+</div>
+<div class="border-t border-outline-variant pt-2 space-y-1 font-label-sm text-label-sm">
+<div class="flex justify-between">
+<span class="text-outline">UNBROKEN CHAIN:</span>
+<span class="text-on-surface font-numeric-data text-numeric-data font-semibold">8,492,104 BLOCKS</span>
+</div>
+<div class="flex justify-between">
+<span class="text-outline">ORPHAN EVENTS:</span>
+<span class="text-on-surface font-numeric-data text-numeric-data font-semibold">0</span>
+</div>
+<div class="flex justify-between">
+<span class="text-outline">FORK DETECTIONS:</span>
+<span class="text-on-surface font-numeric-data text-numeric-data font-semibold">0</span>
+</div>
+<div class="flex justify-between">
+<span class="text-outline">AVG COMMIT LATENCY:</span>
+<span class="text-on-surface font-numeric-data text-numeric-data font-semibold">14.2 ms</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Ledger Forensic Verifier Tool -->
+<div class="border border-outline-variant bg-surface-container-lowest p-space-md">
+<div class="border-b border-outline-variant pb-2 mb-3">
+<span class="font-label-sm text-label-sm text-outline uppercase font-semibold">Merkle Verification</span>
+</div>
+<div class="space-y-space-sm font-body-sm text-body-sm">
+<p class="text-on-surface-variant font-label-sm text-label-sm leading-normal">
+              Validate cryptographic proof of entry inclusion against external anchors (RFC 6962).
+            </p>
+<div>
+<label class="block font-label-sm text-label-sm text-outline mb-1" for="proof-seq">TARGET SEQUENCE #</label>
+<input class="w-full bg-surface border border-outline-variant text-on-surface font-numeric-data text-numeric-data px-2 py-1 focus:outline-none focus:border-on-surface" id="proof-seq" type="text" value="8492104"/>
+</div>
+<button class="w-full border border-on-surface bg-inverse-surface text-inverse-on-surface hover:bg-primary py-1.5 font-label-lg text-label-lg transition-colors" id="btn-verify-proof">
+              COMPUTE AUDIT PROOF
+            </button>
+<div class="hidden border border-outline-variant bg-surface p-2 font-numeric-data text-numeric-data text-body-sm text-outline" id="proof-result">
+<span class="text-primary font-semibold">[VALID PROOF]</span> 14 tree nodes matched. Root verified.
+            </div>
+</div>
+</div>
+<!-- Teleprinter Output Key -->
+<div class="border border-outline-variant bg-surface-container-low p-space-md">
+<div class="font-label-sm text-label-sm text-outline uppercase font-semibold mb-2">Tape Glyph Legend</div>
+<ul class="space-y-1 font-label-sm text-label-sm text-on-surface">
+<li class="flex items-center gap-2">
+<span class="w-2 h-2 bg-primary inline-block"></span>
+<span>JOURNAL_POSTED (Commit state)</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="w-2 h-2 bg-secondary inline-block"></span>
+<span>TRANSACTION_REJECTED (Violated invariant)</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="w-2 h-2 bg-outline inline-block"></span>
+<span>SYSTEM / COMPLIANCE (Advisory event)</span>
+</li>
+</ul>
+</div>
+</aside>
+</div>
+</section>
+<!-- Teleprinter Bottom Audit Rule (Simulated Double Hairline) -->
+<div class="w-full border-b-[3px] border-double border-outline-variant"></div>
+</div>
+<script>
+  // Payload JSON Expand / Collapse
+  function togglePayload(id, btn) {
+    const el = document.getElementById(id);
+    const indicator = btn.querySelector('.toggle-indicator');
+    if (el.classList.contains('hidden')) {
+      el.classList.remove('hidden');
+      indicator.textContent = '[-] COLLAPSE JSON';
+    } else {
+      el.classList.add('hidden');
+      indicator.textContent = '[+] EXPAND JSON';
+    }
+  }
+
+  // Freeze Tape Toggle
+  const freezeBtn = document.getElementById('btn-pause-stream');
+  let isFrozen = false;
+  freezeBtn.addEventListener('click', () => {
+    isFrozen = !isFrozen;
+    if (isFrozen) {
+      freezeBtn.classList.replace('bg-surface-container', 'bg-secondary');
+      freezeBtn.classList.replace('text-on-surface', 'text-on-secondary');
+      freezeBtn.innerHTML = '<span class="material-symbols-outlined text-[15px] leading-none">play_arrow</span><span>RESUME STREAM</span>';
+    } else {
+      freezeBtn.classList.replace('bg-secondary', 'bg-surface-container');
+      freezeBtn.classList.replace('text-on-secondary', 'text-on-surface');
+      freezeBtn.innerHTML = '<span class="material-symbols-outlined text-[15px] leading-none">pause</span><span>FREEZE TAPE</span>';
+    }
+  });
+
+  // Client-side Event Filtering
+  const filterType = document.getElementById('filter-type');
+  const applyBtn = document.getElementById('btn-apply-filters');
+  const items = document.querySelectorAll('#event-stream-container article');
+
+  function applyFilter() {
+    const selected = filterType.value;
+    items.forEach(item => {
+      const type = item.getAttribute('data-event-type');
+      if (selected === 'ALL' || type === selected) {
+        item.classList.remove('hidden');
+      } else {
+        item.classList.add('hidden');
+      }
+    });
+  }
+
+  filterType.addEventListener('change', applyFilter);
+  applyBtn.addEventListener('click', applyFilter);
+
+  // Compute Merkle Audit Proof Micro-interaction
+  const verifyProofBtn = document.getElementById('btn-verify-proof');
+  const proofResult = document.getElementById('proof-result');
+  verifyProofBtn.addEventListener('click', () => {
+    verifyProofBtn.textContent = 'COMPUTING HASHLIST...';
+    setTimeout(() => {
+      verifyProofBtn.textContent = 'COMPUTE AUDIT PROOF';
+      proofResult.classList.remove('hidden');
+    }, 350);
+  });
+</script></main><footer class="w-full bg-surface-container-lowest border-t border-outline-variant py-space-md"><div class="w-full px-margin flex flex-col sm:flex-row items-center justify-between gap-space-sm font-label-sm text-label-sm text-outline"><div><span>SYSTEM AUDIT SPEC: </span><span class="text-on-surface font-medium">keel-v2.14.0-audit</span><span class="mx-space-xs">|</span><span>ENGINE: EVENT_STORE_V4</span></div><div class="flex items-center gap-space-md"><span>STATUS: LEDGER_IMMUTABLE</span><span class="text-outline-variant">|</span><span>SHA256: 4f9b8c2e...d10e</span></div></div></footer></body></html>

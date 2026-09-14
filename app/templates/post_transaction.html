@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"primary":"#264a42","outline-variant":"#c1c8c5","on-background":"#151c24","on-secondary":"#ffffff","on-primary-fixed":"#00201a","surface-container":"#e8eefa","tertiary-fixed-dim":"#bac8d8","surface":"#f8f9ff","background":"#f8f9ff","secondary-fixed-dim":"#ffb4a5","surface-dim":"#d4dae6","on-tertiary":"#ffffff","on-secondary-fixed-variant":"#842514","primary-fixed":"#c3ebdf","inverse-surface":"#2a3139","on-surface":"#151c24","surface-container-highest":"#dce3ee","on-primary-container":"#b5dcd0","error-container":"#ffdad6","surface-container-high":"#e2e9f4","on-secondary-container":"#711708","secondary-container":"#fd7e65","on-secondary-fixed":"#3f0400","error":"#ba1a1a","tertiary-container":"#505d6b","on-error-container":"#93000a","on-tertiary-container":"#c8d6e6","tertiary":"#394553","primary-container":"#3e6259","on-tertiary-fixed":"#101d29","secondary":"#a43c29","surface-variant":"#dce3ee","on-primary-fixed-variant":"#294d45","outline":"#717976","surface-container-lowest":"#ffffff","tertiary-fixed":"#d6e4f5","surface-tint":"#41655c","on-surface-variant":"#414846","inverse-on-surface":"#eaf1fc","surface-bright":"#f8f9ff","on-error":"#ffffff","surface-container-low":"#eef4ff","inverse-primary":"#a8cfc3","on-tertiary-fixed-variant":"#3b4855","on-primary":"#ffffff","primary-fixed-dim":"#a8cfc3","secondary-fixed":"#ffdad3"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"space-xs":"0.25rem","space-sm":"0.5rem","space-md":"0.75rem","space-xl":"2rem","space-lg":"1.25rem","gutter":"1rem","margin":"2rem","margin-mobile":"1rem","gutter-mobile":"0.5rem"},"fontFamily":{"headline-xl-mobile":["\"Source Serif 4\""],"headline-md":["\"Source Serif 4\""],"headline-xl":["\"Source Serif 4\""],"body-sm":["JetBrains Mono"],"body-md":["JetBrains Mono"],"numeric-data":["JetBrains Mono"],"label-sm":["JetBrains Mono"],"label-lg":["JetBrains Mono"],"body-lg":["JetBrains Mono"],"headline-sm":["\"Source Serif 4\""],"label-md":["JetBrains Mono"],"headline-lg":["\"Source Serif 4\""]},"fontSize":{"headline-xl-mobile":["28px",{"lineHeight":"36px","letterSpacing":"-0.01em","fontWeight":"600"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"headline-xl":["36px",{"lineHeight":"44px","letterSpacing":"-0.015em","fontWeight":"600"}],"body-sm":["11px",{"lineHeight":"16px","fontWeight":"400"}],"body-md":["13px",{"lineHeight":"20px","fontWeight":"400"}],"numeric-data":["13px",{"lineHeight":"18px","fontWeight":"500"}],"label-sm":["10px",{"lineHeight":"12px","fontWeight":"500"}],"label-lg":["12px",{"lineHeight":"16px","fontWeight":"600"}],"body-lg":["14px",{"lineHeight":"22px","fontWeight":"400"}],"headline-sm":["16px",{"lineHeight":"24px","fontWeight":"600"}],"label-md":["11px",{"lineHeight":"14px","fontWeight":"500"}],"headline-lg":["26px",{"lineHeight":"32px","letterSpacing":"-0.01em","fontWeight":"600"}]}}}}</script></head><body class="bg-surface font-body-md text-body-md text-on-surface antialiased"><header class="fixed top-0 w-full z-50 bg-surface-container-lowest border-b border-outline-variant"><div class="h-16 w-full px-margin flex items-center justify-between"><div class="flex items-center gap-space-md"><img alt="Keel Ledger Logo" class="h-8 w-auto object-contain" src="/static/logo.svg"/><span class="font-headline-sm text-headline-sm tracking-tight text-on-surface uppercase">Keel</span><span class="h-4 w-px bg-outline-variant"></span><div class="flex items-center gap-space-md font-label-sm text-label-sm text-on-surface-variant"><span class="flex items-center gap-space-xs"><span class="text-outline">env:</span><span class="text-on-surface font-semibold">production-useast1</span></span><span class="text-outline-variant">/</span><span class="flex items-center gap-space-xs"><span class="text-outline">seq:</span><span class="font-numeric-data text-numeric-data text-on-surface">8,492,104</span></span></div></div><nav class="hidden lg:flex items-center h-full gap-space-lg" data-active-classes="border-b-2 border-primary text-on-surface font-semibold"><a class="h-full flex items-center px-space-xs font-label-lg text-label-lg text-on-surface-variant hover:text-on-surface transition-colors" data-path="overview" href="/">Overview</a><a class="h-full flex items-center px-space-xs font-label-lg text-label-lg text-on-surface-variant hover:text-on-surface transition-colors" data-path="transaction-detail" href="/transaction-detail">Transaction Detail</a><a aria-current="page" class="h-full flex items-center px-space-xs transition-colors border-b-2 border-primary text-on-surface font-semibold" data-path="post-transaction" href="/post-transaction">Post Transaction</a><a class="h-full flex items-center px-space-xs font-label-lg text-label-lg text-on-surface-variant hover:text-on-surface transition-colors" data-path="event-log" href="/event-log">Event Log</a></nav><div class="flex items-center gap-space-md"><div class="hidden sm:flex items-center gap-space-sm border border-outline-variant bg-surface-container-lowest px-space-sm py-1"><span class="w-2 h-2 bg-primary-container inline-block"></span><span class="font-label-sm text-label-sm text-primary">[BALANCED] invariant: balanced (0.00 delta)</span></div><div class="hidden md:flex flex-col text-right font-label-sm text-label-sm leading-none gap-0.5"><span class="text-on-surface font-medium">usr_ops_0921</span><span class="font-numeric-data text-numeric-data text-outline">14:28:49.022 UTC</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-16 bg-surface min-h-screen"><div class="flex flex-col w-full">
+<!-- Folio Header / Document Identity Bar -->
+<section class="w-full bg-surface-container-lowest border-b border-outline-variant px-margin py-space-lg">
+<div class="flex flex-col lg:flex-row lg:items-end justify-between gap-space-md">
+<div>
+<div class="flex items-center gap-space-xs font-label-sm text-label-sm text-outline mb-1">
+<span>FOLIO_REF // TXN_INGESTION_STAGE</span>
+<span>::</span>
+<span class="text-secondary font-semibold uppercase">STATE: UNCOMMITTED DRAFT</span>
+</div>
+<h1 class="font-headline-xl text-headline-xl text-on-surface tracking-tight leading-none">
+          Post Journal Voucher
+        </h1>
+<div class="mt-2 flex flex-wrap items-center gap-x-space-md gap-y-1 font-label-md text-label-md text-on-surface-variant">
+<span>mode: <span class="text-on-surface font-semibold">manual_adjudication</span></span>
+<span class="text-outline-variant">|</span>
+<span>draft_id: <span class="font-numeric-data text-on-surface">vch_draft_77402</span></span>
+<span class="text-outline-variant">|</span>
+<span>currency: <span class="font-semibold text-primary">USD ($)</span></span>
+<span class="text-outline-variant">|</span>
+<span>target_epoch: <span class="font-numeric-data text-outline">1747612800</span></span>
+</div>
+</div>
+<!-- Quick Status Strip -->
+<div class="flex items-center gap-space-sm bg-surface-container-low px-space-md py-space-sm border border-outline-variant">
+<span class="w-2 h-2 bg-secondary inline-block"></span>
+<div class="flex flex-col font-label-sm text-label-sm">
+<span class="text-secondary font-semibold">[IMBALANCE DETECTED]</span>
+<span class="text-outline">Σ(Dr) - Σ(Cr) != 0.00</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Document Header Metadata Grid -->
+<section class="w-full bg-surface px-margin py-space-lg border-b border-outline-variant">
+<div class="grid grid-cols-1 md:grid-cols-12 border border-outline-variant bg-surface-container-lowest">
+<!-- Effective Date -->
+<div class="md:col-span-3 p-space-md border-b md:border-b-0 md:border-r border-outline-variant flex flex-col justify-between">
+<label class="font-label-sm text-label-sm text-outline uppercase block mb-1">01. Effective Value Date</label>
+<div class="flex items-center justify-between">
+<input class="font-numeric-data text-numeric-data text-on-surface bg-surface-container-low px-space-sm py-1 border border-outline-variant w-full focus:border-on-surface outline-none" id="voucher-date" type="text" value="2025-05-18"/>
+</div>
+<span class="font-label-sm text-label-sm text-outline mt-1 block">Period: <span class="text-primary font-semibold">2025-05 (OPEN)</span></span>
+</div>
+<!-- Reference Identifier -->
+<div class="md:col-span-3 p-space-md border-b md:border-b-0 md:border-r border-outline-variant flex flex-col justify-between">
+<label class="font-label-sm text-label-sm text-outline uppercase block mb-1">02. Audit / Wire Reference</label>
+<input class="font-numeric-data text-numeric-data text-on-surface bg-surface-container-low px-space-sm py-1 border border-outline-variant w-full focus:border-on-surface outline-none" id="voucher-ref" type="text" value="ref_manual_adj_20250518"/>
+<span class="font-label-sm text-label-sm text-outline mt-1 block">Originator: <span class="text-on-surface">usr_ops_0921</span></span>
+</div>
+<!-- Description / Memo -->
+<div class="md:col-span-6 p-space-md flex flex-col justify-between">
+<label class="font-label-sm text-label-sm text-outline uppercase block mb-1">03. Primary Journal Reason &amp; Adjudication Memo</label>
+<textarea class="font-body-md text-body-md text-on-surface bg-surface-container-low p-space-sm border border-outline-variant w-full focus:border-on-surface outline-none resize-none" id="voucher-memo" rows="2">Reclassification of unallocated settlement shortfall for merchant #4410</textarea>
+<span class="font-label-sm text-label-sm text-outline mt-1 flex justify-between">
+<span>Forensic classification: EXCEPTION_RECOVERY</span>
+<span>Chars: 72/256</span>
+</span>
+</div>
+</div>
+</section>
+<!-- Ledger Worktable Section -->
+<section class="w-full px-margin py-space-lg flex flex-col gap-space-lg">
+<div class="flex items-center justify-between">
+<div class="flex items-baseline gap-space-sm">
+<h2 class="font-headline-sm text-headline-sm text-on-surface uppercase tracking-tight">Journal Folio Entries</h2>
+<span class="font-label-sm text-label-sm text-outline">Line items double-entry verification</span>
+</div>
+<div class="flex items-center gap-space-xs font-label-sm text-label-sm">
+<span class="text-outline">Active Lines:</span>
+<span class="font-numeric-data text-on-surface font-semibold" id="line-counter">3</span>
+</div>
+</div>
+<!-- The Ledger Grid Table -->
+<div class="border border-outline-variant bg-surface-container-lowest overflow-x-auto">
+<table class="w-full text-left border-collapse min-w-[840px]">
+<thead>
+<tr class="border-b border-on-surface bg-surface-container-low font-label-md text-label-md text-outline select-none">
+<th class="py-space-sm px-space-md w-16 border-r border-outline-variant text-center font-normal">LN</th>
+<th class="py-space-sm px-space-md w-72 border-r border-outline-variant font-normal">ACCOUNT IDENTIFIER &amp; TITLE</th>
+<th class="py-space-sm px-space-md w-40 border-r border-outline-variant font-normal">DIRECTION (DR/CR)</th>
+<th class="py-space-sm px-space-md w-48 border-r border-outline-variant text-right font-normal">POSTED AMOUNT ($)</th>
+<th class="py-space-sm px-space-md font-normal border-r border-outline-variant">MEMO / COST CENTER</th>
+<th class="py-space-sm px-space-sm w-16 text-center font-normal">VOID</th>
+</tr>
+</thead>
+<tbody id="ledger-table-body">
+<!-- Line Item 1 -->
+<tr class="ledger-row border-b border-outline-variant hover:bg-surface-container-low transition-colors" data-id="1">
+<td class="py-space-sm px-space-md border-r border-outline-variant font-numeric-data text-numeric-data text-outline text-center">01</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<select class="account-select w-full bg-transparent font-numeric-data text-numeric-data text-on-surface focus:outline-none border-b border-transparent focus:border-on-surface">
+<option selected="" value="1040-CLEARING-SHORTFALL">1040-CLEARING-SHORTFALL (Settlement Gap)</option>
+<option value="5090-MISC-OPERATING-LOSS">5090-MISC-OPERATING-LOSS (Ops OpEx)</option>
+<option value="1010-CASH-OPERATING">1010-CASH-OPERATING (Primary Treasury)</option>
+<option value="2010-ACCOUNTS-PAYABLE">2010-ACCOUNTS-PAYABLE (Settlement clearing)</option>
+<option value="1025-MERCHANT-RESERVE">1025-MERCHANT-RESERVE (Escrow Pool)</option>
+</select>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<div class="inline-flex border border-outline-variant p-0.5 bg-surface">
+<button class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors bg-primary text-on-primary" data-direction="DEBIT" type="button">DR</button>
+<button class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors text-outline hover:text-on-surface" data-direction="CREDIT" type="button">CR</button>
+</div>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant text-right">
+<div class="flex items-center justify-end gap-1">
+<span class="font-numeric-data text-outline">$</span>
+<input class="amount-input font-numeric-data text-numeric-data text-on-surface text-right w-32 bg-transparent border-b border-transparent focus:border-on-surface focus:outline-none" type="text" value="14,250.00"/>
+</div>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<input class="w-full bg-transparent font-body-sm text-body-sm text-on-surface-variant focus:text-on-surface focus:outline-none" type="text" value="Reclass merchant 4410 dispute"/>
+</td>
+<td class="py-space-sm px-space-sm text-center">
+<button class="remove-line text-outline hover:text-secondary p-1" title="Void line item" type="button">
+<span class="font-label-sm">[x]</span>
+</button>
+</td>
+</tr>
+<!-- Line Item 2 -->
+<tr class="ledger-row border-b border-outline-variant hover:bg-surface-container-low transition-colors" data-id="2">
+<td class="py-space-sm px-space-md border-r border-outline-variant font-numeric-data text-numeric-data text-outline text-center">02</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<select class="account-select w-full bg-transparent font-numeric-data text-numeric-data text-on-surface focus:outline-none border-b border-transparent focus:border-on-surface">
+<option value="1040-CLEARING-SHORTFALL">1040-CLEARING-SHORTFALL (Settlement Gap)</option>
+<option selected="" value="5090-MISC-OPERATING-LOSS">5090-MISC-OPERATING-LOSS (Ops OpEx)</option>
+<option value="1010-CASH-OPERATING">1010-CASH-OPERATING (Primary Treasury)</option>
+<option value="2010-ACCOUNTS-PAYABLE">2010-ACCOUNTS-PAYABLE (Settlement clearing)</option>
+<option value="1025-MERCHANT-RESERVE">1025-MERCHANT-RESERVE (Escrow Pool)</option>
+</select>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<div class="inline-flex border border-outline-variant p-0.5 bg-surface">
+<button class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors bg-primary text-on-primary" data-direction="DEBIT" type="button">DR</button>
+<button class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors text-outline hover:text-on-surface" data-direction="CREDIT" type="button">CR</button>
+</div>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant text-right">
+<div class="flex items-center justify-end gap-1">
+<span class="font-numeric-data text-outline">$</span>
+<input class="amount-input font-numeric-data text-numeric-data text-on-surface text-right w-32 bg-transparent border-b border-transparent focus:border-on-surface focus:outline-none" type="text" value="750.00"/>
+</div>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<input class="w-full bg-transparent font-body-sm text-body-sm text-on-surface-variant focus:text-on-surface focus:outline-none" type="text" value="Interchange non-recoverable gap"/>
+</td>
+<td class="py-space-sm px-space-sm text-center">
+<button class="remove-line text-outline hover:text-secondary p-1" title="Void line item" type="button">
+<span class="font-label-sm">[x]</span>
+</button>
+</td>
+</tr>
+<!-- Line Item 3 -->
+<tr class="ledger-row border-b border-outline-variant hover:bg-surface-container-low transition-colors" data-id="3">
+<td class="py-space-sm px-space-md border-r border-outline-variant font-numeric-data text-numeric-data text-outline text-center">03</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<select class="account-select w-full bg-transparent font-numeric-data text-numeric-data text-on-surface focus:outline-none border-b border-transparent focus:border-on-surface">
+<option value="1040-CLEARING-SHORTFALL">1040-CLEARING-SHORTFALL (Settlement Gap)</option>
+<option value="5090-MISC-OPERATING-LOSS">5090-MISC-OPERATING-LOSS (Ops OpEx)</option>
+<option selected="" value="1010-CASH-OPERATING">1010-CASH-OPERATING (Primary Treasury)</option>
+<option value="2010-ACCOUNTS-PAYABLE">2010-ACCOUNTS-PAYABLE (Settlement clearing)</option>
+<option value="1025-MERCHANT-RESERVE">1025-MERCHANT-RESERVE (Escrow Pool)</option>
+</select>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<div class="inline-flex border border-outline-variant p-0.5 bg-surface">
+<button class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors text-outline hover:text-on-surface" data-direction="DEBIT" type="button">DR</button>
+<button class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors bg-primary text-on-primary" data-direction="CREDIT" type="button">CR</button>
+</div>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant text-right">
+<div class="flex items-center justify-end gap-1">
+<span class="font-numeric-data text-outline">$</span>
+<input class="amount-input font-numeric-data text-numeric-data text-on-surface text-right w-32 bg-transparent border-b border-transparent focus:border-on-surface focus:outline-none" type="text" value="12,500.00"/>
+</div>
+</td>
+<td class="py-space-sm px-space-md border-r border-outline-variant">
+<input class="w-full bg-transparent font-body-sm text-body-sm text-on-surface-variant focus:text-on-surface focus:outline-none" type="text" value="Direct wire draw"/>
+</td>
+<td class="py-space-sm px-space-sm text-center">
+<button class="remove-line text-outline hover:text-secondary p-1" title="Void line item" type="button">
+<span class="font-label-sm">[x]</span>
+</button>
+</td>
+</tr>
+</tbody>
+<!-- Table Total Preview Row -->
+<tfoot>
+<tr class="bg-surface-container-low font-numeric-data text-numeric-data border-t border-outline">
+<td class="py-space-sm px-space-md text-right border-r border-outline-variant font-label-sm text-outline uppercase tracking-wider" colspan="3">Subtotal Aggregates</td>
+<td class="py-space-sm px-space-md text-right border-r border-outline-variant font-semibold">
+<div class="flex flex-col text-[11px] leading-tight">
+<span class="text-primary">Dr: $<span id="footer-dr">15,000.00</span></span>
+<span class="text-secondary">Cr: $<span id="footer-cr">12,500.00</span></span>
+</div>
+</td>
+<td class="py-space-sm px-space-md font-label-sm text-secondary font-medium" colspan="2">
+              Delta: +$<span id="footer-delta">2,500.00</span> (Unbalanced)
+            </td>
+</tr>
+</tfoot>
+</table>
+</div>
+<!-- Real-time Balance Invariant Bar -->
+<div class="w-full bg-surface-container-lowest border border-secondary p-space-md flex flex-col gap-space-md" id="invariant-bar">
+<!-- Metrics Strip -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-space-md border-b border-outline-variant pb-space-md">
+<div class="flex flex-col border-l-2 border-primary pl-space-sm">
+<span class="font-label-sm text-label-sm text-outline uppercase">Total Debits [Σ Dr]</span>
+<span class="font-numeric-data text-headline-sm text-primary font-semibold">$<span id="stat-total-debit">15,000.00</span></span>
+</div>
+<div class="flex flex-col border-l-2 border-outline-variant pl-space-sm">
+<span class="font-label-sm text-label-sm text-outline uppercase">Total Credits [Σ Cr]</span>
+<span class="font-numeric-data text-headline-sm text-on-surface font-semibold">$<span id="stat-total-credit">12,500.00</span></span>
+</div>
+<div class="flex flex-col border-l-2 border-secondary pl-space-sm">
+<span class="font-label-sm text-label-sm text-secondary uppercase font-semibold">Invariant Delta (Dr - Cr)</span>
+<div class="flex items-center gap-space-sm">
+<span class="font-numeric-data text-headline-sm text-secondary font-semibold" id="stat-delta">+$2,500.00</span>
+<span class="font-label-sm text-label-sm border border-secondary text-secondary px-1 py-0.5 uppercase" id="badge-balance">[IMBALANCE]</span>
+</div>
+</div>
+</div>
+<!-- Explicit Diagnostic Alert and Quick Balancing Action -->
+<div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-space-md">
+<div class="flex items-start gap-space-sm max-w-3xl">
+<span class="material-symbols-outlined text-secondary text-[20px] shrink-0 mt-0.5">error_outline</span>
+<p class="font-body-sm text-body-sm text-secondary leading-relaxed" id="invariant-message">
+            Voucher is unbalanced by +$2,500.00. Double-entry invariant violation: Σ(Dr) - Σ(Cr) != 0. Requires $2,500.00 credit entry or equivalent debit adjustment to commit.
+          </p>
+</div>
+<button class="shrink-0 bg-surface-container border border-secondary text-secondary hover:bg-secondary hover:text-on-secondary font-label-lg text-label-lg px-space-md py-space-sm transition-colors flex items-center gap-space-xs" id="btn-balance-voucher" type="button">
+<span>+ Add Balancing Credit Line ($2,500.00)</span>
+</button>
+</div>
+</div>
+<!-- Forensic Ledger Rules Summary Sheet -->
+<div class="grid grid-cols-1 md:grid-cols-3 border border-outline-variant bg-surface-container-low font-label-sm text-label-sm text-on-surface-variant p-space-md gap-space-md">
+<div>
+<span class="text-on-surface font-semibold block mb-0.5">RULE 101: IMMUTABILITY BOUND</span>
+<p class="text-outline leading-tight">Once committed, journal sequence will append monotonically. Deletions are forbidden; reversal journals required for error correction.</p>
+</div>
+<div>
+<span class="text-on-surface font-semibold block mb-0.5">RULE 102: ZERO DELTA DRIFT</span>
+<p class="text-outline leading-tight">Zero-tolerance arithmetic rule. Floating-point math is disabled. Computations executed via integer-scaled micro-units.</p>
+</div>
+<div>
+<span class="text-on-surface font-semibold block mb-0.5">RULE 103: ADJUDICATION AUDIT</span>
+<p class="text-outline leading-tight">Manual adjudication records operator pubkey, client timestamp, and host node identity in ledger event metadata payload.</p>
+</div>
+</div>
+</section>
+<!-- Sticky / Bottom Ledger Action Controls Bar -->
+<footer class="w-full bg-surface-container-lowest border-t border-outline-variant px-margin py-space-md mt-space-lg">
+<div class="flex flex-col sm:flex-row items-center justify-between gap-space-md">
+<!-- Left actions: Line manipulation and draft management -->
+<div class="flex flex-wrap items-center gap-space-sm w-full sm:w-auto">
+<button class="border border-outline hover:border-on-surface bg-surface text-on-surface font-label-lg text-label-lg px-space-md py-space-sm flex items-center gap-1 transition-colors" id="btn-add-line" type="button">
+<span>+ Add Line Item</span>
+</button>
+<button class="border border-outline-variant hover:border-on-surface bg-surface text-on-surface-variant hover:text-on-surface font-label-lg text-label-lg px-space-md py-space-sm flex items-center gap-1 transition-colors" id="btn-simulate" type="button">
+<span>Simulate Invariants</span>
+</button>
+<button class="border border-outline-variant text-outline hover:border-secondary hover:text-secondary font-label-lg text-label-lg px-space-md py-space-sm transition-colors" id="btn-discard" type="button">
+<span>Discard Draft</span>
+</button>
+</div>
+<!-- Right primary action: Commit voucher -->
+<div class="flex items-center gap-space-md w-full sm:w-auto justify-end">
+<div class="hidden xl:flex flex-col text-right font-label-sm text-label-sm">
+<span class="text-outline">Engine Verification:</span>
+<span class="text-secondary font-medium" id="lock-reason">REJECT_IMBALANCE_NONZERO</span>
+</div>
+<button class="opacity-50 cursor-not-allowed bg-on-surface text-surface-container-lowest font-label-lg text-label-lg px-space-xl py-space-sm flex items-center gap-space-sm uppercase tracking-wide transition-all" disabled="" id="btn-commit" type="button">
+<span class="material-symbols-outlined text-[16px]">lock</span>
+<span id="commit-label">Commit to Ledger (Disabled)</span>
+</button>
+</div>
+</div>
+</footer>
+<!-- Inline Ledger Math and Interaction Logic -->
+<script>
+    (function() {
+      let lineIndex = 3;
+
+      function parseAmount(val) {
+        if (!val) return 0;
+        const clean = String(val).replace(/[^0-9.-]+/g, "");
+        const num = parseFloat(clean);
+        return isNaN(num) ? 0 : num;
+      }
+
+      function formatMoney(num) {
+        return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+
+      function recalculateLedger() {
+        let totalDr = 0;
+        let totalCr = 0;
+
+        const rows = document.querySelectorAll(".ledger-row");
+        document.getElementById("line-counter").textContent = rows.length;
+
+        rows.forEach(row => {
+          const activeDirBtn = row.querySelector(".dir-btn.bg-primary");
+          const dir = activeDirBtn ? activeDirBtn.getAttribute("data-direction") : "DEBIT";
+          const amtInput = row.querySelector(".amount-input");
+          const amt = parseAmount(amtInput.value);
+
+          if (dir === "DEBIT") {
+            totalDr += amt;
+          } else {
+            totalCr += amt;
+          }
+        });
+
+        const delta = totalDr - totalCr;
+        const absDelta = Math.abs(delta);
+
+        // Update Footers and Stats
+        document.getElementById("footer-dr").textContent = formatMoney(totalDr);
+        document.getElementById("footer-cr").textContent = formatMoney(totalCr);
+        document.getElementById("stat-total-debit").textContent = formatMoney(totalDr);
+        document.getElementById("stat-total-credit").textContent = formatMoney(totalCr);
+
+        const deltaFormatted = (delta > 0 ? "+" : delta < 0 ? "-" : "") + "$" + formatMoney(absDelta);
+        document.getElementById("footer-delta").textContent = formatMoney(absDelta);
+        document.getElementById("stat-delta").textContent = deltaFormatted;
+
+        const invariantBar = document.getElementById("invariant-bar");
+        const invariantMsg = document.getElementById("invariant-message");
+        const balanceBadge = document.getElementById("badge-balance");
+        const balanceBtn = document.getElementById("btn-balance-voucher");
+        const commitBtn = document.getElementById("btn-commit");
+        const commitLabel = document.getElementById("commit-label");
+        const lockReason = document.getElementById("lock-reason");
+
+        if (absDelta < 0.001) {
+          // BALANCED
+          invariantBar.classList.remove("border-secondary");
+          invariantBar.classList.add("border-primary");
+          
+          balanceBadge.textContent = "[BALANCED]";
+          balanceBadge.classList.remove("border-secondary", "text-secondary");
+          balanceBadge.classList.add("border-primary", "text-primary");
+
+          document.getElementById("stat-delta").classList.remove("text-secondary");
+          document.getElementById("stat-delta").classList.add("text-primary");
+
+          invariantMsg.textContent = "Invariant fully verified: Σ(Dr) = Σ(Cr). Double-entry equation strictly satisfied. Voucher is eligible for atomic block commitment.";
+          invariantMsg.classList.remove("text-secondary");
+          invariantMsg.classList.add("text-primary");
+
+          balanceBtn.classList.add("hidden");
+
+          commitBtn.disabled = false;
+          commitBtn.classList.remove("opacity-50", "cursor-not-allowed");
+          commitBtn.classList.add("hover:bg-primary", "cursor-pointer");
+          commitLabel.textContent = "Commit to Ledger";
+          commitBtn.querySelector(".material-symbols-outlined").textContent = "verified";
+
+          lockReason.textContent = "PASS_INVARIANTS_READY";
+          lockReason.classList.remove("text-secondary");
+          lockReason.classList.add("text-primary");
+        } else {
+          // UNBALANCED
+          invariantBar.classList.add("border-secondary");
+          invariantBar.classList.remove("border-primary");
+
+          balanceBadge.textContent = "[IMBALANCE]";
+          balanceBadge.classList.add("border-secondary", "text-secondary");
+          balanceBadge.classList.remove("border-primary", "text-primary");
+
+          document.getElementById("stat-delta").classList.add("text-secondary");
+          document.getElementById("stat-delta").classList.remove("text-primary");
+
+          const neededType = delta > 0 ? "credit" : "debit";
+          invariantMsg.textContent = "Voucher is unbalanced by " + deltaFormatted + ". Double-entry invariant violation: Σ(Dr) - Σ(Cr) != 0. Requires $" + formatMoney(absDelta) + " " + neededType + " entry or equivalent adjustment to commit.";
+          invariantMsg.classList.add("text-secondary");
+          invariantMsg.classList.remove("text-primary");
+
+          balanceBtn.classList.remove("hidden");
+          balanceBtn.querySelector("span").textContent = "+ Add Balancing " + (delta > 0 ? "Credit" : "Debit") + " Line ($" + formatMoney(absDelta) + ")";
+
+          commitBtn.disabled = true;
+          commitBtn.classList.add("opacity-50", "cursor-not-allowed");
+          commitBtn.classList.remove("hover:bg-primary", "cursor-pointer");
+          commitLabel.textContent = "Commit to Ledger (Disabled)";
+          commitBtn.querySelector(".material-symbols-outlined").textContent = "lock";
+
+          lockReason.textContent = "REJECT_IMBALANCE_NONZERO";
+          lockReason.classList.add("text-secondary");
+          lockReason.classList.remove("text-primary");
+        }
+      }
+
+      function attachRowEvents(row) {
+        // Toggle direction buttons
+        const dirBtns = row.querySelectorAll(".dir-btn");
+        dirBtns.forEach(btn => {
+          btn.addEventListener("click", () => {
+            dirBtns.forEach(b => {
+              b.classList.remove("bg-primary", "text-on-primary");
+              b.classList.add("text-outline");
+            });
+            btn.classList.add("bg-primary", "text-on-primary");
+            btn.classList.remove("text-outline");
+            recalculateLedger();
+          });
+        });
+
+        // Amount input
+        const amtInput = row.querySelector(".amount-input");
+        amtInput.addEventListener("input", recalculateLedger);
+        amtInput.addEventListener("blur", () => {
+          const num = parseAmount(amtInput.value);
+          amtInput.value = formatMoney(num);
+          recalculateLedger();
+        });
+
+        // Remove row
+        const removeBtn = row.querySelector(".remove-line");
+        removeBtn.addEventListener("click", () => {
+          const allRows = document.querySelectorAll(".ledger-row");
+          if (allRows.length <= 1) {
+            alert("Ledger voucher requires at least one active journal entry line.");
+            return;
+          }
+          row.remove();
+          resequenceLines();
+          recalculateLedger();
+        });
+      }
+
+      function resequenceLines() {
+        const rows = document.querySelectorAll(".ledger-row");
+        rows.forEach((row, i) => {
+          const numStr = (i + 1).toString().padStart(2, "0");
+          row.querySelector("td:first-child").textContent = numStr;
+        });
+      }
+
+      function addNewRow(direction = "DEBIT", amount = 0, account = "1025-MERCHANT-RESERVE", memo = "Balancing reclass journal adjustment") {
+        lineIndex++;
+        const tbody = document.getElementById("ledger-table-body");
+        const tr = document.createElement("tr");
+        tr.className = "ledger-row border-b border-outline-variant hover:bg-surface-container-low transition-colors";
+        tr.dataset.id = lineIndex;
+
+        const isDebit = direction === "DEBIT";
+
+        tr.innerHTML = `
+          <td class="py-space-sm px-space-md border-r border-outline-variant font-numeric-data text-numeric-data text-outline text-center">00</td>
+          <td class="py-space-sm px-space-md border-r border-outline-variant">
+            <select class="account-select w-full bg-transparent font-numeric-data text-numeric-data text-on-surface focus:outline-none border-b border-transparent focus:border-on-surface">
+              <option value="1040-CLEARING-SHORTFALL" ${account === '1040-CLEARING-SHORTFALL' ? 'selected' : ''}>1040-CLEARING-SHORTFALL (Settlement Gap)</option>
+              <option value="5090-MISC-OPERATING-LOSS" ${account === '5090-MISC-OPERATING-LOSS' ? 'selected' : ''}>5090-MISC-OPERATING-LOSS (Ops OpEx)</option>
+              <option value="1010-CASH-OPERATING" ${account === '1010-CASH-OPERATING' ? 'selected' : ''}>1010-CASH-OPERATING (Primary Treasury)</option>
+              <option value="2010-ACCOUNTS-PAYABLE" ${account === '2010-ACCOUNTS-PAYABLE' ? 'selected' : ''}>2010-ACCOUNTS-PAYABLE (Settlement clearing)</option>
+              <option value="1025-MERCHANT-RESERVE" ${account === '1025-MERCHANT-RESERVE' ? 'selected' : ''}>1025-MERCHANT-RESERVE (Escrow Pool)</option>
+            </select>
+          </td>
+          <td class="py-space-sm px-space-md border-r border-outline-variant">
+            <div class="inline-flex border border-outline-variant p-0.5 bg-surface">
+              <button type="button" class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors ${isDebit ? 'bg-primary text-on-primary' : 'text-outline hover:text-on-surface'}" data-direction="DEBIT">DR</button>
+              <button type="button" class="dir-btn px-2 py-0.5 font-label-sm text-label-sm font-semibold transition-colors ${!isDebit ? 'bg-primary text-on-primary' : 'text-outline hover:text-on-surface'}" data-direction="CREDIT">CR</button>
+            </div>
+          </td>
+          <td class="py-space-sm px-space-md border-r border-outline-variant text-right">
+            <div class="flex items-center justify-end gap-1">
+              <span class="font-numeric-data text-outline">$</span>
+              <input type="text" value="${formatMoney(amount)}" class="amount-input font-numeric-data text-numeric-data text-on-surface text-right w-32 bg-transparent border-b border-transparent focus:border-on-surface focus:outline-none" />
+            </div>
+          </td>
+          <td class="py-space-sm px-space-md border-r border-outline-variant">
+            <input type="text" value="${memo}" class="w-full bg-transparent font-body-sm text-body-sm text-on-surface-variant focus:text-on-surface focus:outline-none" />
+          </td>
+          <td class="py-space-sm px-space-sm text-center">
+            <button type="button" class="remove-line text-outline hover:text-secondary p-1" title="Void line item">
+              <span class="font-label-sm">[x]</span>
+            </button>
+          </td>
+        `;
+
+        tbody.appendChild(tr);
+        attachRowEvents(tr);
+        resequenceLines();
+        recalculateLedger();
+      }
+
+      // Initialize existing rows
+      document.querySelectorAll(".ledger-row").forEach(attachRowEvents);
+
+      // Add Line Item click
+      document.getElementById("btn-add-line").addEventListener("click", () => {
+        addNewRow("DEBIT", 0.00, "1040-CLEARING-SHORTFALL", "Incremental reclassification");
+      });
+
+      // Quick-add balancing credit line helper
+      document.getElementById("btn-balance-voucher").addEventListener("click", () => {
+        let totalDr = 0;
+        let totalCr = 0;
+        document.querySelectorAll(".ledger-row").forEach(row => {
+          const activeDir = row.querySelector(".dir-btn.bg-primary")?.getAttribute("data-direction") || "DEBIT";
+          const amt = parseAmount(row.querySelector(".amount-input").value);
+          if (activeDir === "DEBIT") totalDr += amt;
+          else totalCr += amt;
+        });
+
+        const diff = totalDr - totalCr;
+        if (Math.abs(diff) > 0.001) {
+          const neededDir = diff > 0 ? "CREDIT" : "DEBIT";
+          addNewRow(neededDir, Math.abs(diff), "1010-CASH-OPERATING", "System automated balancing counter-entry");
+        }
+      });
+
+      // Simulate Invariant Check
+      document.getElementById("btn-simulate").addEventListener("click", () => {
+        recalculateLedger();
+        const delta = Math.abs(parseAmount(document.getElementById("stat-delta").textContent));
+        if (delta < 0.001) {
+          alert("[INVARIANT SIMULATION SUCCESSFUL]\n- Σ(Debits) == Σ(Credits)\n- No orphan postings detected\n- Hash tree pre-commit signature: valid");
+        } else {
+          alert("[INVARIANT SIMULATION FAILED]\n- Double-entry imbalance detected: " + document.getElementById("stat-delta").textContent + "\n- Voucher state cannot be published to event store");
+        }
+      });
+
+      // Discard Draft
+      document.getElementById("btn-discard").addEventListener("click", () => {
+        if (confirm("Permanently discard draft vch_draft_77402? All uncommitted edits will be erased.")) {
+          location.reload();
+        }
+      });
+
+      // Commit click
+      document.getElementById("btn-commit").addEventListener("click", () => {
+        alert("JOURNAL VOUCHER COMMITTED SUCCESSFULLY\n- Assigned Tx ID: txn_post_9921401\n- Block sequence: 8,492,105\n- State: IMMUTABLE");
+      });
+
+      // Initial calculation
+      recalculateLedger();
+    })();
+  </script>
+</div></main><footer class="w-full bg-surface-container-lowest border-t border-outline-variant py-space-md"><div class="w-full px-margin flex flex-col sm:flex-row items-center justify-between gap-space-sm font-label-sm text-label-sm text-outline"><div><span>SYSTEM AUDIT SPEC: </span><span class="text-on-surface font-medium">keel-v2.14.0-audit</span><span class="mx-space-xs">|</span><span>ENGINE: EVENT_STORE_V4</span></div><div class="flex items-center gap-space-md"><span>STATUS: LEDGER_IMMUTABLE</span><span class="text-outline-variant">|</span><span>SHA256: 4f9b8c2e...d10e</span></div></div></footer></body></html>

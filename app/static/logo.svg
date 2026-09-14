@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" width="160" height="40" fill="none">
+  <rect x="2" y="8" width="24" height="24" rx="0" fill="none" stroke="#1A2129" stroke-width="1.75"/>
+  <line x1="14" y1="8" x2="14" y2="32" stroke="#1A2129" stroke-width="1.25"/>
+  <line x1="2" y1="16" x2="26" y2="16" stroke="#1A2129" stroke-width="1"/>
+  <line x1="2" y1="24" x2="26" y2="24" stroke="#D7DCD6" stroke-width="1"/>
+  <circle cx="8" cy="20" r="1.5" fill="#3E6259"/>
+  <circle cx="20" cy="20" r="1.5" fill="#3E6259"/>
+  <text x="36" y="25" font-family="Fraunces, 'Source Serif 4', Georgia, serif" font-size="20" font-weight="600" fill="#1A2129" letter-spacing="-0.02em">KEEL</text>
+  <text x="96" y="24" font-family="'IBM Plex Mono', 'JetBrains Mono', monospace" font-size="10" font-weight="400" fill="#53606E" letter-spacing="0.04em">ledger.core</text>
+</svg>
