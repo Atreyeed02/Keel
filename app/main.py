@@ -1,11 +1,14 @@
 # pyrefly: ignore [missing-import]
+from pathlib import Path
+
 from fastapi import FastAPI, Request
+
 # pyrefly: ignore [missing-import]
 from fastapi.responses import HTMLResponse
+
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pathlib import Path
 
 from app.api.health import router as health_router
 from app.config import settings
