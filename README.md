@@ -65,6 +65,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
+The application container runs `alembic upgrade head` before starting Uvicorn, so
+the database schema is created automatically. To run it yourself: `alembic upgrade head`.
+
 Then:
 - API: http://localhost:8000
 - Interactive docs: http://localhost:8000/docs

@@ -1,43 +1,298 @@
-# pyrefly: ignore [missing-import]
+import hashlib
+import json
+import uuid
+from collections import defaultdict
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, Request
-
-# pyrefly: ignore [missing-import]
-from fastapi.responses import HTMLResponse
-
-# pyrefly: ignore [missing-import]
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
+from sqlalchemy import case, func, insert, select
 
 from app.api.health import router as health_router
 from app.config import settings
+from app.db.engine import engine
+from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
+from app.domain.ledger import (
+    EntryInput,
+    UnbalancedTransactionError,
+    assert_balanced,
+    post_transaction,
+)
 
 app = FastAPI(
     title=settings.app_name,
     description="Event-sourced, double-entry ledger service.",
     version="0.1.0",
 )
-
 app.include_router(health_router)
-
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+NORMAL_DEBIT_TYPES = {"asset", "expense"}
+
+
+def _money(value: Decimal | None) -> str:
+    return f"{(value or Decimal('0')):,.2f}"
+
+
+templates.env.filters["money"] = _money
+
+
+async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    async with engine.connect() as conn:
+        account_rows = (
+            (
+                await conn.execute(
+                    select(accounts).order_by(accounts.c.account_type, accounts.c.name)
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return {
+        "accounts": account_rows,
+        "entries": entries
+        or [
+            {"account_id": "", "entry_type": "debit", "amount": "", "currency": "USD"},
+            {"account_id": "", "entry_type": "credit", "amount": "", "currency": "USD"},
+        ],
+    }
+
 
 @app.get("/", response_class=HTMLResponse)
 async def read_overview(request: Request):
-    return templates.TemplateResponse(request=request, name="overview.html")
+    debit = func.coalesce(
+        func.sum(case((ledger_entries.c.entry_type == "debit", ledger_entries.c.amount), else_=0)),
+        0,
+    )
+    credit = func.coalesce(
+        func.sum(case((ledger_entries.c.entry_type == "credit", ledger_entries.c.amount), else_=0)),
+        0,
+    )
+    balance = func.coalesce(
+        func.sum(
+            case(
+                (ledger_entries.c.entry_type == "debit", ledger_entries.c.amount),
+                else_=-ledger_entries.c.amount,
+            )
+        ),
+        0,
+    )
+    async with engine.connect() as conn:
+        account_rows = (
+            (
+                await conn.execute(
+                    select(
+                        accounts.c.id,
+                        accounts.c.name,
+                        accounts.c.account_type,
+                        accounts.c.currency,
+                        debit.label("debits"),
+                        credit.label("credits"),
+                        balance.label("raw_balance"),
+                    )
+                    .outerjoin(ledger_entries, ledger_entries.c.account_id == accounts.c.id)
+                    .group_by(
+                        accounts.c.id, accounts.c.name, accounts.c.account_type, accounts.c.currency
+                    )
+                    .order_by(accounts.c.account_type, accounts.c.name)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        totals = (
+            (await conn.execute(select(debit.label("debits"), credit.label("credits"))))
+            .mappings()
+            .one()
+        )
+        recent = (
+            (
+                await conn.execute(
+                    select(
+                        transactions.c.id,
+                        transactions.c.description,
+                        transactions.c.created_at,
+                        func.coalesce(func.sum(ledger_entries.c.amount), 0).label("entry_volume"),
+                        func.count(ledger_entries.c.id).label("entry_count"),
+                    )
+                    .outerjoin(ledger_entries, ledger_entries.c.transaction_id == transactions.c.id)
+                    .group_by(
+                        transactions.c.id, transactions.c.description, transactions.c.created_at
+                    )
+                    .order_by(transactions.c.created_at.desc())
+                    .limit(10)
+                )
+            )
+            .mappings()
+            .all()
+        )
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in account_rows:
+        data = dict(row)
+        data["normal_side"] = "debit" if row["account_type"] in NORMAL_DEBIT_TYPES else "credit"
+        data["balance"] = (
+            row["raw_balance"] if data["normal_side"] == "debit" else -row["raw_balance"]
+        )
+        grouped[row["account_type"]].append(data)
+    return templates.TemplateResponse(
+        request=request,
+        name="overview.html",
+        context={
+            "accounts_by_type": grouped,
+            "total_debits": totals["debits"],
+            "total_credits": totals["credits"],
+            "delta": totals["debits"] - totals["credits"],
+            "recent_transactions": recent,
+        },
+    )
+
 
 @app.get("/event-log", response_class=HTMLResponse)
-async def read_event_log(request: Request):
-    return templates.TemplateResponse(request=request, name="event_log.html")
+async def read_event_log(request: Request, page: int = Query(1, ge=1)):
+    page_size = 25
+    async with engine.connect() as conn:
+        total = await conn.scalar(select(func.count()).select_from(events))
+        rows = (
+            (
+                await conn.execute(
+                    select(events)
+                    .order_by(events.c.created_at.desc(), events.c.id.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="event_log.html",
+        context={"events": rows, "page": page, "page_size": page_size, "total": total or 0},
+    )
+
 
 @app.get("/post-transaction", response_class=HTMLResponse)
 async def read_post_transaction(request: Request):
-    return templates.TemplateResponse(request=request, name="post_transaction.html")
+    context = await _form_context()
+    context["submission_key"] = str(uuid.uuid4())
+    return templates.TemplateResponse(
+        request=request, name="post_transaction.html", context=context
+    )
 
-@app.get("/transaction-detail", response_class=HTMLResponse)
-async def read_transaction_detail(request: Request):
-    return templates.TemplateResponse(request=request, name="transaction_detail.html")
+
+@app.post("/post-transaction", response_class=HTMLResponse)
+async def submit_post_transaction(
+    request: Request,
+    description: str = Form(""),
+    submission_key: str | None = Form(None),
+    account_id: list[str] = Form(...),
+    entry_type: list[str] = Form(...),
+    amount: list[str] = Form(...),
+    currency: list[str] = Form(...),
+):
+    raw_entries = [
+        {"account_id": account, "entry_type": kind, "amount": value, "currency": ccy.upper()}
+        for account, kind, value, ccy in zip(account_id, entry_type, amount, currency, strict=True)
+    ]
+    submission_key = submission_key or str(uuid.uuid4())
+    try:
+        entries = [EntryInput.model_validate(row) for row in raw_entries]
+        assert_balanced(entries)
+        if len(entries) < 2:
+            raise ValueError("a transaction needs at least two entries")
+    except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
+        context = await _form_context(raw_entries)
+        context.update(
+            {"error": str(exc), "description": description, "submission_key": submission_key}
+        )
+        return templates.TemplateResponse(
+            request=request, name="post_transaction.html", context=context, status_code=422
+        )
+    request_hash = hashlib.sha256(
+        json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
+    ).hexdigest()
+    async with engine.begin() as conn:
+        saved = (
+            (
+                await conn.execute(
+                    select(idempotency_keys.c.request_hash, idempotency_keys.c.response_body).where(
+                        idempotency_keys.c.key == submission_key
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if saved:
+            if saved["request_hash"] != request_hash:
+                raise HTTPException(
+                    status_code=409, detail="submission key was used for another request"
+                )
+            transaction_id = uuid.UUID(saved["response_body"]["transaction_id"])
+        else:
+            transaction_id = await post_transaction(conn, entries, description or None)
+            await conn.execute(
+                insert(idempotency_keys).values(
+                    key=submission_key,
+                    request_hash=request_hash,
+                    response_body={"transaction_id": str(transaction_id)},
+                    response_status="302",
+                )
+            )
+    return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
+
+
+@app.get("/transaction-detail/{transaction_id}", response_class=HTMLResponse)
+async def read_transaction_detail(request: Request, transaction_id: uuid.UUID):
+    async with engine.connect() as conn:
+        transaction = (
+            (await conn.execute(select(transactions).where(transactions.c.id == transaction_id)))
+            .mappings()
+            .one_or_none()
+        )
+        if transaction is None:
+            raise HTTPException(status_code=404, detail="transaction not found")
+        entry_rows = (
+            (
+                await conn.execute(
+                    select(ledger_entries, accounts.c.name, accounts.c.account_type)
+                    .join(accounts, accounts.c.id == ledger_entries.c.account_id)
+                    .where(ledger_entries.c.transaction_id == transaction_id)
+                    .order_by(ledger_entries.c.created_at, ledger_entries.c.id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        event = (
+            (
+                await conn.execute(
+                    select(events).where(
+                        events.c.aggregate_type == "transaction",
+                        events.c.aggregate_id == transaction_id,
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+    debits = [row for row in entry_rows if row["entry_type"] == "debit"]
+    credits = [row for row in entry_rows if row["entry_type"] == "credit"]
+    return templates.TemplateResponse(
+        request=request,
+        name="transaction_detail.html",
+        context={
+            "transaction": transaction,
+            "debits": debits,
+            "credits": credits,
+            "debit_total": sum((row["amount"] for row in debits), Decimal()),
+            "credit_total": sum((row["amount"] for row in credits), Decimal()),
+            "event": event,
+        },
+    )

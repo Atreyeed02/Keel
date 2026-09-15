@@ -58,9 +58,7 @@ def assert_balanced(entries: list[EntryInput]) -> None:
 
     unbalanced = {ccy: total for ccy, total in net.items() if total != 0}
     if unbalanced:
-        raise UnbalancedTransactionError(
-            f"transaction does not balance per currency: {unbalanced}"
-        )
+        raise UnbalancedTransactionError(f"transaction does not balance per currency: {unbalanced}")
 
 
 async def post_transaction(
@@ -81,9 +79,7 @@ async def post_transaction(
 
     txn_id = uuid.uuid4()
 
-    await conn.execute(
-        insert(transactions).values(id=txn_id, description=description)
-    )
+    await conn.execute(insert(transactions).values(id=txn_id, description=description))
     await conn.execute(
         insert(ledger_entries),
         [
