@@ -17,6 +17,7 @@ from app.api.health import router as health_router
 from app.config import settings
 from app.db.engine import engine
 from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
+from app.domain.accounts import ACCOUNT_TYPES, InvalidAccountError, validate_account
 from app.domain.ledger import (
     EntryInput,
     UnbalancedTransactionError,
@@ -175,6 +176,51 @@ async def read_event_log(request: Request, page: int = Query(1, ge=1)):
         name="event_log.html",
         context={"events": rows, "page": page, "page_size": page_size, "total": total or 0},
     )
+
+
+@app.get("/accounts/new", response_class=HTMLResponse)
+async def read_new_account(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="account_new.html",
+        context={
+            "account": {"name": "", "account_type": "asset", "currency": "USD"},
+            "account_types": ACCOUNT_TYPES,
+        },
+    )
+
+
+@app.post("/accounts", response_class=HTMLResponse)
+async def create_account(
+    request: Request,
+    name: str = Form(""),
+    account_type: str = Form(""),
+    currency: str = Form(""),
+):
+    raw_account = {"name": name, "account_type": account_type, "currency": currency}
+    try:
+        account = validate_account(raw_account)
+    except InvalidAccountError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="account_new.html",
+            context={
+                "account": raw_account,
+                "account_types": ACCOUNT_TYPES,
+                "error": str(exc),
+            },
+            status_code=422,
+        )
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(accounts).values(
+                id=uuid.uuid4(),
+                name=account.name,
+                account_type=account.account_type,
+                currency=account.currency,
+            )
+        )
+    return RedirectResponse(url="/", status_code=302)
 
 
 @app.get("/post-transaction", response_class=HTMLResponse)
