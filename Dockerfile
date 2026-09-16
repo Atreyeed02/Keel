@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
+# Dev utilities — not used at runtime, but `docker compose exec app
+# python -m scripts.seed_demo_data` is the documented way to load demo data.
+COPY scripts/ ./scripts/
 
 EXPOSE 8000
 

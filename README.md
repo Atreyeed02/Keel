@@ -69,6 +69,14 @@ docker compose up --build
 The application container runs `alembic upgrade head` before starting Uvicorn, so
 the database schema is created automatically. To run it yourself: `alembic upgrade head`.
 
+Optionally populate a demo chart of accounts and a handful of transactions
+(including one in EUR, to show the per-currency balance rule) — it's a no-op
+if the ledger already has data:
+
+```bash
+docker compose exec app python -m scripts.seed_demo_data
+```
+
 Then:
 - API: http://localhost:8000
 - Interactive docs: http://localhost:8000/docs
