@@ -41,3 +41,137 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql+asyncpg://ledger:ledger@localhost:5432/ledger
         run: pytest -v
+
+  # Proves the shipped container actually boots, migrates and serves —
+  # the compose path is what a new contributor runs first, and until now
+  # nothing verified it. Deliberately a separate job from lint-and-test:
+  # a red build here means "the image is broken", not "a test failed".
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start stack
+        run: docker compose up -d
+
+      - name: Wait for /health to serve
+        shell: bash
+        run: |
+          set -uo pipefail
+          # The app's CMD is `alembic upgrade head && uvicorn ...`, so
+          # nothing answers on :8000 until migrations have finished.
+          # Poll rather than sleeping a guessed number of seconds.
+          deadline=$((SECONDS + 180))
+          until curl -fsS -o /tmp/health.json http://localhost:8000/health 2>/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::/health never returned 200 within 180s"
+              exit 1
+            fi
+            sleep 3
+          done
+          echo "health body: $(cat /tmp/health.json)"
+
+      - name: Assert health reports a live database
+        shell: bash
+        run: |
+          set -euo pipefail
+          # /health is deliberately non-raising: it answers 200 with
+          # {"status":"degraded","db":"down"} when the DB is unreachable.
+          # A bare 200 check would therefore go green on a stack whose
+          # migration step failed, so assert the exact healthy body.
+          expected='{"status":"ok","db":"up"}'
+          actual="$(cat /tmp/health.json)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::expected $expected but got $actual"
+            exit 1
+          fi
+
+      - name: Assert migrations ran inside the container
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Belt and braces on the step above: confirm alembic actually
+          # stamped a revision, so a DB that came up with tables from
+          # some other path can't pass for a successful migrate-on-boot.
+          revision="$(docker compose exec -T db \
+            psql -U ledger -d ledger -tAc 'select version_num from alembic_version' \
+            | tr -d '[:space:]')"
+          if [ -z "$revision" ]; then
+            echo "::error::alembic_version is empty — migrate-on-boot did not run"
+            exit 1
+          fi
+          echo "alembic revision in container: $revision"
+
+      - name: Smoke the real posting flow through the container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          post() {
+            curl -s -o /tmp/resp.txt -w '%{http_code}' -X POST "$@"
+          }
+
+          # 1. create both sides of the entry through the real form endpoint
+          for pair in "Cash:asset" "Sales revenue:revenue"; do
+            name="${pair%%:*}"; type="${pair##*:}"
+            code="$(post http://localhost:8000/accounts \
+              --data-urlencode "name=$name" \
+              --data-urlencode "account_type=$type" \
+              --data-urlencode "currency=USD")"
+            if [ "$code" != "302" ]; then
+              echo "::error::POST /accounts ($name) returned $code, expected 302"
+              cat /tmp/resp.txt
+              exit 1
+            fi
+          done
+
+          # 2. read the server-generated ids back out of the container's DB,
+          #    which also proves the inserts really landed
+          ids() {
+            docker compose exec -T db psql -U ledger -d ledger -tAc \
+              "select id from accounts where name = '$1'" | tr -d '[:space:]'
+          }
+          cash="$(ids 'Cash')"
+          revenue="$(ids 'Sales revenue')"
+          if [ -z "$cash" ] || [ -z "$revenue" ]; then
+            echo "::error::accounts were not persisted (cash='$cash' revenue='$revenue')"
+            exit 1
+          fi
+
+          # 3. post a balanced double-entry transaction against them
+          code="$(post http://localhost:8000/post-transaction \
+            -d "description=docker smoke sale" \
+            -d "submission_key=docker-smoke-1" \
+            -d "account_id=$cash"   -d "account_id=$revenue" \
+            -d "entry_type=debit"   -d "entry_type=credit" \
+            -d "amount=250.00"      -d "amount=250.00" \
+            -d "currency=USD"       -d "currency=USD")"
+          if [ "$code" != "302" ]; then
+            echo "::error::POST /post-transaction returned $code, expected 302"
+            cat /tmp/resp.txt
+            exit 1
+          fi
+
+          # 4. the posted balance has to surface on the overview page
+          curl -fsS http://localhost:8000/ -o /tmp/overview.html
+          for needle in "Cash" "Sales revenue" "250.00"; do
+            if ! grep -qF "$needle" /tmp/overview.html; then
+              echo "::error::overview page is missing '$needle' after posting"
+              exit 1
+            fi
+          done
+          echo "smoke flow OK: account creation -> balanced posting -> overview"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
