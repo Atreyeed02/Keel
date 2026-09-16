@@ -70,6 +70,39 @@ async def test_unbalanced_submission_renders_inline_error(database):
     assert "does not balance" in response.text
 
 
+async def test_created_account_appears_in_overview(database):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test", follow_redirects=False
+    ) as client:
+        created = await client.post(
+            "/accounts",
+            data={"name": "Office rent", "account_type": "expense", "currency": "usd"},
+        )
+        overview = await client.get("/")
+    assert created.status_code == 302
+    assert created.headers["location"] == "/"
+    assert overview.status_code == 200
+    assert "Office rent" in overview.text
+
+
+async def test_invalid_account_type_renders_inline_error(database):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/accounts",
+            data={"name": "Suspense", "account_type": "banana", "currency": "USD"},
+        )
+        overview = await client.get("/")
+    assert response.status_code == 422
+    assert "Cannot create account" in response.text
+    assert "account_type must be one of" in response.text
+    # the submitted values come back so the form isn't retyped from scratch
+    assert 'value="Suspense"' in response.text
+    # and nothing was written
+    assert "Suspense" not in overview.text
+
+
 async def test_overview_shows_posted_account_balance(database):
     cash_id, revenue_id = database
     transport = ASGITransport(app=app)
