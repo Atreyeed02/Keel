@@ -29,6 +29,10 @@ This service takes the opposite approach:
 
 ## Architecture
 
+For a full walkthrough — the accounting and event-sourcing concepts, what
+every file does, and a frank list of what's still missing — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ```
 Client
   │
