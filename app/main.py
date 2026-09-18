@@ -163,7 +163,7 @@ async def read_event_log(request: Request, page: int = Query(1, ge=1)):
             (
                 await conn.execute(
                     select(events)
-                    .order_by(events.c.created_at.desc(), events.c.id.desc())
+                    .order_by(events.c.sequence.desc())
                     .offset((page - 1) * page_size)
                     .limit(page_size)
                 )
