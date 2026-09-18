@@ -399,6 +399,13 @@ for many entity kinds.
 | `currency` | String(3) | ISO 4217 code |
 | `created_at` | timestamptz | |
 
+An account's `currency` is fixed at creation and never updated, which
+makes it the authority on what that account holds: `post_transaction()`
+rejects any entry whose currency differs from it, so an account cannot
+accumulate two currencies and the overview's per-account balance is a
+single meaningful figure by construction. This is enforced in the domain
+layer, like the balance invariant, not by a database constraint.
+
 `account_type` carries a database `CHECK` (`ck_account_type_valid`,
 added by migration `de4f1aec2fe6`) restricting it to the five types, so
 a write that bypasses `app/domain/accounts.py` is rejected by Postgres
@@ -820,8 +827,10 @@ order, indexes behind every query the pages actually run, and Alembic
 migrations that run automatically on container boot.
 
 **Domain layer** — the per-currency double-entry invariant, entry
-validation, atomic posting that writes the event log alongside the read
-model, and account input validation.
+validation against the accounts an entry names (the account must exist,
+and its currency is the only one that entry may carry), atomic posting
+that writes the event log alongside the read model, and account input
+validation.
 
 **HTTP layer** — health check, and five server-rendered pages: overview
 with per-account balances and normal-side signs, event log with
@@ -852,46 +861,25 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. Per-account balances sum across currencies.** The overview query sums
-`amount` with no `GROUP BY currency`, so an account holding entries in two
-currencies displays USD + EUR added together as one number. The seed data
-avoids this by keeping each account single-currency, but nothing enforces
-that. Either constrain entries to the account's currency, or group
-balances by currency.
-
-*(Related but not a bug: the "Total debits / Total credits" figures also
-add currencies together. The **delta** is still a valid invariant check —
-if each currency nets to zero, the grand total does too — but the
-magnitudes are not meaningful money.)*
-
-**2. Posting against a nonexistent account is an unhandled 500.**
-`post_transaction()` never looks up the accounts an entry references — it
-inserts `account_id` straight from `EntryInput`. A submission naming an id
-that is not in `accounts` therefore reaches Postgres and trips the
-`ledger_entries_account_id_fkey` foreign key, surfacing as an unhandled
-`IntegrityError`: a 500 page, where every other invalid submission gets an
-inline form error. Same root cause as item 1 — nothing validates entries
-against the accounts they point at.
-
-**3. No replay/rebuild path.** The read model is described as rebuildable
+**1. No replay/rebuild path.** The read model is described as rebuildable
 from `events`, but no code rebuilds it. Until a replay function exists and
 is tested, that is an untested claim.
 
-**4. No FX handling.** Per §2.4, currency conversion cannot be expressed.
+**2. No FX handling.** Per §2.4, currency conversion cannot be expressed.
 Needs a clearing-account pattern plus an FX gain/loss account.
 
 ### Robustness
 
-**5. No balance enforcement at the database level.** Noted in the schema
+**3. No balance enforcement at the database level.** Noted in the schema
 comments as a deliberate v2 item. A constraint trigger would make a
 half-written transaction impossible even from outside the app.
 
-**6. `idempotency_keys` grows forever.** No TTL or cleanup job.
+**4. `idempotency_keys` grows forever.** No TTL or cleanup job.
 
-**7. No authentication or authorisation anywhere.** Every route is public.
+**5. No authentication or authorisation anywhere.** Every route is public.
 Acceptable for a demo, disqualifying for anything real.
 
-**8. Raw validation errors on `POST /post-transaction`.** It still renders
+**6. Raw validation errors on `POST /post-transaction`.** It still renders
 `str(ValidationError)` for non-imbalance failures (e.g. a malformed
 amount), producing a multi-line internal dump in the alert box. The
 `_describe()` helper in `accounts.py` already solves this and should be
@@ -899,20 +887,20 @@ shared.
 
 ### Build and tooling
 
-**9. The compose bind mount shadows the image.** `docker-compose.yml`
+**7. The compose bind mount shadows the image.** `docker-compose.yml`
 mounts `./app:/app/app` for live reload, so the container runs the host's
 `app/` rather than the copy baked into the image — meaning the CI smoke
 test would not catch a broken `COPY app/ ./app/`. Consider a compose
 override so CI tests the image as shipped.
 
-**10. No `.dockerignore`.** The whole directory is sent as build context,
+**8. No `.dockerignore`.** The whole directory is sent as build context,
 including `.git/`, `.pytest_cache/` and `.ruff_cache/`.
 
-**11. No `app` healthcheck in compose.** Only `db` has one.
+**9. No `app` healthcheck in compose.** Only `db` has one.
 
 ### Documentation
 
-**12. The README's "Running tests locally" section is out of date.** It
+**10. The README's "Running tests locally" section is out of date.** It
 claims the suite runs "without requiring a live database", which is no
 longer true of `test_ledger_pages.py`. ("Status" and "Roadmap" have since
 been rewritten to match what is actually built.)

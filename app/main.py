@@ -19,8 +19,10 @@ from app.db.engine import engine
 from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
 from app.domain.accounts import ACCOUNT_TYPES, InvalidAccountError, validate_account
 from app.domain.ledger import (
+    CurrencyMismatchError,
     EntryInput,
     UnbalancedTransactionError,
+    UnknownAccountError,
     assert_balanced,
     post_transaction,
 )
@@ -107,10 +109,24 @@ async def read_overview(request: Request):
             .mappings()
             .all()
         )
+        # Grouped by currency, not summed across all of them: adding USD
+        # to EUR produces a real number that means nothing. Entries are
+        # now guaranteed to carry their account's currency, so grouping
+        # on the entry column gives one honest total per currency.
         totals = (
-            (await conn.execute(select(debit.label("debits"), credit.label("credits"))))
+            (
+                await conn.execute(
+                    select(
+                        ledger_entries.c.currency,
+                        debit.label("debits"),
+                        credit.label("credits"),
+                    )
+                    .group_by(ledger_entries.c.currency)
+                    .order_by(ledger_entries.c.currency)
+                )
+            )
             .mappings()
-            .one()
+            .all()
         )
         recent = (
             (
@@ -146,9 +162,15 @@ async def read_overview(request: Request):
         name="overview.html",
         context={
             "accounts_by_type": grouped,
-            "total_debits": totals["debits"],
-            "total_credits": totals["credits"],
-            "delta": totals["debits"] - totals["credits"],
+            "totals_by_currency": [
+                {
+                    "currency": row["currency"],
+                    "debits": row["debits"],
+                    "credits": row["credits"],
+                    "delta": row["debits"] - row["credits"],
+                }
+                for row in totals
+            ],
             "recent_transactions": recent,
         },
     )
@@ -247,12 +269,8 @@ async def submit_post_transaction(
         for account, kind, value, ccy in zip(account_id, entry_type, amount, currency, strict=True)
     ]
     submission_key = submission_key or str(uuid.uuid4())
-    try:
-        entries = [EntryInput.model_validate(row) for row in raw_entries]
-        assert_balanced(entries)
-        if len(entries) < 2:
-            raise ValueError("a transaction needs at least two entries")
-    except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
+
+    async def invalid(exc: Exception):
         context = await _form_context(raw_entries)
         context.update(
             {"error": str(exc), "description": description, "submission_key": submission_key}
@@ -260,37 +278,52 @@ async def submit_post_transaction(
         return templates.TemplateResponse(
             request=request, name="post_transaction.html", context=context, status_code=422
         )
+
+    try:
+        entries = [EntryInput.model_validate(row) for row in raw_entries]
+        assert_balanced(entries)
+        if len(entries) < 2:
+            raise ValueError("a transaction needs at least two entries")
+    except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
+        return await invalid(exc)
     request_hash = hashlib.sha256(
         json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
     ).hexdigest()
-    async with engine.begin() as conn:
-        saved = (
-            (
-                await conn.execute(
-                    select(idempotency_keys.c.request_hash, idempotency_keys.c.response_body).where(
-                        idempotency_keys.c.key == submission_key
+    # post_transaction validates entries against the accounts they name,
+    # which needs a connection — so those failures surface here rather than
+    # in the pre-flight block above. The engine.begin() context rolls the
+    # whole thing back before the error page is rendered.
+    try:
+        async with engine.begin() as conn:
+            saved = (
+                (
+                    await conn.execute(
+                        select(
+                            idempotency_keys.c.request_hash, idempotency_keys.c.response_body
+                        ).where(idempotency_keys.c.key == submission_key)
                     )
                 )
+                .mappings()
+                .one_or_none()
             )
-            .mappings()
-            .one_or_none()
-        )
-        if saved:
-            if saved["request_hash"] != request_hash:
-                raise HTTPException(
-                    status_code=409, detail="submission key was used for another request"
+            if saved:
+                if saved["request_hash"] != request_hash:
+                    raise HTTPException(
+                        status_code=409, detail="submission key was used for another request"
+                    )
+                transaction_id = uuid.UUID(saved["response_body"]["transaction_id"])
+            else:
+                transaction_id = await post_transaction(conn, entries, description or None)
+                await conn.execute(
+                    insert(idempotency_keys).values(
+                        key=submission_key,
+                        request_hash=request_hash,
+                        response_body={"transaction_id": str(transaction_id)},
+                        response_status="302",
+                    )
                 )
-            transaction_id = uuid.UUID(saved["response_body"]["transaction_id"])
-        else:
-            transaction_id = await post_transaction(conn, entries, description or None)
-            await conn.execute(
-                insert(idempotency_keys).values(
-                    key=submission_key,
-                    request_hash=request_hash,
-                    response_body={"transaction_id": str(transaction_id)},
-                    response_status="302",
-                )
-            )
+    except (UnknownAccountError, CurrencyMismatchError) as exc:
+        return await invalid(exc)
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
 
