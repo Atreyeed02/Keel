@@ -33,6 +33,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
+# The five account types are defined once, in the domain layer, and the
+# CHECK constraint below is generated from them so the database and the
+# Python validator cannot drift apart. `app.domain.accounts` imports only
+# pydantic, so this does not create a cycle with `app.domain.ledger`,
+# which imports this module.
+from app.domain.accounts import ACCOUNT_TYPES
+
 metadata = MetaData()
 
 # --- Event log ---------------------------------------------------------
@@ -69,9 +76,17 @@ accounts = Table(
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
     Column("name", String(255), nullable=False),
-    Column("account_type", String(32), nullable=False),  # asset/liability/equity/revenue/expense
+    Column("account_type", String(32), nullable=False),
     Column("currency", String(3), nullable=False),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Enforced in the database, not just in `validate_account`: the
+    # overview page keys its balance sign off this column, so a row
+    # written by anything that bypasses the app — a migration, a manual
+    # INSERT, a future importer — would otherwise render a wrong balance.
+    CheckConstraint(
+        f"account_type IN ({', '.join(repr(t) for t in ACCOUNT_TYPES)})",
+        name="ck_account_type_valid",
+    ),
 )
 
 transactions = Table(
@@ -104,6 +119,14 @@ ledger_entries = Table(
     # DB-level trigger is a reasonable v2 hardening step, noted in the
     # roadmap doc rather than built into the MVP.
 )
+
+# Declared here as well as in the migration, for the same reason as the
+# `events` indexes above. Each one backs a query the app actually runs:
+# the overview's per-account balance join, the transaction-detail entry
+# lookup, and the overview's "recent transactions" ordering.
+Index("ix_ledger_entries_account_id", ledger_entries.c.account_id)
+Index("ix_ledger_entries_transaction_id", ledger_entries.c.transaction_id)
+Index("ix_transactions_created_at", transactions.c.created_at.desc())
 
 # --- Idempotency layer ---------------------------------------------------
 
