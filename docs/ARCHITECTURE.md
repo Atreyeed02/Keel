@@ -399,8 +399,12 @@ for many entity kinds.
 | `currency` | String(3) | ISO 4217 code |
 | `created_at` | timestamptz | |
 
-Note `account_type` is a plain string with **no** database `CHECK`
-constraint — validity is enforced only in `app/domain/accounts.py`.
+`account_type` carries a database `CHECK` (`ck_account_type_valid`,
+added by migration `de4f1aec2fe6`) restricting it to the five types, so
+a write that bypasses `app/domain/accounts.py` is rejected by Postgres
+rather than silently mis-signing a balance. `app/db/schema.py` generates
+the constraint from that module's `ACCOUNT_TYPES` tuple, so the two
+cannot drift.
 
 **`transactions`** — id, optional description, created_at. Deliberately
 thin; all the money lives in the entries.
@@ -675,6 +679,9 @@ Migrations version the schema so it can be recreated deterministically.
 `b7855ff9a6aa_events_sequence_identity_and_indexes.py` then replaces
 `events.sequence` with the identity column described in §5.2 and adds the
 three `events` indexes.
+`de4f1aec2fe6_read_model_indexes_and_account_type_check.py` indexes the
+read model — `ledger_entries(account_id)`, `ledger_entries(transaction_id)`
+and `transactions(created_at DESC)` — and adds the `account_type` `CHECK`.
 
 The interesting part is `alembic/env.py`:
 
@@ -807,10 +814,10 @@ Browser form (repeated fields → lists)
 ## 7. What has been done
 
 **Schema and migrations** — all five tables, with `CHECK` constraints on
-entry type and amount, exact-decimal money columns, a database-generated
-identity column giving the event log a real total order, indexes on the
-`events` queries, and Alembic migrations that run automatically on
-container boot.
+entry type, amount and account type, exact-decimal money columns, a
+database-generated identity column giving the event log a real total
+order, indexes behind every query the pages actually run, and Alembic
+migrations that run automatically on container boot.
 
 **Domain layer** — the per-currency double-entry invariant, entry
 validation, atomic posting that writes the event log alongside the read
@@ -866,28 +873,16 @@ Needs a clearing-account pattern plus an FX gain/loss account.
 
 ### Robustness
 
-**4. `ledger_entries` has no indexes.** `events` is now covered —
-migration `b7855ff9a6aa` added `sequence` (unique), `created_at DESC` and
-`(aggregate_type, aggregate_id)` — but the read-model tables still have
-none, so both money queries do sequential scans:
-- `ledger_entries(account_id)` — the overview join
-- `ledger_entries(transaction_id)` — transaction detail
-
-**5. `account_type` has no database `CHECK`.** Validity is enforced only in
-application code, so anything writing directly to the database can insert a
-type the overview will mis-sign. `entry_type` and `amount` already have
-`CHECK` constraints; this one is missing.
-
-**6. No balance enforcement at the database level.** Noted in the schema
+**4. No balance enforcement at the database level.** Noted in the schema
 comments as a deliberate v2 item. A constraint trigger would make a
 half-written transaction impossible even from outside the app.
 
-**7. `idempotency_keys` grows forever.** No TTL or cleanup job.
+**5. `idempotency_keys` grows forever.** No TTL or cleanup job.
 
-**8. No authentication or authorisation anywhere.** Every route is public.
+**6. No authentication or authorisation anywhere.** Every route is public.
 Acceptable for a demo, disqualifying for anything real.
 
-**9. Raw validation errors on `POST /post-transaction`.** It still renders
+**7. Raw validation errors on `POST /post-transaction`.** It still renders
 `str(ValidationError)` for non-imbalance failures (e.g. a malformed
 amount), producing a multi-line internal dump in the alert box. The
 `_describe()` helper in `accounts.py` already solves this and should be
@@ -895,20 +890,20 @@ shared.
 
 ### Build and tooling
 
-**10. The compose bind mount shadows the image.** `docker-compose.yml`
+**8. The compose bind mount shadows the image.** `docker-compose.yml`
 mounts `./app:/app/app` for live reload, so the container runs the host's
 `app/` rather than the copy baked into the image — meaning the CI smoke
 test would not catch a broken `COPY app/ ./app/`. Consider a compose
 override so CI tests the image as shipped.
 
-**11. No `.dockerignore`.** The whole directory is sent as build context,
+**9. No `.dockerignore`.** The whole directory is sent as build context,
 including `.git/`, `.pytest_cache/` and `.ruff_cache/`.
 
-**12. No `app` healthcheck in compose.** Only `db` has one.
+**10. No `app` healthcheck in compose.** Only `db` has one.
 
 ### Documentation
 
-**13. The README's "Running tests locally" section is out of date.** It
+**11. The README's "Running tests locally" section is out of date.** It
 claims the suite runs "without requiring a live database", which is no
 longer true of `test_ledger_pages.py`. ("Status" and "Roadmap" have since
 been rewritten to match what is actually built.)
