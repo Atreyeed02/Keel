@@ -908,12 +908,10 @@ including `.git/`, `.pytest_cache/` and `.ruff_cache/`.
 
 ### Documentation
 
-**13. The README is out of date.** Its "Status" section says transaction
-endpoints and idempotency middleware "are next" — both are done. The
-roadmap has REST endpoints, idempotency and Alembic migrations unchecked
-despite being implemented. The "Running tests locally" section claims the
-suite runs "without requiring a live database", which is no longer true of
-`test_ledger_pages.py`.
+**13. The README's "Running tests locally" section is out of date.** It
+claims the suite runs "without requiring a live database", which is no
+longer true of `test_ledger_pages.py`. ("Status" and "Roadmap" have since
+been rewritten to match what is actually built.)
 
 ### Roadmap items not started
 
