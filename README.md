@@ -111,18 +111,42 @@ tests/
 
 ## Status
 
-Early scaffold — core ledger schema, double-entry posting logic, and
-health check are in place; transaction API endpoints and idempotency
-middleware are next.
+Working end to end — the ledger can be driven entirely through the
+browser, and CI proves the shipped container does it too. What exists
+today:
+
+- **Five server-rendered pages** — balance overview, paginated event log,
+  transaction-posting form, transaction detail, and account creation.
+- **Double-entry posting with idempotency** — the balance invariant is
+  enforced per currency before anything is written, and every submission
+  carries a key, so a resubmitted form returns the original transaction
+  instead of posting it twice.
+- **Account creation** with validated account types and currency codes.
+- **Alembic migrations**, applied automatically on container start.
+- **A demo seed script** (`scripts/seed_demo_data.py`) that writes through
+  the domain layer rather than by raw `INSERT`, so a seeded database has
+  the same event log a hand-typed one would.
+- **CI** — `ruff` and `pytest` against a live PostgreSQL, plus a
+  `docker-smoke` job that builds the image, boots the stack, confirms
+  migrations ran, and drives the real account-creation → posting →
+  overview flow over HTTP.
 
 ## Roadmap
 
-- [ ] REST endpoints for posting/querying transactions
-- [ ] Idempotency-key middleware (currently modeled in schema, not wired up)
-- [ ] Alembic migrations
-- [ ] Idempotent webhook ingestion
-- [ ] Multi-provider payment orchestration
-- [ ] Reconciliation engine
-- [ ] Outbox pattern for reliable event publishing
-- [ ] Observability (structured logs, metrics)
-- [ ] CI/CD deployment pipeline
+**Known gaps in what's built** are tracked in
+[docs/ARCHITECTURE.md §8](docs/ARCHITECTURE.md#8-what-still-needs-doing),
+not duplicated here — that list is maintained next to the code it
+describes, and a second copy would only drift out of date. It's a frank
+inventory: correctness limits, robustness work the demo gets away with
+skipping, and build/tooling loose ends.
+
+**Deliberately out of scope.** These are the layers a payments platform
+puts *around* a ledger. None of them were part of this build; they're
+listed to mark the boundary, not as planned work:
+
+- Idempotent webhook ingestion
+- Multi-provider payment orchestration
+- Reconciliation engine
+- Outbox pattern for reliable event publishing
+- Observability (structured logs, metrics, tracing)
+- CI/CD deployment pipeline
