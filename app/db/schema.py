@@ -17,10 +17,13 @@ returned, so a retried request short-circuits instead of re-applying.
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
+    Identity,
+    Index,
     MetaData,
     Numeric,
     String,
@@ -38,7 +41,12 @@ events = Table(
     "events",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("sequence", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # The log's total order. Database-generated and monotonic: a
+    # timestamp cannot do this job, because Postgres CURRENT_TIMESTAMP is
+    # transaction-start time, so every event appended in one transaction
+    # would share a value and their relative order would be lost.
+    # GENERATED ALWAYS means the application cannot supply or fudge it.
+    Column("sequence", BigInteger, Identity(always=True), unique=True, index=True, nullable=False),
     Column("aggregate_type", String(64), nullable=False),
     Column("aggregate_id", UUID(as_uuid=True), nullable=False),
     Column("event_type", String(128), nullable=False),
@@ -47,6 +55,12 @@ events = Table(
     # Append-only: no updated_at, no soft-delete flag. If it's wrong,
     # a compensating event gets appended, not a mutation.
 )
+
+# Declared here as well as in the migration so `metadata.create_all`
+# (used by the integration tests) and `alembic upgrade head` produce the
+# same schema, and autogenerate doesn't propose dropping them.
+Index("ix_events_created_at", events.c.created_at.desc())
+Index("ix_events_aggregate", events.c.aggregate_type, events.c.aggregate_id)
 
 # --- Ledger read model ---------------------------------------------------
 

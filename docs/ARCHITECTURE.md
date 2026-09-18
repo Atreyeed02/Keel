@@ -362,7 +362,7 @@ state. For a ledger, that indirection is a liability.
 | Column | Type | Note |
 |---|---|---|
 | `id` | UUID PK | |
-| `sequence` | timestamptz | **see the warning below** |
+| `sequence` | bigint identity | the log's total order — see below |
 | `aggregate_type` | String(64) | e.g. `"transaction"` |
 | `aggregate_id` | UUID | which entity this event concerns |
 | `event_type` | String(128) | e.g. `"transaction.posted"` |
@@ -374,13 +374,20 @@ to. `aggregate_type="transaction"`, `aggregate_id=<txn id>` means "this
 event happened to that transaction". It allows one log to carry events
 for many entity kinds.
 
-> ⚠️ **`sequence` does not sequence anything.** It is a
-> `DateTime` with the same `server_default=func.now()` as `created_at`,
-> so it is a duplicate column. Worse, Postgres's `CURRENT_TIMESTAMP`
-> returns **transaction start time**, so every event written inside one
-> database transaction gets an *identical* timestamp. Verified: seeding
-> 10 transactions in one transaction produces 10 events with exactly
-> 1 distinct `created_at` value. See §8.
+> **`sequence` is what orders the log.** A `BigInteger` declared
+> `Identity(always=True)` — Postgres `GENERATED ALWAYS AS IDENTITY` — so
+> the database assigns it monotonically on each insert and the
+> application cannot supply or overwrite it. `/event-log` sorts by it.
+>
+> It did not always work: `sequence` was originally a `timestamptz` with
+> the same `server_default=func.now()` as `created_at`, which ordered
+> nothing. Postgres's `CURRENT_TIMESTAMP` returns **transaction start
+> time**, so all 10 events from one seed run shared a single value and
+> their displayed order came down to a random-UUID tiebreak. Migration
+> `b7855ff9a6aa` replaced the column with the identity version.
+>
+> `created_at` stays as the human-facing timestamp: it is what the event
+> log *displays*, while `sequence` is what it *sorts by*.
 
 **`accounts`** — reference data.
 
@@ -665,6 +672,9 @@ sequence was empty. Used for "No accounts yet." fallbacks.
 Migrations version the schema so it can be recreated deterministically.
 `d8b553ce7776_initial_ledger_schema.py` creates all five tables;
 `downgrade()` drops them in reverse dependency order.
+`b7855ff9a6aa_events_sequence_identity_and_indexes.py` then replaces
+`events.sequence` with the identity column described in §5.2 and adds the
+three `events` indexes.
 
 The interesting part is `alembic/env.py`:
 
@@ -797,8 +807,10 @@ Browser form (repeated fields → lists)
 ## 7. What has been done
 
 **Schema and migrations** — all five tables, with `CHECK` constraints on
-entry type and amount, exact-decimal money columns, and an Alembic
-migration that runs automatically on container boot.
+entry type and amount, exact-decimal money columns, a database-generated
+identity column giving the event log a real total order, indexes on the
+`events` queries, and Alembic migrations that run automatically on
+container boot.
 
 **Domain layer** — the per-currency double-entry invariant, entry
 validation, atomic posting that writes the event log alongside the read
@@ -833,16 +845,7 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. `events.sequence` provides no ordering.** It duplicates `created_at`,
-and Postgres `CURRENT_TIMESTAMP` is *transaction-start* time, so all
-events written in one transaction share an identical value. The event-log
-page orders by `created_at DESC, id DESC`, and `id` is a random UUID — so
-for events written together, **the displayed order is arbitrary**.
-Demonstrated: the 10 seeded transactions produce 10 events with 1 distinct
-timestamp. Fix: make `sequence` a `BIGSERIAL`/identity column and order by
-it. Requires a migration.
-
-**2. Per-account balances sum across currencies.** The overview query sums
+**1. Per-account balances sum across currencies.** The overview query sums
 `amount` with no `GROUP BY currency`, so an account holding entries in two
 currencies displays USD + EUR added together as one number. The seed data
 avoids this by keeping each account single-currency, but nothing enforces
@@ -854,38 +857,37 @@ add currencies together. The **delta** is still a valid invariant check —
 if each currency nets to zero, the grand total does too — but the
 magnitudes are not meaningful money.)*
 
-**3. No replay/rebuild path.** The read model is described as rebuildable
+**2. No replay/rebuild path.** The read model is described as rebuildable
 from `events`, but no code rebuilds it. Until a replay function exists and
 is tested, that is an untested claim.
 
-**4. No FX handling.** Per §2.4, currency conversion cannot be expressed.
+**3. No FX handling.** Per §2.4, currency conversion cannot be expressed.
 Needs a clearing-account pattern plus an FX gain/loss account.
 
 ### Robustness
 
-**5. No database indexes at all.** Confirmed: zero `Index()` definitions in
-`schema.py` and none in the migration. Every query does a sequential scan.
-The ones that will hurt first:
+**4. `ledger_entries` has no indexes.** `events` is now covered —
+migration `b7855ff9a6aa` added `sequence` (unique), `created_at DESC` and
+`(aggregate_type, aggregate_id)` — but the read-model tables still have
+none, so both money queries do sequential scans:
 - `ledger_entries(account_id)` — the overview join
 - `ledger_entries(transaction_id)` — transaction detail
-- `events(created_at DESC)` — the event log
-- `events(aggregate_type, aggregate_id)` — the linked-event lookup
 
-**6. `account_type` has no database `CHECK`.** Validity is enforced only in
+**5. `account_type` has no database `CHECK`.** Validity is enforced only in
 application code, so anything writing directly to the database can insert a
 type the overview will mis-sign. `entry_type` and `amount` already have
 `CHECK` constraints; this one is missing.
 
-**7. No balance enforcement at the database level.** Noted in the schema
+**6. No balance enforcement at the database level.** Noted in the schema
 comments as a deliberate v2 item. A constraint trigger would make a
 half-written transaction impossible even from outside the app.
 
-**8. `idempotency_keys` grows forever.** No TTL or cleanup job.
+**7. `idempotency_keys` grows forever.** No TTL or cleanup job.
 
-**9. No authentication or authorisation anywhere.** Every route is public.
+**8. No authentication or authorisation anywhere.** Every route is public.
 Acceptable for a demo, disqualifying for anything real.
 
-**10. Raw validation errors on `POST /post-transaction`.** It still renders
+**9. Raw validation errors on `POST /post-transaction`.** It still renders
 `str(ValidationError)` for non-imbalance failures (e.g. a malformed
 amount), producing a multi-line internal dump in the alert box. The
 `_describe()` helper in `accounts.py` already solves this and should be
@@ -893,20 +895,20 @@ shared.
 
 ### Build and tooling
 
-**11. The compose bind mount shadows the image.** `docker-compose.yml`
+**10. The compose bind mount shadows the image.** `docker-compose.yml`
 mounts `./app:/app/app` for live reload, so the container runs the host's
 `app/` rather than the copy baked into the image — meaning the CI smoke
 test would not catch a broken `COPY app/ ./app/`. Consider a compose
 override so CI tests the image as shipped.
 
-**12. No `.dockerignore`.** The whole directory is sent as build context,
+**11. No `.dockerignore`.** The whole directory is sent as build context,
 including `.git/`, `.pytest_cache/` and `.ruff_cache/`.
 
-**13. No `app` healthcheck in compose.** Only `db` has one.
+**12. No `app` healthcheck in compose.** Only `db` has one.
 
 ### Documentation
 
-**14. The README is out of date.** Its "Status" section says transaction
+**13. The README is out of date.** Its "Status" section says transaction
 endpoints and idempotency middleware "are next" — both are done. The
 roadmap has REST endpoints, idempotency and Alembic migrations unchecked
 despite being implemented. The "Running tests locally" section claims the
