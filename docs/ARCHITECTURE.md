@@ -546,10 +546,11 @@ be three letters.
 
 `InvalidAccountError(ValueError)` mirrors `UnbalancedTransactionError`.
 `validate_account()` catches Pydantic's `ValidationError` and re-raises
-this with a flattened one-line message:
+this with a flattened one-line message, via the shared helper in
+`app/domain/errors.py`:
 
 ```python
-def _describe(exc: ValidationError) -> str:
+def describe_validation_error(exc: ValidationError) -> str:
     parts = []
     for err in exc.errors():
         field = ".".join(str(p) for p in err["loc"]) or "input"
@@ -561,6 +562,13 @@ def _describe(exc: ValidationError) -> str:
 The reason: rendering `str()` of a raw `ValidationError` into a form's
 alert box produces a multi-line internal dump. This produces
 `account_type must be one of: asset, liability, equity, revenue, expense`.
+
+It lives in its own module rather than in `accounts.py` because the
+transaction form needs it too — `submit_post_transaction` routes
+`ValidationError` through the same helper, so a malformed amount renders
+`amount input should be a valid decimal` instead of pydantic's dump.
+`app/domain/errors.py` imports nothing but pydantic on purpose:
+`app/db/schema.py` imports `app.domain.accounts`, which imports it.
 
 ### 5.6 `app/api/health.py`
 
