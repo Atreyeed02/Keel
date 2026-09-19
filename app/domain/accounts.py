@@ -12,6 +12,8 @@ off it, so an unrecognised value would silently render a wrong balance.
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.domain.errors import describe_validation_error
+
 ACCOUNT_TYPES = ("asset", "liability", "equity", "revenue", "expense")
 
 
@@ -48,19 +50,9 @@ class AccountInput(BaseModel):
         return v
 
 
-def _describe(exc: ValidationError) -> str:
-    """Flatten a pydantic error into one line fit for an inline form alert."""
-    parts = []
-    for err in exc.errors():
-        field = ".".join(str(p) for p in err["loc"]) or "input"
-        message = err["msg"].removeprefix("Value error, ")
-        parts.append(f"{field} {message[0].lower()}{message[1:]}")
-    return "; ".join(parts)
-
-
 def validate_account(data: dict[str, str]) -> AccountInput:
     """Validate raw form data, raising a single readable error on failure."""
     try:
         return AccountInput.model_validate(data)
     except ValidationError as exc:
-        raise InvalidAccountError(_describe(exc)) from exc
+        raise InvalidAccountError(describe_validation_error(exc)) from exc
