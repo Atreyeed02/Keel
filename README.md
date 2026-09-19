@@ -116,9 +116,30 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-The test suite currently covers the double-entry balance invariant
-(`tests/test_ledger_domain.py`) and endpoint reachability
-(`tests/test_health.py`) without requiring a live database.
+That much runs the tests that need no database — the double-entry balance
+invariant and entry validation (`tests/test_ledger_domain.py`) and
+endpoint reachability (`tests/test_health.py`). The page tests in
+`tests/test_ledger_pages.py` drive real HTTP requests against a real
+schema, so they need PostgreSQL. Without one they are **skipped, not
+failed**, and pytest reports the reason:
+
+```
+SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
+```
+
+A green run in that state is only partial coverage. For the full suite,
+point `TEST_DATABASE_URL` at a database you do not mind losing — the
+fixtures drop and recreate every table around each test:
+
+```bash
+docker compose up -d db
+export TEST_DATABASE_URL=postgresql+asyncpg://ledger:ledger@localhost:5432/ledger
+pytest -v
+```
+
+The fixtures build the schema with `metadata.create_all()`, so the
+database does not need migrations applied first. CI runs exactly this
+against a PostgreSQL service container.
 
 ## Project layout
 
