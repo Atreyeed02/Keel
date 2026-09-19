@@ -923,13 +923,6 @@ half-written transaction impossible even from outside the app.
 **5. No authentication or authorisation anywhere.** Every route is public.
 Acceptable for a demo, disqualifying for anything real.
 
-### Documentation
-
-**6. The README's "Running tests locally" section is out of date.** It
-claims the suite runs "without requiring a live database", which is no
-longer true of `test_ledger_pages.py`. ("Status" and "Roadmap" have since
-been rewritten to match what is actually built.)
-
 ### Roadmap items not started
 
 Webhook ingestion, multi-provider payment orchestration, reconciliation,
