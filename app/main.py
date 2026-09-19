@@ -20,10 +20,9 @@ from app.db.schema import accounts, events, idempotency_keys, ledger_entries, tr
 from app.domain.accounts import ACCOUNT_TYPES, InvalidAccountError, validate_account
 from app.domain.errors import describe_validation_error
 from app.domain.ledger import (
-    CurrencyMismatchError,
+    EntryAccountError,
     EntryInput,
     UnbalancedTransactionError,
-    UnknownAccountError,
     assert_balanced,
     post_transaction,
 )
@@ -328,7 +327,7 @@ async def submit_post_transaction(
                         response_status="302",
                     )
                 )
-    except (UnknownAccountError, CurrencyMismatchError) as exc:
+    except EntryAccountError as exc:
         return await invalid(str(exc))
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
