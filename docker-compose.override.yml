@@ -1,0 +1,13 @@
+# Local development only. Compose merges this into docker-compose.yml
+# automatically whenever it is present in the working directory, so a plain
+# `docker compose up` is dev mode and needs no extra flag.
+#
+# The bind mount overlays the host's ./app on top of the copy baked into the
+# image, which is what makes edits visible without a rebuild. It also means
+# the running container is NOT the shipped artifact — so anything verifying
+# that the image is self-contained (the docker-smoke CI job, any deployment)
+# must bypass this file with `docker compose -f docker-compose.yml`.
+services:
+  app:
+    volumes:
+      - ./app:/app/app

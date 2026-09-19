@@ -749,10 +749,27 @@ without needing an explicit marker.
 `Dockerfile` — `python:3.12-slim`, install requirements, copy `app/`,
 `alembic/`, `alembic.ini` and `scripts/`, migrate-then-serve on start.
 
-`docker-compose.yml` — a `db` service (postgres:16-alpine) with a
-`pg_isready` healthcheck, and an `app` service with
-`depends_on: condition: service_healthy`, so the app never starts against
-a database that is not accepting connections yet.
+`.dockerignore` — keeps the build context to what the Dockerfile copies.
+Note the `**/` prefixes: a bare `__pycache__` would only match one at the
+context root, not `app/__pycache__` or `alembic/versions/__pycache__`.
+
+`docker-compose.yml` — the canonical, production-shape config. A `db`
+service (postgres:16-alpine) with a `pg_isready` healthcheck, and an `app`
+service with `depends_on: condition: service_healthy`, so the app never
+starts against a database that is not accepting connections yet. The `app`
+service has its own healthcheck asserting the exact body
+`{"status":"ok","db":"up"}` — a plain 200 check would pass on a container
+whose migrations failed, since `/health` answers 200 with `"degraded"`
+rather than raising. It is written in Python because `python:3.12-slim`
+ships neither curl nor wget.
+
+`docker-compose.override.yml` — local dev only: bind-mounts `./app` over
+the image for live reload. Compose merges it automatically when present,
+so `docker compose up` is dev mode by default. The consequence is that a
+plain `docker compose up` is *not* running the shipped artifact, so
+anything proving the image is self-contained must bypass it — the
+`docker-smoke` job pins `COMPOSE_FILE: docker-compose.yml` for exactly
+that reason.
 
 ### 5.13 `.github/workflows/ci.yml`
 
@@ -768,6 +785,13 @@ the body is **exactly** `{"status":"ok","db":"up"}`, assert
 accounts, read their ids back from the container's database, post a
 balanced transaction, and require the balance to appear on the overview
 page. Teardown runs under `if: always()`.
+
+The job sets `COMPOSE_FILE: docker-compose.yml` at job level. `checkout`
+puts `docker-compose.override.yml` on disk, and a bare `docker compose`
+would merge it in and bind-mount the runner's `app/` over the image — so
+the job would be testing the checkout, not the artifact, and a broken
+`COPY app/ ./app/` would pass. Pinning it at job level rather than adding
+`-f` to each step means a step added later inherits the same scoping.
 
 The exact-body assertion is the point. Because `/health` returns 200 even
 when the database is down (§5.6), a status-code check would go green over
@@ -885,22 +909,9 @@ amount), producing a multi-line internal dump in the alert box. The
 `_describe()` helper in `accounts.py` already solves this and should be
 shared.
 
-### Build and tooling
-
-**7. The compose bind mount shadows the image.** `docker-compose.yml`
-mounts `./app:/app/app` for live reload, so the container runs the host's
-`app/` rather than the copy baked into the image — meaning the CI smoke
-test would not catch a broken `COPY app/ ./app/`. Consider a compose
-override so CI tests the image as shipped.
-
-**8. No `.dockerignore`.** The whole directory is sent as build context,
-including `.git/`, `.pytest_cache/` and `.ruff_cache/`.
-
-**9. No `app` healthcheck in compose.** Only `db` has one.
-
 ### Documentation
 
-**10. The README's "Running tests locally" section is out of date.** It
+**7. The README's "Running tests locally" section is out of date.** It
 claims the suite runs "without requiring a live database", which is no
 longer true of `test_ledger_pages.py`. ("Status" and "Roadmap" have since
 been rewritten to match what is actually built.)
