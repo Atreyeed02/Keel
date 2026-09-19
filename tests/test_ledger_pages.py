@@ -210,3 +210,46 @@ async def test_multi_currency_transaction_still_posts(database, eur_accounts):
     assert "EUR" in overview.text
     assert "100.00" in overview.text
     assert "50.00" in overview.text
+
+
+async def test_malformed_amount_renders_a_readable_message(database):
+    """
+    A raw pydantic ValidationError must not reach the form alert.
+
+    `str(ValidationError)` is a multi-line dump — "1 validation error for
+    EntryInput", a "[type=..., input_value=...]" block and a docs URL. The
+    handler flattens it instead, so the alert gets one sentence.
+    """
+    cash_id, revenue_id = database
+    submission = _submission(cash_id, revenue_id)
+    submission["amount"] = ["abc", "100.00"]
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/post-transaction", data=submission)
+    assert response.status_code == 422
+    assert "Cannot post transaction" in response.text
+    # the readable form: names the field, says what was wrong
+    assert "amount" in response.text
+    assert "input should be a valid decimal" in response.text
+    # and none of pydantic's machinery leaks through
+    for dump_marker in (
+        "validation error for",
+        "[type=",
+        "input_value=",
+        "input_type=",
+        "errors.pydantic.dev",
+        "value_error",
+    ):
+        assert dump_marker not in response.text, f"pydantic dump leaked: {dump_marker!r}"
+
+
+async def test_unbalanced_message_is_unchanged_by_the_flattener(database):
+    """The other two exception types still render str(exc), as before."""
+    cash_id, revenue_id = database
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/post-transaction", data=_submission(cash_id, revenue_id, "101.00")
+        )
+    assert response.status_code == 422
+    assert "does not balance per currency" in response.text

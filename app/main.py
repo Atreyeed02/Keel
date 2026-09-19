@@ -18,6 +18,7 @@ from app.config import settings
 from app.db.engine import engine
 from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
 from app.domain.accounts import ACCOUNT_TYPES, InvalidAccountError, validate_account
+from app.domain.errors import describe_validation_error
 from app.domain.ledger import (
     CurrencyMismatchError,
     EntryInput,
@@ -270,10 +271,10 @@ async def submit_post_transaction(
     ]
     submission_key = submission_key or str(uuid.uuid4())
 
-    async def invalid(exc: Exception):
+    async def invalid(message: str):
         context = await _form_context(raw_entries)
         context.update(
-            {"error": str(exc), "description": description, "submission_key": submission_key}
+            {"error": message, "description": description, "submission_key": submission_key}
         )
         return templates.TemplateResponse(
             request=request, name="post_transaction.html", context=context, status_code=422
@@ -285,7 +286,12 @@ async def submit_post_transaction(
         if len(entries) < 2:
             raise ValueError("a transaction needs at least two entries")
     except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
-        return await invalid(exc)
+        # UnbalancedTransactionError and the bare ValueError already carry a
+        # single readable sentence. A raw pydantic ValidationError does not —
+        # str() on one is a multi-line dump — so it gets flattened first.
+        return await invalid(
+            describe_validation_error(exc) if isinstance(exc, ValidationError) else str(exc)
+        )
     request_hash = hashlib.sha256(
         json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
     ).hexdigest()
@@ -323,7 +329,7 @@ async def submit_post_transaction(
                     )
                 )
     except (UnknownAccountError, CurrencyMismatchError) as exc:
-        return await invalid(exc)
+        return await invalid(str(exc))
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
 
