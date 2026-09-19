@@ -45,6 +45,29 @@ def _money(value: Decimal | None) -> str:
     return f"{(value or Decimal('0')):,.2f}"
 
 
+# Backslash is the conventional choice and what Postgres assumes by default,
+# but LIKE/ILIKE only honour it when the query says so, hence the explicit
+# ESCAPE clause at the call site.
+_LIKE_ESCAPE = "\\"
+
+
+def _like_contains(term: str) -> str:
+    """
+    Build a `%term%` pattern that matches `term` literally.
+
+    `%` and `_` are LIKE metacharacters — without this, searching for
+    "50% off" means "50, then anything, then ' off'", and a lone "%" or "_"
+    matches every row. Each metacharacter is prefixed with the escape
+    character, which the query then declares via `ESCAPE`.
+
+    The escape character is escaped first, so the backslashes added for `%`
+    and `_` in the following passes are not themselves escaped again.
+    """
+    for char in (_LIKE_ESCAPE, "%", "_"):
+        term = term.replace(char, _LIKE_ESCAPE + char)
+    return f"%{term}%"
+
+
 def _transaction_rows():
     """
     The select behind every transaction listing: id, description, when, how
@@ -238,7 +261,9 @@ async def read_transactions(
 
     conditions = []
     if q:
-        conditions.append(transactions.c.description.ilike(f"%{q}%"))
+        conditions.append(
+            transactions.c.description.ilike(_like_contains(q), escape=_LIKE_ESCAPE)
+        )
     if date_from:
         conditions.append(transactions.c.created_at >= date_from)
     if date_to:
