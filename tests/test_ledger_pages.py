@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
 from app.db.schema import accounts, metadata
+from app.domain.ledger import EntryAccountError
 from app.main import app
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -253,3 +254,48 @@ async def test_unbalanced_message_is_unchanged_by_the_flattener(database):
         )
     assert response.status_code == 422
     assert "does not balance per currency" in response.text
+
+
+async def test_missing_account_and_currency_mismatch_report_together(database, eur_accounts):
+    """
+    Both classes of problem in one submission must come back in one response.
+
+    Previously the missing account short-circuited before currencies were
+    looked at, so fixing it only revealed the mismatch on the next attempt.
+    Line 1 names an id that does not exist; line 2 points at a real EUR
+    account but submits USD.
+    """
+    eur_bank_id, _eur_revenue_id = eur_accounts
+    ghost_id = uuid.uuid4()
+    submission = {
+        "description": "Two problems at once",
+        "submission_key": "two-problems-key",
+        "account_id": [str(ghost_id), str(eur_bank_id)],
+        "entry_type": ["debit", "credit"],
+        "amount": ["100.00", "100.00"],
+        "currency": ["USD", "USD"],
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/post-transaction", data=submission)
+        overview = await client.get("/")
+    assert response.status_code == 422
+    # problem 1: the nonexistent account, named
+    assert "no account exists with id" in response.text
+    assert str(ghost_id) in response.text
+    # problem 2: the currency mismatch on the OTHER line, in the same response.
+    # Matched as one phrase: the bare account name also appears in the form's
+    # account dropdown, so asserting on it alone would pass without the fix.
+    # Jinja escapes the apostrophes the message wraps the name in.
+    assert "&#39;EUR bank&#39; is EUR, but an entry was submitted as USD" in response.text
+    # nothing was written
+    assert "Two problems at once" not in overview.text
+
+
+def test_entry_account_error_keeps_both_problem_lists():
+    """The merged error still exposes the two kinds separately for callers."""
+    exc = EntryAccountError(["abc-123"], ["account 'X' is EUR, but an entry was submitted as USD"])
+    assert exc.missing == ["abc-123"]
+    assert exc.mismatched == ["account 'X' is EUR, but an entry was submitted as USD"]
+    assert "no account exists with id: abc-123" in str(exc)
+    assert "account 'X' is EUR" in str(exc)

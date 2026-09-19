@@ -50,12 +50,26 @@ class UnbalancedTransactionError(ValueError):
     """Raised when debits and credits don't net to zero per currency."""
 
 
-class UnknownAccountError(ValueError):
-    """Raised when an entry references an account that doesn't exist."""
+class EntryAccountError(ValueError):
+    """
+    Raised when entries don't line up with the accounts they name.
 
+    One error rather than one per problem kind, because a submission can
+    have several at once and the person filling the form should see all of
+    them in one response instead of fixing one, resubmitting, and being
+    told about the next. `missing` and `mismatched` stay available for a
+    caller that wants to treat the two differently; nothing does today,
+    which is exactly why they are not separate exception classes.
+    """
 
-class CurrencyMismatchError(ValueError):
-    """Raised when an entry's currency isn't the currency of its account."""
+    def __init__(self, missing: list[str], mismatched: list[str]) -> None:
+        self.missing = missing
+        self.mismatched = mismatched
+        problems = []
+        if missing:
+            problems.append(f"no account exists with id: {', '.join(missing)}")
+        problems.extend(mismatched)
+        super().__init__("; ".join(problems))
 
 
 async def assert_accounts_valid(conn: AsyncConnection, entries: list[EntryInput]) -> None:
@@ -88,21 +102,26 @@ async def assert_accounts_valid(conn: AsyncConnection, entries: list[EntryInput]
     known = {row["id"]: row for row in rows}
 
     missing = sorted(str(account_id) for account_id in wanted - known.keys())
-    if missing:
-        raise UnknownAccountError(
-            f"no account exists with id: {', '.join(missing)}"
-        )
 
-    mismatched = [
-        f"account '{known[e.account_id]['name']}' is {known[e.account_id]['currency']}, "
-        f"but an entry was submitted as {e.currency}"
-        for e in entries
-        if e.currency != known[e.account_id]["currency"]
-    ]
-    if mismatched:
-        # dict.fromkeys: de-duplicate repeats (the same account named twice)
-        # while keeping the order the entries were submitted in.
-        raise CurrencyMismatchError("; ".join(dict.fromkeys(mismatched)))
+    # Currency is only checked against accounts that were actually found —
+    # asking what currency a nonexistent account holds is meaningless — but
+    # the entries pointing at accounts that DO exist are still checked, so a
+    # submission with one bad id and one bad currency reports both at once
+    # rather than revealing the second only after the first is fixed.
+    #
+    # dict.fromkeys: de-duplicate repeats (the same account named twice)
+    # while keeping the order the entries were submitted in.
+    mismatched = list(
+        dict.fromkeys(
+            f"account '{known[e.account_id]['name']}' is {known[e.account_id]['currency']}, "
+            f"but an entry was submitted as {e.currency}"
+            for e in entries
+            if e.account_id in known and e.currency != known[e.account_id]["currency"]
+        )
+    )
+
+    if missing or mismatched:
+        raise EntryAccountError(missing, mismatched)
 
 
 def assert_balanced(entries: list[EntryInput]) -> None:
