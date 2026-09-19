@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -7,7 +8,7 @@ from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
-from app.db.schema import accounts, metadata
+from app.db.schema import accounts, metadata, transactions
 from app.domain.ledger import EntryAccountError
 from app.main import app
 
@@ -299,3 +300,122 @@ def test_entry_account_error_keeps_both_problem_lists():
     assert exc.mismatched == ["account 'X' is EUR, but an entry was submitted as USD"]
     assert "no account exists with id: abc-123" in str(exc)
     assert "account 'X' is EUR" in str(exc)
+
+
+async def _post(client, cash_id, revenue_id, description, key):
+    """Post one balanced transaction through the real form endpoint."""
+    data = _submission(cash_id, revenue_id)
+    data["description"] = description
+    data["submission_key"] = key
+    return await client.post("/post-transaction", data=data)
+
+
+async def _insert_transactions(descriptions, *, base):
+    """
+    Insert transaction rows straight into the read model.
+
+    Bypasses the posting flow deliberately: these exist to fill pages, and
+    26 real submissions would make the test slow for no extra coverage.
+    created_at is set explicitly and spaced a minute apart — the column
+    defaults to CURRENT_TIMESTAMP, which Postgres evaluates at transaction
+    start, so a bulk insert would give every row the same timestamp and
+    leave "newest first" ordering arbitrary.
+    """
+    async with main_module.engine.begin() as conn:
+        await conn.execute(
+            insert(transactions),
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "description": description,
+                    "created_at": base + timedelta(minutes=index),
+                }
+                for index, description in enumerate(descriptions)
+            ],
+        )
+
+
+async def test_transactions_page_lists_a_posted_transaction(database):
+    cash_id, revenue_id = database
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await _post(client, cash_id, revenue_id, "Invoice 9001 settled", "listing-key")
+        response = await client.get("/transactions")
+    assert response.status_code == 200
+    assert "Invoice 9001 settled" in response.text
+    # the row links to its detail page, as the overview's table does
+    assert "/transaction-detail/" in response.text
+    assert "1 transaction," in response.text
+
+
+async def test_transactions_description_filter_narrows_results(database):
+    cash_id, revenue_id = database
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await _post(client, cash_id, revenue_id, "Zephyr consulting fee", "filter-a")
+        await _post(client, cash_id, revenue_id, "Quokka hardware purchase", "filter-b")
+        unfiltered = await client.get("/transactions")
+        filtered = await client.get("/transactions", params={"q": "zephyr"})
+    # both present without a filter
+    assert "Zephyr consulting fee" in unfiltered.text
+    assert "Quokka hardware purchase" in unfiltered.text
+    # only the match survives the filter — and ILIKE means case doesn't matter
+    assert filtered.status_code == 200
+    assert "Zephyr consulting fee" in filtered.text
+    assert "Quokka hardware purchase" not in filtered.text
+    assert "1 transaction matching" in filtered.text
+
+
+async def test_transactions_date_range_filter(database):
+    base = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+    await _insert_transactions(["March first entry"], base=base)
+    june = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await _insert_transactions(["June entry"], base=june)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        march = await client.get(
+            "/transactions", params={"date_from": "2026-03-01", "date_to": "2026-03-31"}
+        )
+    assert march.status_code == 200
+    # date_to is inclusive of the whole closing day, not midnight on it
+    assert "March first entry" in march.text
+    assert "June entry" not in march.text
+
+
+async def test_transactions_pagination_beyond_page_one(database):
+    # 30 rows against a page size of 25 => 25 on page 1, 5 on page 2
+    base = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
+    await _insert_transactions([f"Bulk transaction {i:02d}" for i in range(30)], base=base)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        page1 = await client.get("/transactions")
+        page2 = await client.get("/transactions", params={"page": 2})
+    assert page1.status_code == page2.status_code == 200
+    assert "30 transactions," in page1.text
+    assert page1.text.count("/transaction-detail/") == 25
+    assert page2.text.count("/transaction-detail/") == 5
+    # newest first: 29 is the most recent, so it heads page 1 and 00 falls to page 2
+    assert "Bulk transaction 29" in page1.text
+    assert "Bulk transaction 29" not in page2.text
+    assert "Bulk transaction 00" in page2.text
+    assert "Bulk transaction 00" not in page1.text
+    # and the pager offers a way forward from page 1
+    assert "/transactions?page=2" in page1.text
+
+
+async def test_transactions_filter_survives_pagination(database):
+    base = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
+    await _insert_transactions([f"Widget order {i:02d}" for i in range(30)], base=base)
+    await _insert_transactions(["Unrelated thing"], base=base + timedelta(days=1))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        page1 = await client.get("/transactions", params={"q": "widget"})
+        page2 = await client.get("/transactions", params={"q": "widget", "page": 2})
+    # the count reflects the filtered set, not the whole table
+    assert "30 transactions matching" in page1.text
+    # the pager link carries the filter forward rather than dropping it
+    assert "page=2&q=widget" in page1.text
+    # and page 2 is still filtered
+    assert page2.text.count("/transaction-detail/") == 5
+    assert "Unrelated thing" not in page2.text
+    assert "Unrelated thing" not in page1.text
