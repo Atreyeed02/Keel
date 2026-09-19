@@ -1,0 +1,41 @@
+# Keeps the build context to what the Dockerfile actually COPYs. Everything
+# here is either useless in the image (caches, VCS metadata) or must never be
+# baked into it (.env).
+#
+# Patterns are matched against paths relative to the context root, so a bare
+# `__pycache__` would only match a top-level one. The `**/` prefix is what
+# catches the nested directories that actually exist here — app/__pycache__,
+# alembic/versions/__pycache__, and the rest.
+
+# Version control
+.git
+.gitignore
+.github
+
+# Python bytecode and tooling caches
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.venv
+venv
+
+# Local configuration — must not end up in the image
+.env
+.env.*
+!.env.example
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# Not needed at runtime; compose files describe how to run the image,
+# they are not part of it
+docs
+docker-compose.yml
+docker-compose.override.yml
+Dockerfile
+.dockerignore

@@ -1,3 +1,12 @@
+# Canonical, production-shape configuration: the app runs exactly what the
+# image contains, with no dependency on the host filesystem.
+#
+# `docker compose up` in a checkout also picks up docker-compose.override.yml,
+# which bind-mounts ./app over the image for live reload. That is a local-dev
+# convenience and nothing else should rely on it. To run this file alone, as
+# CI and any real deployment do, pass it explicitly:
+#
+#     docker compose -f docker-compose.yml up --build
 services:
   db:
     image: postgres:16-alpine
@@ -24,8 +33,24 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./app:/app/app  # live-reload friendly for local dev
+    # Asserts the same thing CI does: a 200 from /health whose body reports a
+    # live database, so a container whose migrations failed is never reported
+    # healthy. Uses python rather than curl/wget because the image is
+    # python:3.12-slim, which ships neither (see the README's dev-mode section).
+    # start_period covers `alembic upgrade head` running before uvicorn binds.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, json, urllib.request
+          with urllib.request.urlopen("http://localhost:8000/health", timeout=3) as r:
+              sys.exit(0 if json.load(r) == {"status": "ok", "db": "up"} else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   pgdata:

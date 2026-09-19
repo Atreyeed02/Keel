@@ -49,6 +49,14 @@ jobs:
   docker-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # This job exists to prove the IMAGE is self-contained, so it must not
+    # pick up docker-compose.override.yml — that file bind-mounts the host's
+    # ./app over the image, and checkout puts it on disk here, where a bare
+    # `docker compose` would merge it in automatically and silently test
+    # host code instead. Pinning COMPOSE_FILE scopes every compose command in
+    # this job to the base file, including any step added later.
+    env:
+      COMPOSE_FILE: docker-compose.yml
     steps:
       - uses: actions/checkout@v4
 

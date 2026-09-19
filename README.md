@@ -86,6 +86,29 @@ Then:
 - Interactive docs: http://localhost:8000/docs
 - Health check: http://localhost:8000/health
 
+### Dev mode vs. the shipped image
+
+There are two compose files, and which ones are in play changes what is
+actually running:
+
+| Command | Files used | What runs |
+|---|---|---|
+| `docker compose up --build` | base + override | the host's `./app`, bind-mounted over the image — edits appear without a rebuild |
+| `docker compose -f docker-compose.yml up --build` | base only | exactly what the image contains |
+
+Compose merges `docker-compose.override.yml` automatically whenever it is
+present, so the first form is the default in a checkout and needs no flag.
+The second is what CI's `docker-smoke` job runs (via `COMPOSE_FILE`) and what
+a deployment would use; it is the only one that proves the image is
+self-contained. If you change the Dockerfile and want to know the change
+really landed in the image, use the second form — under the first, a stale
+`COPY app/` is invisible because the mount covers it.
+
+Both give the `app` service a healthcheck against `/health` that asserts the
+exact body `{"status":"ok","db":"up"}`, so a container whose migrations failed
+never reports healthy. It is written in Python rather than curl or wget
+because `python:3.12-slim` ships neither.
+
 ## Running tests locally (without Docker)
 
 ```bash
