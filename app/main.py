@@ -2,9 +2,11 @@ import hashlib
 import json
 import uuid
 from collections import defaultdict
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -41,6 +43,28 @@ NORMAL_DEBIT_TYPES = {"asset", "expense"}
 
 def _money(value: Decimal | None) -> str:
     return f"{(value or Decimal('0')):,.2f}"
+
+
+def _transaction_rows():
+    """
+    The select behind every transaction listing: id, description, when, how
+    many entries and how much moved. The overview's "recent transactions"
+    table and the /transactions page both build on this, so the two cannot
+    drift into showing different numbers for the same row.
+
+    Callers add their own filtering, ordering and limit.
+    """
+    return (
+        select(
+            transactions.c.id,
+            transactions.c.description,
+            transactions.c.created_at,
+            func.coalesce(func.sum(ledger_entries.c.amount), 0).label("entry_volume"),
+            func.count(ledger_entries.c.id).label("entry_count"),
+        )
+        .outerjoin(ledger_entries, ledger_entries.c.transaction_id == transactions.c.id)
+        .group_by(transactions.c.id, transactions.c.description, transactions.c.created_at)
+    )
 
 
 templates.env.filters["money"] = _money
@@ -131,19 +155,7 @@ async def read_overview(request: Request):
         recent = (
             (
                 await conn.execute(
-                    select(
-                        transactions.c.id,
-                        transactions.c.description,
-                        transactions.c.created_at,
-                        func.coalesce(func.sum(ledger_entries.c.amount), 0).label("entry_volume"),
-                        func.count(ledger_entries.c.id).label("entry_count"),
-                    )
-                    .outerjoin(ledger_entries, ledger_entries.c.transaction_id == transactions.c.id)
-                    .group_by(
-                        transactions.c.id, transactions.c.description, transactions.c.created_at
-                    )
-                    .order_by(transactions.c.created_at.desc())
-                    .limit(10)
+                    _transaction_rows().order_by(transactions.c.created_at.desc()).limit(10)
                 )
             )
             .mappings()
@@ -197,6 +209,80 @@ async def read_event_log(request: Request, page: int = Query(1, ge=1)):
         request=request,
         name="event_log.html",
         context={"events": rows, "page": page, "page_size": page_size, "total": total or 0},
+    )
+
+
+@app.get("/transactions", response_class=HTMLResponse)
+async def read_transactions(
+    request: Request,
+    page: int = Query(1, ge=1),
+    q: str | None = Query(None, description="case-insensitive substring of the description"),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+):
+    """
+    The full transaction list, paginated the same way /event-log is.
+
+    Filters are optional and combine with AND. They are applied to the count
+    as well as the page, so "N transactions" describes the filtered set
+    rather than the table, and they are threaded back into the pager links
+    so paging does not silently drop the filter.
+    """
+    page_size = 25
+    q = (q or "").strip() or None
+
+    conditions = []
+    if q:
+        conditions.append(transactions.c.description.ilike(f"%{q}%"))
+    if date_from:
+        conditions.append(transactions.c.created_at >= date_from)
+    if date_to:
+        # created_at is a timestamp; a bare `<= date_to` would exclude
+        # everything after midnight on the closing day, so the range is
+        # half-open against the following day instead.
+        conditions.append(transactions.c.created_at < date_to + timedelta(days=1))
+
+    count_stmt = select(func.count()).select_from(transactions)
+    listing = _transaction_rows()
+    for condition in conditions:
+        count_stmt = count_stmt.where(condition)
+        listing = listing.where(condition)
+
+    async with engine.connect() as conn:
+        total = await conn.scalar(count_stmt)
+        rows = (
+            (
+                await conn.execute(
+                    listing.order_by(transactions.c.created_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    active = {
+        key: value
+        for key, value in (("q", q), ("date_from", date_from), ("date_to", date_to))
+        if value
+    }
+    return templates.TemplateResponse(
+        request=request,
+        name="transactions.html",
+        context={
+            "transactions": rows,
+            "page": page,
+            "page_size": page_size,
+            "total": total or 0,
+            "q": q or "",
+            "date_from": date_from.isoformat() if date_from else "",
+            "date_to": date_to.isoformat() if date_to else "",
+            # pre-encoded so the pager can append it without rebuilding the
+            # filter state in the template
+            "filter_qs": urlencode({k: str(v) for k, v in active.items()}),
+            "is_filtered": bool(active),
+        },
     )
 
 

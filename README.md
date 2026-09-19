@@ -138,7 +138,8 @@ Working end to end — the ledger can be driven entirely through the
 browser, and CI proves the shipped container does it too. What exists
 today:
 
-- **Five server-rendered pages** — balance overview, paginated event log,
+- **Six server-rendered pages** — balance overview, paginated event log,
+  a filterable transaction list,
   transaction-posting form, transaction detail, and account creation.
 - **Double-entry posting with idempotency** — the balance invariant is
   enforced per currency before anything is written, and every submission

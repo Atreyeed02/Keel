@@ -615,6 +615,17 @@ applies the normal-side sign flip from §2.2.
 **`GET /event-log`** — paginated, 25 per page, newest first, with a total
 count for the pager.
 
+**`GET /transactions`** — the full transaction list, paginated on the same
+page/page_size/total shape as `/event-log`. Rows come from
+`_transaction_rows()`, the shared select the overview's "recent
+transactions" table also builds on, so the two cannot drift into showing
+different numbers for the same transaction. Optional `q` (description
+`ILIKE`), `date_from` and `date_to` filters combine with AND, apply to the
+count as well as the page, and are re-encoded into the pager links so
+paging does not drop them. `date_to` is compared half-open against the
+following day, because `created_at` is a timestamp and a bare `<= date_to`
+would exclude everything after midnight on the closing day.
+
 **`GET /accounts/new` / `POST /accounts`** — the form and its handler.
 Validates via `validate_account`, inserts with a server-generated UUID,
 redirects `302` to `/`. On `InvalidAccountError`, re-renders the form
@@ -856,10 +867,11 @@ and its currency is the only one that entry may carry), atomic posting
 that writes the event log alongside the read model, and account input
 validation.
 
-**HTTP layer** — health check, and five server-rendered pages: overview
+**HTTP layer** — health check, and six server-rendered pages: overview
 with per-account balances and normal-side signs, event log with
-pagination, transaction posting form with live client-side totals,
-transaction detail with debit/credit columns, and account creation.
+pagination, the filterable paginated transaction list, transaction posting
+form with live client-side totals, transaction detail with debit/credit
+columns, and account creation.
 
 **Idempotency** — fully wired for transaction posting, including the
 409-on-key-reuse case.

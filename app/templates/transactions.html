@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Transactions{% endblock %}{% block content %}
+<h1 class="text-3xl font-bold">Transactions</h1>
+<form method="get" action="/transactions" class="my-4 bg-white border p-4 flex flex-wrap gap-4 items-end">
+  <label class="flex flex-col"><span class="text-sm text-slate-600">Description contains</span><input class="border p-2" type="search" name="q" value="{{ q }}" placeholder="e.g. invoice"></label>
+  <label class="flex flex-col"><span class="text-sm text-slate-600">From</span><input class="border p-2" type="date" name="date_from" value="{{ date_from }}"></label>
+  <label class="flex flex-col"><span class="text-sm text-slate-600">To</span><input class="border p-2" type="date" name="date_to" value="{{ date_to }}"></label>
+  <button class="border px-4 py-2 bg-slate-900 text-white" type="submit">Filter</button>
+  {% if is_filtered %}<a class="underline self-center" href="/transactions">Clear</a>{% endif %}
+</form>
+<p class="my-4">{{ total }} transaction{{ '' if total == 1 else 's' }}{% if is_filtered %} matching{% endif %}, newest first.</p>
+<table class="w-full bg-white border text-left"><thead><tr><th>Description</th><th>Created</th><th>Entries</th><th class="text-right">Volume</th></tr></thead><tbody>{% for transaction in transactions %}<tr class="border-t"><td class="p-2"><a class="underline" href="/transaction-detail/{{ transaction.id }}">{{ transaction.description or "Untitled transaction" }}</a></td><td>{{ transaction.created_at }}</td><td>{{ transaction.entry_count }}</td><td class="text-right">{{ transaction.entry_volume|money }}</td></tr>{% else %}<tr><td colspan="4" class="p-3">{% if is_filtered %}No transactions match that filter.{% else %}No posted transactions.{% endif %}</td></tr>{% endfor %}</tbody></table>
+<nav class="mt-4 flex gap-4">{% if page > 1 %}<a class="underline" href="/transactions?page={{ page - 1 }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Newer</a>{% endif %}{% if page * page_size < total %}<a class="underline" href="/transactions?page={{ page + 1 }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Older</a>{% endif %}</nav>
+{% endblock %}
