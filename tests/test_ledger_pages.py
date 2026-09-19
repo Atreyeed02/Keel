@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
@@ -419,3 +419,73 @@ async def test_transactions_filter_survives_pagination(database):
     assert page2.text.count("/transaction-detail/") == 5
     assert "Unrelated thing" not in page2.text
     assert "Unrelated thing" not in page1.text
+
+
+async def test_listings_order_by_sequence_not_created_at(database):
+    """
+    Ordering must follow `sequence`, not `created_at`.
+
+    The three rows are inserted with created_at values in the OPPOSITE
+    order to their insertion, so the two columns disagree: under
+    `created_at DESC` the newest-looking row is "Oldest inserted", under
+    `sequence DESC` it is "Newest inserted". Sorting by the wrong column
+    is therefore visible rather than merely possible.
+    """
+    base = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    async with main_module.engine.begin() as conn:
+        for offset, description in enumerate(
+            ["Oldest inserted", "Middle inserted", "Newest inserted"]
+        ):
+            await conn.execute(
+                insert(transactions),
+                [
+                    {
+                        "id": uuid.uuid4(),
+                        "description": description,
+                        # inverted: the first row inserted gets the LATEST timestamp
+                        "created_at": base - timedelta(hours=offset),
+                    }
+                ],
+            )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        listing = await client.get("/transactions")
+        overview = await client.get("/")
+
+    def order_of(text):
+        return sorted(
+            ["Oldest inserted", "Middle inserted", "Newest inserted"], key=text.index
+        )
+
+    expected = ["Newest inserted", "Middle inserted", "Oldest inserted"]
+    # what created_at DESC would have produced, i.e. the bug
+    wrong = ["Oldest inserted", "Middle inserted", "Newest inserted"]
+    assert order_of(listing.text) == expected
+    assert order_of(listing.text) != wrong
+    assert order_of(overview.text) == expected
+    assert order_of(overview.text) != wrong
+
+
+async def test_transactions_written_together_get_distinct_sequences(database):
+    """
+    The collision this fixes: rows written in ONE database transaction share
+    a created_at, because Postgres evaluates CURRENT_TIMESTAMP at
+    transaction start. sequence is assigned per insert, so it stays distinct.
+    """
+    async with main_module.engine.begin() as conn:
+        await conn.execute(
+            insert(transactions),
+            [{"id": uuid.uuid4(), "description": f"Batch {i}"} for i in range(10)],
+        )
+        rows = (
+            (
+                await conn.execute(
+                    select(transactions.c.sequence, transactions.c.created_at)
+                )
+            )
+            .mappings()
+            .all()
+        )
+    assert len({row["created_at"] for row in rows}) == 1, "created_at should collide"
+    assert len({row["sequence"] for row in rows}) == 10, "sequence must not collide"
+
