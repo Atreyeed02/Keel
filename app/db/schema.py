@@ -93,6 +93,13 @@ transactions = Table(
     "transactions",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
+    # Posting order, for the same reason `events.sequence` exists: Postgres
+    # evaluates CURRENT_TIMESTAMP at transaction start, so every transaction
+    # written inside one database transaction shares a `created_at` and their
+    # relative order is lost. The listing pages sort by this instead, which
+    # also keeps pagination stable — tied rows can otherwise drift between
+    # pages from one request to the next.
+    Column("sequence", BigInteger, Identity(always=True), unique=True, index=True, nullable=False),
     Column("description", String(512), nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
 )
@@ -126,6 +133,8 @@ ledger_entries = Table(
 # lookup, and the overview's "recent transactions" ordering.
 Index("ix_ledger_entries_account_id", ledger_entries.c.account_id)
 Index("ix_ledger_entries_transaction_id", ledger_entries.c.transaction_id)
+# Kept even though nothing orders by created_at any more: it backs the
+# /transactions date-range filter.
 Index("ix_transactions_created_at", transactions.c.created_at.desc())
 
 # --- Idempotency layer ---------------------------------------------------

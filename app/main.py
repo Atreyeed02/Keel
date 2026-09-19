@@ -63,7 +63,12 @@ def _transaction_rows():
             func.count(ledger_entries.c.id).label("entry_count"),
         )
         .outerjoin(ledger_entries, ledger_entries.c.transaction_id == transactions.c.id)
-        .group_by(transactions.c.id, transactions.c.description, transactions.c.created_at)
+        .group_by(
+            transactions.c.id,
+            transactions.c.sequence,
+            transactions.c.description,
+            transactions.c.created_at,
+        )
     )
 
 
@@ -155,7 +160,7 @@ async def read_overview(request: Request):
         recent = (
             (
                 await conn.execute(
-                    _transaction_rows().order_by(transactions.c.created_at.desc()).limit(10)
+                    _transaction_rows().order_by(transactions.c.sequence.desc()).limit(10)
                 )
             )
             .mappings()
@@ -253,7 +258,7 @@ async def read_transactions(
         rows = (
             (
                 await conn.execute(
-                    listing.order_by(transactions.c.created_at.desc())
+                    listing.order_by(transactions.c.sequence.desc())
                     .offset((page - 1) * page_size)
                     .limit(page_size)
                 )
