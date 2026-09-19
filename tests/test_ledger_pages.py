@@ -489,3 +489,51 @@ async def test_transactions_written_together_get_distinct_sequences(database):
     assert len({row["created_at"] for row in rows}) == 1, "created_at should collide"
     assert len({row["sequence"] for row in rows}) == 10, "sequence must not collide"
 
+
+async def test_description_filter_treats_wildcards_literally(database):
+    """
+    `%` and `_` in a search term are literal characters, not LIKE wildcards.
+
+    Unescaped, searching "%" matches every row and "a_b" also matches
+    "axb" — the filter silently stops filtering.
+    """
+    async with main_module.engine.begin() as conn:
+        await conn.execute(
+            insert(transactions),
+            [
+                {"id": uuid.uuid4(), "description": d}
+                for d in [
+                    "50% off winter sale",
+                    "5000 units shipped",
+                    "a_b internal transfer",
+                    "axb external transfer",
+                    "plain description",
+                ]
+            ],
+        )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        percent_only = await client.get("/transactions", params={"q": "%"})
+        underscore_only = await client.get("/transactions", params={"q": "_"})
+        underscore_term = await client.get("/transactions", params={"q": "a_b"})
+        percent_term = await client.get("/transactions", params={"q": "50% off"})
+
+    # a lone "%" is a literal percent sign: only the row containing one
+    assert "1 transaction matching" in percent_only.text
+    assert "50% off winter sale" in percent_only.text
+    assert "plain description" not in percent_only.text
+
+    # a lone "_" likewise
+    assert "1 transaction matching" in underscore_only.text
+    assert "a_b internal transfer" in underscore_only.text
+    assert "plain description" not in underscore_only.text
+
+    # "a_b" must not match "axb" — the underscore is not a single-char wildcard
+    assert "1 transaction matching" in underscore_term.text
+    assert "a_b internal transfer" in underscore_term.text
+    assert "axb external transfer" not in underscore_term.text
+
+    # and a realistic term with a percent in it still finds its row
+    assert "1 transaction matching" in percent_term.text
+    assert "50% off winter sale" in percent_term.text
+    assert "5000 units shipped" not in percent_term.text
