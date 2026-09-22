@@ -45,8 +45,6 @@ works until a bug, a race, or a replayed webhook corrupts it — and then
 there is no way to reconstruct how the balance became wrong, because the
 history was never kept.
 
----
-
 ## 2. The accounting concepts
 
 ### 2.1 Double-entry bookkeeping
@@ -885,14 +883,24 @@ columns, and account creation.
 409-on-key-reuse case.
 
 **Templates** — shared `base.html`; the four original pages were
-refactored onto it with rendered output verified byte-identical.
+refactored onto it with rendered output verified byte-identical, and
+every page added since was built on it directly.
 
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 12 tests: the invariant and validation without a database,
-plus Postgres-backed page tests for idempotent retry, inline validation
-errors, account creation and overview rendering.
+**Testing** — 27 tests. Eight run with no database at all (the balance
+invariant, entry input validation, the error-aggregation helper and the
+health endpoint); the other 19 are Postgres-backed page tests
+covering idempotent retry, the 409 on key reuse, inline validation
+errors, account creation, overview rendering, multi-currency posting,
+the transaction list's description and date filters, pagination, and the
+guarantee that listings order by `sequence` rather than `created_at`.
+
+Note that the Postgres-backed tests **skip themselves** unless
+`TEST_DATABASE_URL` is set, so a local run without a database reports
+"8 passed, 19 skipped" and is not a passing build. See the README for
+the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
 proves the container builds, migrates and serves a real posting flow.
