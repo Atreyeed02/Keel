@@ -8,7 +8,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
-from app.db.schema import accounts, metadata, transactions
+from app.db.schema import accounts, events, metadata, transactions
 from app.domain.ledger import EntryAccountError
 from app.main import app
 
@@ -87,6 +87,36 @@ async def test_created_account_appears_in_overview(database):
     assert created.headers["location"] == "/"
     assert overview.status_code == 200
     assert "Office rent" in overview.text
+
+
+async def test_created_account_is_recorded_in_the_event_log(database):
+    """
+    POST /accounts appends an account.created event carrying everything a
+    rebuild needs to recreate the row — including its id, as aggregate_id.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/accounts",
+            data={"name": "Office rent", "account_type": "expense", "currency": "usd"},
+        )
+    async with main_module.engine.connect() as conn:
+        account = (
+            (await conn.execute(select(accounts).where(accounts.c.name == "Office rent")))
+            .mappings()
+            .one()
+        )
+        event = (
+            (await conn.execute(select(events).where(events.c.event_type == "account.created")))
+            .mappings()
+            .one()
+        )
+    assert event["aggregate_type"] == "account"
+    assert event["aggregate_id"] == account["id"]
+    # normalised values, not the raw form input ("usd")
+    assert event["payload"] == {"name": "Office rent", "account_type": "expense", "currency": "USD"}
+    # the row and its event were written in one database transaction
+    assert event["created_at"] == account["created_at"]
 
 
 async def test_invalid_account_type_renders_inline_error(database):

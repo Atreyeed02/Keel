@@ -35,10 +35,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 # The five account types are defined once, in the domain layer, and the
 # CHECK constraint below is generated from them so the database and the
-# Python validator cannot drift apart. `app.domain.accounts` imports only
-# pydantic, so this does not create a cycle with `app.domain.ledger`,
-# which imports this module.
-from app.domain.accounts import ACCOUNT_TYPES
+# Python validator cannot drift apart. `app.domain.account_types` imports
+# nothing, so this does not create a cycle with the domain modules that
+# import this one (`ledger`, `accounts`, `rebuild`).
+from app.domain.account_types import ACCOUNT_TYPES
 
 metadata = MetaData()
 

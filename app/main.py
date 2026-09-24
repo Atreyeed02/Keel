@@ -19,7 +19,12 @@ from app.api.health import router as health_router
 from app.config import settings
 from app.db.engine import engine
 from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
-from app.domain.accounts import ACCOUNT_TYPES, InvalidAccountError, validate_account
+from app.domain.accounts import (
+    ACCOUNT_TYPES,
+    InvalidAccountError,
+    create_account_record,
+    validate_account,
+)
 from app.domain.errors import describe_validation_error
 from app.domain.ledger import (
     EntryAccountError,
@@ -350,14 +355,7 @@ async def create_account(
             status_code=422,
         )
     async with engine.begin() as conn:
-        await conn.execute(
-            insert(accounts).values(
-                id=uuid.uuid4(),
-                name=account.name,
-                account_type=account.account_type,
-                currency=account.currency,
-            )
-        )
+        await create_account_record(conn, account)
     return RedirectResponse(url="/", status_code=302)
 
 
