@@ -17,8 +17,10 @@ This service takes the opposite approach:
 
 - **Event-sourced**: every change is appended to an immutable `events`
   log first. The ledger's current state is a projection of that log, not
-  the source of truth itself — so it's always rebuildable and always
-  auditable.
+  the source of truth itself — so it is always auditable, and the log
+  carries everything a rebuild would need. (Replay code that actually
+  reconstructs the read model is not written yet — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.3.)
 - **Double-entry**: every transaction is a set of debit/credit entries
   that must net to zero per currency, enforced in application code before
   anything is written (see `app/domain/ledger.py`). No transaction is
@@ -49,7 +51,8 @@ SQLAlchemy Core (app/db) ── explicit statements, no ORM session magic
 PostgreSQL
   ├── events            (append-only source of truth)
   └── transactions /
-      ledger_entries     (derived read model, rebuildable from events)
+      ledger_entries     (derived read model; the event log holds
+                          everything needed to rebuild it)
 ```
 
 ## Tech stack
@@ -118,10 +121,11 @@ pytest -v
 
 That much runs the tests that need no database — the double-entry balance
 invariant and entry validation (`tests/test_ledger_domain.py`) and
-endpoint reachability (`tests/test_health.py`). The page tests in
-`tests/test_ledger_pages.py` drive real HTTP requests against a real
-schema, so they need PostgreSQL. Without one they are **skipped, not
-failed**, and pytest reports the reason:
+endpoint reachability (`tests/test_health.py`), plus the one test in
+`tests/test_ledger_pages.py` that exercises the error-aggregation helper
+directly rather than through a page. The remaining page tests drive real
+HTTP requests against a real schema, so they need PostgreSQL. Without one
+they are **skipped, not failed**, and pytest reports the reason:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
