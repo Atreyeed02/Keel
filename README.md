@@ -16,10 +16,12 @@ This service takes the opposite approach:
 
 - **Event-sourced**: every change is appended to an immutable `events`
   log first. The ledger's current state is a projection of that log, not
-  the source of truth itself — so it is always auditable, and the log
-  carries everything a rebuild would need. (Replay code that actually
-  reconstructs the read model is not written yet — see
-  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.3.)
+  the source of truth itself — so it is always auditable, and
+  `rebuild_read_model()` can throw the read model away and replay it from
+  the log. A Postgres-backed test checks that the rebuild reproduces
+  every account, transaction, entry and balance (see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.3 for what it does
+  and does not reproduce).
 - **Double-entry**: every transaction is a set of debit/credit entries
   that must net to zero per currency, enforced in application code before
   anything is written (see `app/domain/ledger.py`). No transaction is
@@ -49,9 +51,10 @@ SQLAlchemy Core (app/db) ── explicit statements, no ORM session magic
   ▼
 PostgreSQL
   ├── events            (append-only source of truth)
-  └── transactions /
-      ledger_entries     (derived read model; the event log holds
-                          everything needed to rebuild it)
+  └── accounts /
+      transactions /
+      ledger_entries     (derived read model; rebuilt from events
+                          by rebuild_read_model())
 ```
 
 ## Tech stack
@@ -169,7 +172,11 @@ today:
   enforced per currency before anything is written, and every submission
   carries a key, so a resubmitted form returns the original transaction
   instead of posting it twice.
-- **Account creation** with validated account types and currency codes.
+- **Account creation** with validated account types and currency codes,
+  recorded in the event log like every posting.
+- **A tested rebuild** — `rebuild_read_model()` replays the event log into
+  a fresh read model, and CI checks that the result matches the original.
+  Not exposed over HTTP.
 - **Alembic migrations**, applied automatically on container start.
 - **A demo seed script** (`scripts/seed_demo_data.py`) that writes through
   the domain layer rather than by raw `INSERT`, so a seeded database has

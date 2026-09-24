@@ -189,13 +189,13 @@ The database holds two logically distinct things:
 
 ```
 events                      ← append-only source of truth
-  ├─ id, aggregate_type, aggregate_id
-  ├─ event_type ("transaction.posted")
-  └─ payload (JSONB — the full transaction as submitted)
+  ├─ id, sequence, aggregate_type, aggregate_id
+  ├─ event_type ("account.created" | "transaction.posted")
+  └─ payload (JSONB — the account, or the full transaction as submitted)
 
+accounts                    ← derived read model
 transactions                ← derived read model
 ledger_entries              ← derived read model
-accounts                    ← reference data
 ```
 
 The **event log** records *what happened*, as it happened, forever. It is
@@ -207,15 +207,17 @@ explicitly:
 # a compensating event gets appended, not a mutation.
 ```
 
-The **read model** (`transactions` + `ledger_entries`) is shaped for
-fast queries — balances, transaction detail, account listings. It is
-*derived* information: in principle it could be deleted entirely and
-rebuilt by replaying every event in order.
+The **read model** (`accounts` + `transactions` + `ledger_entries`) is
+shaped for fast queries — balances, transaction detail, account listings.
+It is *derived* information: it can be deleted entirely and rebuilt by
+replaying every event in order, and `rebuild_read_model()` does exactly
+that (§3.3).
 
 ### 3.2 Why both are written in one transaction
 
 `post_transaction()` writes the event **and** the read-model rows inside
-the caller's database transaction:
+the caller's database transaction (`create_account_record()` does the
+same for accounts, appending `account.created`):
 
 ```python
 await conn.execute(insert(transactions).values(id=txn_id, description=description))
@@ -240,16 +242,59 @@ That is a deliberate composability choice. The route handler opens
 `engine.begin()`, does the idempotency lookup, calls `post_transaction`,
 writes the idempotency record, and only then commits — all atomic.
 
-### 3.3 Rebuildability: the aspiration vs. the current reality
+### 3.3 Rebuildability: tested, with two known limits
 
-The README says the read model is "always rebuildable from events". The
-*data* supports that — the event payload contains every entry with
-account id, side, amount and currency.
+`app/domain/rebuild.py` provides `rebuild_read_model(conn)`. It truncates
+`ledger_entries`, `transactions` and `accounts` in one `TRUNCATE ...
+RESTART IDENTITY` (listing all three at once is what makes it FK-safe),
+then replays `events` in `sequence` order:
 
-**But no replay code exists.** There is no function that reads the
-`events` table and reconstructs `transactions` / `ledger_entries`. The
-property is currently a claim about the data layout, not a tested
-capability. This is listed in §8.
+| `event_type` | Replay |
+|---|---|
+| `account.created` | insert into `accounts` with `id = aggregate_id` |
+| `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item |
+| anything else | raise `UnknownEventError` — a rebuild that silently skipped an event would disagree with the log |
+
+Account and transaction ids are the events' `aggregate_id`s, so they come
+back unchanged: every entry still points at the right account, and
+anything holding a transaction id (a detail-page URL, a stored
+idempotency response) still resolves. Each row takes its event's
+`created_at`, which is the value it originally had — row and event were
+written in one database transaction and Postgres `now()` is
+transaction-start time.
+
+It follows the `post_transaction` contract: it issues statements, does
+not commit and does not open its own transaction. A replay that fails
+part-way rolls back with the caller's transaction and the old read model
+survives. It is deliberately **not** exposed over HTTP; who may trigger a
+whole-database rewrite is a separate decision.
+
+**What proves it.** `tests/test_rebuild.py::test_rebuild_reproduces_the_read_model`
+builds a ledger through the demo seed, `POST /accounts` and
+`POST /post-transaction` (all five account types, three currencies, one
+transaction that moves two currencies at once, one with no description),
+snapshots it, rebuilds, and requires every account, transaction (in
+posting order), entry, per-account balance, per-currency total and the
+rendered `/` and `/transactions` pages to be identical. It runs in the
+Postgres-backed suite, so CI checks it on every push.
+
+**The two limits.**
+
+- **`ledger_entries.id` is not reproduced.** The `transaction.posted`
+  payload never carried entry ids, so replay mints new ones. Nothing
+  depends on a particular value: no foreign key references
+  `ledger_entries`, and no query or template looks an entry up by id. The
+  one visible effect is ordering — the transaction-detail page sorts a
+  transaction's entries by `(created_at, id)`, all of a transaction's
+  entries share `created_at`, so their order within the debit and credit
+  columns is decided by the random id and can change across a rebuild.
+  (It was already arbitrary rather than submission order.)
+- **Accounts written before `account.created` existed are not in the log.**
+  Until that event was introduced, account creation appended nothing, so
+  a database created before then has accounts with no event. Replaying
+  such a log fails on the `ledger_entries.account_id` foreign key and rolls
+  back — safely, but the database cannot be rebuilt until those accounts
+  are backfilled into the log (§8).
 
 ---
 
@@ -312,7 +357,9 @@ app/
 ├── db/schema.py       SQLAlchemy Core table definitions
 ├── db/engine.py       async engine, connection helpers
 ├── domain/ledger.py   double-entry invariant + posting
-├── domain/accounts.py account input validation
+├── domain/accounts.py account input validation + creation
+├── domain/account_types.py  the closed set of account types
+├── domain/rebuild.py  replays the event log into the read model (§3.3)
 ├── templates/         Jinja2 server-rendered pages
 ├── config.py          settings via pydantic-settings
 └── main.py            app wiring + all page routes
@@ -387,7 +434,7 @@ for many entity kinds.
 > `created_at` stays as the human-facing timestamp: it is what the event
 > log *displays*, while `sequence` is what it *sorts by*.
 
-**`accounts`** — reference data.
+**`accounts`** — one row per `account.created` event.
 
 | Column | Type | Note |
 |---|---|---|
@@ -408,8 +455,9 @@ layer, like the balance invariant, not by a database constraint.
 added by migration `de4f1aec2fe6`) restricting it to the five types, so
 a write that bypasses `app/domain/accounts.py` is rejected by Postgres
 rather than silently mis-signing a balance. `app/db/schema.py` generates
-the constraint from that module's `ACCOUNT_TYPES` tuple, so the two
-cannot drift.
+the constraint from the `ACCOUNT_TYPES` tuple in
+`app/domain/account_types.py` — the same tuple the validator checks — so
+the two cannot drift.
 
 **`transactions`** — id, optional description, created_at. Deliberately
 thin; all the money lives in the entries.
@@ -527,15 +575,19 @@ touches the database.
 
 ### 5.5 `app/domain/accounts.py`
 
-Mirrors the shape of `ledger.py` — a Pydantic model plus a validation
-entry point, kept out of the route handler.
+Mirrors the shape of `ledger.py` — a Pydantic model, a validation entry
+point, and a write function, all kept out of the route handler.
 
 ```python
 ACCOUNT_TYPES = ("asset", "liability", "equity", "revenue", "expense")
 ```
 
 An **ordered tuple**, not a set, because the `<select>` in the form
-renders from it and a set has no stable order.
+renders from it and a set has no stable order. It lives in its own
+import-free module, `app/domain/account_types.py`, and `accounts.py`
+re-exports it: `schema.py` builds its `CHECK` constraint from the tuple,
+and `accounts.py` imports `schema.py` for its tables, so keeping the
+constant in `accounts.py` would make the two import each other.
 
 `AccountInput` normalises as it validates: `name` is stripped and capped
 at 255 (matching the column width, so over-long input is a 422 rather
@@ -561,12 +613,19 @@ The reason: rendering `str()` of a raw `ValidationError` into a form's
 alert box produces a multi-line internal dump. This produces
 `account_type must be one of: asset, liability, equity, revenue, expense`.
 
+`create_account_record(conn, account)` is the write, and has the same
+contract as `post_transaction`: it inserts the `accounts` row, appends an
+`account.created` event (`aggregate_type="account"`,
+`aggregate_id=<account id>`, payload `name` / `account_type` /
+`currency`), and does not commit. The event is what lets a rebuild
+recreate the account under its original id (§3.3).
+
 It lives in its own module rather than in `accounts.py` because the
 transaction form needs it too — `submit_post_transaction` routes
 `ValidationError` through the same helper, so a malformed amount renders
 `amount input should be a valid decimal` instead of pydantic's dump.
-`app/domain/errors.py` imports nothing but pydantic on purpose:
-`app/db/schema.py` imports `app.domain.accounts`, which imports it.
+`app/domain/errors.py` imports nothing but pydantic on purpose, so any
+domain module can use it without pulling in the database layer.
 
 ### 5.6 `app/api/health.py`
 
@@ -735,11 +794,11 @@ accounts across all five types and 10 transactions, including one in EUR
 and one three-legged entry.
 
 The key decision is that it writes **through the domain layer** —
-`validate_account` and `post_transaction` — rather than by raw `INSERT`.
-Because `post_transaction` appends the `events` row, a seeded database
-has the event log it would have had if a human had typed every
-transaction into the app. A SQL dump would leave `events` empty and the
-event-log page blank.
+`validate_account`, `create_account_record` and `post_transaction` —
+rather than by raw `INSERT`. Because the two write functions append the
+`events` rows, a seeded database has the event log it would have had if a
+human had typed everything into the app, and can be rebuilt from it. A
+SQL dump would leave `events` empty and the event-log page blank.
 
 It is **idempotent by refusal**: it counts `accounts` first and exits with
 a message if any exist, so a second run cannot duplicate data. The whole
@@ -751,11 +810,12 @@ dataset is written inside one `engine.begin()` block.
 |---|---|---|
 | `test_ledger_domain.py` | no | the balance invariant, per-currency independence, amount/type validation |
 | `test_health.py` | no | health endpoint always answers |
-| `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation, overview |
+| `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview |
+| `test_rebuild.py` | **yes** | rebuild reproduces the read model; unknown event types and event-less accounts fail the replay |
 
-`test_ledger_pages.py` skips unless `TEST_DATABASE_URL` is set, then
-creates and drops the whole schema around each test for isolation. It
-drives the app in-process through `httpx.ASGITransport` — no real network
+Both Postgres files skip unless `TEST_DATABASE_URL` is set, then create
+and drop the whole schema around each test for isolation. They
+drive the app in-process through `httpx.ASGITransport` — no real network
 or server.
 
 `pyproject.toml` sets `asyncio_mode = "auto"`, so `async def` tests run
@@ -828,9 +888,11 @@ Browser form
       → AccountInput validators strip, upper-case, check membership
       → on failure: InvalidAccountError with a flat message
           → re-render form, values preserved, HTTP 422
-  → uuid.uuid4() server-side
-  → engine.begin(): INSERT INTO accounts
-  → commit
+  → engine.begin(): create_account_record(conn, account)
+                     ├─ uuid.uuid4() server-side
+                     ├─ INSERT accounts
+                     └─ INSERT events (account.created)
+  → commit  (row and event together)
   → 302 redirect to /
 ```
 
@@ -870,8 +932,9 @@ migrations that run automatically on container boot.
 **Domain layer** — the per-currency double-entry invariant, entry
 validation against the accounts an entry names (the account must exist,
 and its currency is the only one that entry may carry), atomic posting
-that writes the event log alongside the read model, and account input
-validation.
+that writes the event log alongside the read model, account validation
+and creation (which also writes an event), and `rebuild_read_model()`,
+which replays the log into a fresh read model.
 
 **HTTP layer** — health check, and six server-rendered pages: overview
 with per-account balances and normal-side signs, event log with
@@ -889,17 +952,19 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 27 tests. Eight run with no database at all (the balance
+**Testing** — 31 tests. Eight run with no database at all (the balance
 invariant, entry input validation, the error-aggregation helper and the
-health endpoint); the other 19 are Postgres-backed page tests
-covering idempotent retry, the 409 on key reuse, inline validation
-errors, account creation, overview rendering, multi-currency posting,
-the transaction list's description and date filters, pagination, and the
-guarantee that listings order by `sequence` rather than `created_at`.
+health endpoint); the other 23 are Postgres-backed, covering idempotent
+retry, the 409 on key reuse, inline validation errors, account creation
+and its `account.created` event, overview rendering, multi-currency
+posting, the transaction list's description and date filters,
+pagination, the guarantee that listings order by `sequence` rather than
+`created_at`, and the rebuild: a full round trip that must reproduce the
+read model, plus the two ways a replay must refuse to run.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"8 passed, 19 skipped" and is not a passing build. See the README for
+"8 passed, 23 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -913,9 +978,11 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. No replay/rebuild path.** The read model is described as rebuildable
-from `events`, but no code rebuilds it. Until a replay function exists and
-is tested, that is an untested claim.
+**1. Pre-existing accounts are missing from the event log.** Accounts
+created before `account.created` was introduced have no event, so a
+database that has them cannot be rebuilt (§3.3) — the replay fails
+safely on the foreign key. Needs a one-off backfill that appends an
+`account.created` event for every account without one.
 
 **2. No FX handling.** Per §2.4, currency conversion cannot be expressed.
 Needs a clearing-account pattern plus an FX gain/loss account.
@@ -929,7 +996,14 @@ half-written transaction impossible even from outside the app.
 **4. `idempotency_keys` grows forever.** No TTL or cleanup job.
 
 **5. No authentication or authorisation anywhere.** Every route is public.
-Acceptable for a demo, disqualifying for anything real.
+Acceptable for a demo, disqualifying for anything real. It is also why
+`rebuild_read_model()` has no route yet.
+
+**6. Entry order on the transaction-detail page is arbitrary.** Entries
+are sorted by `(created_at, id)`; within one transaction `created_at` is
+shared, so a random UUID decides the order, and a rebuild can change it.
+Storing each entry's position in the event payload and in
+`ledger_entries` would make it submission order and stable.
 
 ### Roadmap items not started
 

@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-09-22.** A snapshot of what is actually built, what is
+**As of 2026-09-24.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -16,11 +16,12 @@ older prose in `ARCHITECTURE.md`.
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **27 tests** |
-| `pytest` (no database available) | 8 passed, 19 skipped |
+| `pytest` collection | **31 tests** |
+| `pytest` (no database available) | 8 passed, 23 skipped |
+| `pytest` (compose Postgres) | 31 passed |
 | Docker daemon | not running on this machine at time of writing |
 
-The 19 skips are not failures. Every page-level test is Postgres-backed
+The 23 skips are not failures. Every page-level test is Postgres-backed
 and skips itself unless `TEST_DATABASE_URL` is set — so **a green local
 run of 8 tests means roughly a third of the suite actually executed.**
 Do not read it as a passing build. See §5 for the command that runs the
@@ -103,21 +104,17 @@ and test host code instead of the image.
 
 ---
 
-## 3. Claimed but not yet true
+## 3. Rebuildability — closed on 2026-09-24
 
-One item deserves singling out, because the README states it as fact:
-
-> "the read model is always rebuildable from the event log"
-
-**The data supports this. No code does it.** The event payload contains
-every entry with account id, side, amount and currency — so a replay is
-*possible* — but there is no function that reads `events` and
-reconstructs `transactions` / `ledger_entries`, and nothing tests that a
-rebuild reproduces the current state. Today it is a property of the
-schema layout, not a capability of the system.
-
-This is the single largest gap between what the project says about
-itself and what it does.
+This section used to record that "the read model is rebuildable from the
+event log" was a claim with no code behind it. It now has both halves:
+account creation appends `account.created` (previously the log contained
+no accounts at all, so no replay could have worked), and
+`app/domain/rebuild.py`'s `rebuild_read_model()` replays the log, with a
+Postgres-backed round-trip test. `ARCHITECTURE.md` §3.3 has the details
+and the two known limits — entry ids are not reproduced, and databases
+with accounts created before the event existed cannot be rebuilt until
+those accounts are backfilled into the log.
 
 ---
 
@@ -125,13 +122,11 @@ itself and what it does.
 
 Ordered so that earlier items unblock or de-risk later ones.
 
-**1. Replay / rebuild (`app/domain/` — new module)**
-Write `rebuild_read_model(conn)`: truncate `transactions` and
-`ledger_entries`, read `events` ordered by `sequence`, re-apply each
-`transaction.posted` payload. The test that makes it real: seed a
-ledger, snapshot the read model, rebuild, assert identical. This turns
-§3's claim into a tested capability and is the natural foundation for
-anything event-sourced that comes after.
+**1. Backfill `account.created` for pre-existing accounts**
+Replay now exists (§3). Any database with accounts created before
+2026-09-24 has no events for them and fails a rebuild on the foreign
+key. A one-off migration or script that appends an `account.created`
+event for each account lacking one closes that.
 
 **2. Balance enforcement in the database**
 The per-transaction balance rule is enforced only in application code.
@@ -172,7 +167,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 8 of 27 tests:
+you are running 8 of 31 tests:
 
 ```bash
 docker compose up -d db
