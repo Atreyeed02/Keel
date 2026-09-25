@@ -1,4 +1,3 @@
-
 # ledger-service
 
 An event-sourced, double-entry ledger service — the accounting core you'd
