@@ -38,7 +38,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Table,
-    UniqueConstraint,
     event,
     func,
 )
@@ -316,7 +315,9 @@ idempotency_keys = Table(
     Column("response_body", JSONB, nullable=True),
     Column("response_status", String(3), nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
-    UniqueConstraint("key", name="uq_idempotency_key"),
+    # `key` is the primary key, so it is unique already. An extra
+    # UniqueConstraint on it used to be declared here; see migration
+    # a4c7e2d9b813 for why no database ever had one.
 )
 
 # Backs the retention cleanup's range delete, `created_at < now() - interval`.

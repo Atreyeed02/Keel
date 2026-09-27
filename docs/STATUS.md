@@ -43,12 +43,17 @@ unless `TEST_DATABASE_URL` is set, so **a green local run of 48 tests
 means well under half of the suite actually executed.** Do not read it
 as a passing build. See §5 for the command that runs the real thing.
 
-> **Known drift, not fixed:** `alembic check` reports one difference.
-> `schema.py` declares `UniqueConstraint("key", name="uq_idempotency_key")`
-> on a column that is already the primary key, and Postgres keeps only
-> one constraint for the pair. It predates this round of work (the same
-> report comes from `main` at `e94f44c`) and is harmless, but it means
-> `alembic check` cannot yet be used as a CI gate.
+> **`alembic check` passes and runs in CI.** It used to report one
+> difference: `schema.py` declared a unique constraint on
+> `idempotency_keys.key`, its primary key. Postgres had folded the two
+> into one primary key named `uq_idempotency_key`, so no database had a
+> duplicate; the model did. Migration `a4c7e2d9b813` removes it from the
+> model and renames the key to `idempotency_keys_pkey`.
+>
+> One cosmetic difference remains that `alembic check` does not see:
+> migrations spell the `created_at` defaults `CURRENT_TIMESTAMP`, and
+> `schema.py` spells them `now()`. Postgres evaluates both as the
+> transaction's start time.
 
 ---
 
@@ -168,7 +173,8 @@ directly, so form parsing no longer goes through the deprecated
 
 ### CI — two jobs
 
-`lint-and-test` (ruff + pytest against a live Postgres service) and
+`lint-and-test` (ruff, `alembic check` on a freshly migrated database,
+then pytest against a live Postgres service) and
 `docker-smoke`, which is the more interesting one: it builds the image,
 waits for `/health`, asserts the exact healthy body `{"status":"ok","db":"up"}`
 (a bare 200 check would go green on a stack whose migrations failed),

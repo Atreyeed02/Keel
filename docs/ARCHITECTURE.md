@@ -1021,6 +1021,14 @@ On 100,000 rows the planner now uses the index unprompted: a bitmap
 index scan, about 1.4 ms. `pg_trgm` is a trusted extension from
 PostgreSQL 13 on, so the database owner can install it without superuser
 rights. Downgrade drops the index and leaves the extension installed.
+`a4c7e2d9b813_drop_duplicate_idempotency_key_constraint.py` fixes the
+difference `alembic check` used to report. The initial schema declared
+both `PRIMARY KEY (key)` and `UNIQUE (key)` on `idempotency_keys`, but
+Postgres's `CREATE TABLE` folds a unique constraint identical to the
+primary key into it, so no database ever had two constraints: it had one
+primary key named `uq_idempotency_key`. `schema.py` now declares only the
+primary key, and the migration renames the constraint (and its index) to
+`idempotency_keys_pkey`, the name `create_all` gives it.
 
 The interesting part is `alembic/env.py`:
 
@@ -1135,8 +1143,12 @@ start.
 
 Two independent jobs:
 
-**`lint-and-test`** — ruff, then pytest against a real Postgres service
-container.
+**`lint-and-test`** — ruff; then `alembic upgrade head` and `alembic check`
+on a database of their own, which fails the build if the migrations and
+`app/db/schema.py` have drifted apart in any way autogenerate can see
+(the tests build their schema from `schema.py`, the app from the
+migrations, so drift would mean the tests exercise a different schema);
+then pytest against a real Postgres service container.
 
 **`docker-smoke`** — proves the shipped image works: build, `up -d`, poll
 `/health` until it answers (with a deadline, not a fixed sleep), assert
