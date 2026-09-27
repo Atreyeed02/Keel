@@ -1200,7 +1200,25 @@ without needing an explicit marker.
 ### 5.12 Docker
 
 `Dockerfile` — `python:3.12-slim`, install requirements, copy `app/`,
-`alembic/`, `alembic.ini` and `scripts/`, migrate-then-serve on start.
+`alembic/`, `alembic.ini` and `scripts/`, then switch to an unprivileged
+user, `keel` (uid 10001). The copied files stay owned by root, so the app can
+read its code but not change it. `PYTHONUNBUFFERED` gets log lines to the
+host as they are written.
+
+The start command is `python -m app.serve` (`app/serve.py`): `alembic
+upgrade head`, then, only if that succeeded, uvicorn on `$PORT` (default
+8000), with the forwarded-header settings from §5.15 and never `--reload`.
+**Migrating on start assumes a single instance.** Alembic takes no lock, so
+two instances starting together would both migrate. A host that scales out,
+or starts the new instance before stopping the old one during a deploy,
+should run `alembic upgrade head` as a release step and start instances with
+`python -m app.serve --no-migrate`.
+
+Checked locally: the image, run with `ENVIRONMENT=production`, `PORT=9090`
+and a `postgres://…?sslmode=disable` URL against a throwaway Postgres,
+migrated to head, served `{"status":"ok","db":"up"}` on 9090, and ran as uid
+10001. Without `DATABASE_URL` it refused to start. CI's `docker-smoke` job
+now also fails if the container runs as root.
 
 `.dockerignore` — keeps the build context to what the Dockerfile copies.
 Note the `**/` prefixes: a bare `__pycache__` would only match one at the
