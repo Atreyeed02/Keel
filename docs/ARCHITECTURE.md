@@ -1044,14 +1044,19 @@ backfill it does nothing.
 |---|---|---|
 | `test_ledger_domain.py` | no | the balance invariant, per-currency independence, amount/type validation |
 | `test_health.py` | no | health endpoint always answers |
-| `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters and pagination, `sequence` ordering |
-| `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads (§4) |
-| `test_ledger_invariants.py` | **yes** | both database triggers against writes that bypass the app; atomic rollback; log and read model agree; trial balance nets to zero |
+| `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters (UTC day boundaries under any session time zone) and pagination, `sequence` ordering, the trigram index behind the search |
+| `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads, key retention and its CLI (§4) |
+| `test_ledger_invariants.py` | **yes** | every database trigger (balance, account currency, append-only log) against writes that bypass the app; atomic rollback; log and read model agree; trial balance nets to zero |
 | `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; both CLIs |
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
+| `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 
 The Postgres-backed tests skip unless `TEST_DATABASE_URL` is set, then
-create and drop the whole schema around each test for isolation. They
+create and drop the whole schema around each test for isolation. They do
+that through `tests/support.py`'s `reset_schema`, which refuses to run on
+a database with an `alembic_version` table: `metadata.drop_all` would
+leave the stamp behind, and the database would claim to be at head with
+no tables in it. They
 drive the app in-process through `httpx.ASGITransport` — no real network
 or server.
 
@@ -1232,15 +1237,21 @@ form with live client-side totals, transaction detail with debit/credit
 columns, and account creation.
 
 **Database-enforced invariants** — `events` refuses UPDATE, DELETE and
-TRUNCATE, and a deferred constraint trigger refuses to commit any
-transaction whose entries do not balance per currency (§5.2).
+TRUNCATE; a deferred constraint trigger refuses to commit any
+transaction whose entries do not balance per currency; an entry must
+carry its account's currency, and an account's currency cannot change
+(§5.2).
 
 **Idempotency** — claim-first, so it holds under concurrency as well as
 for sequential retries. Includes the 409 on key reuse, and a rejected
 attempt releases the key (§4).
 
 **Rebuild tooling** — `python -m scripts.rebuild_read_model`, safe to run
-alongside live postings (§3.3).
+alongside live postings, and `python -m scripts.backfill_account_events`
+for databases whose accounts predate `account.created` (§3.3).
+
+**Idempotency key retention** — `python -m scripts.prune_idempotency_keys`
+deletes keys past a retention window, 30 days by default (§4).
 
 **Structured logging** — JSON lines on the `keel` logger with a
 per-request id, echoed as `X-Request-ID` (§5.15).
@@ -1252,18 +1263,19 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 62 tests (§5.11). 17 run with no database at all: the
+**Testing** — 75 tests (§5.11). 18 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
-the idempotency fingerprint, request ids and the JSON formatter, and the
-health endpoint. The other 45 are Postgres-backed. They cover the pages,
-filters and pagination; idempotency, including concurrent duplicates; the
-database triggers against writes that bypass the app; atomic rollback;
-agreement between the log and the read model; and the rebuild, including
-recovery from a corrupted projection and a posting made mid-rebuild.
+the idempotency fingerprint and retention floor, request ids and the JSON
+formatter, and the health endpoint. The other 57 are Postgres-backed.
+They cover the pages, filters and pagination; idempotency, including
+concurrent duplicates and key retention; the database triggers against
+writes that bypass the app; atomic rollback; agreement between the log
+and the read model; and the rebuild, including recovery from a corrupted
+projection, a posting made mid-rebuild and a backfilled legacy ledger.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"17 passed, 45 skipped" and is not a passing build. See the README for
+"18 passed, 57 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1277,48 +1289,40 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. Pre-existing accounts are missing from the event log.** Accounts
-created before `account.created` was introduced have no event, so a
-database that has them cannot be rebuilt (§3.3) — the replay fails
-safely on the foreign key. Needs a one-off backfill that appends an
-`account.created` event for every account without one.
-
-**2. No FX handling.** Per §2.4, currency conversion cannot be expressed.
+**1. No FX handling.** Per §2.4, currency conversion cannot be expressed.
 Needs a clearing-account pattern plus an FX gain/loss account.
-
-**3. The account-currency rule is enforced only in Python.** The balance
-rule now has a database backstop (§5.2), but "an entry carries its
-account's currency" does not. A trigger comparing
-`ledger_entries.currency` with `accounts.currency` would close it.
 
 ### Robustness
 
-**4. `idempotency_keys` grows forever.** No TTL or cleanup job.
-
-**5. No authentication or authorisation anywhere.** Every route is public.
+**2. No authentication or authorisation anywhere.** Every route is public.
 Acceptable for a demo, disqualifying for anything real. It is also why
-`rebuild_read_model()` is a CLI and not a route.
+`rebuild_read_model()` and the other maintenance tasks are CLIs and not
+routes.
 
-**6. Entry order on the transaction-detail page is arbitrary.** Entries
+**3. Key pruning has no scheduler.** `scripts/prune_idempotency_keys.py`
+does the cleanup (§4), but nothing in the stack runs it. A deployment
+needs a cron job or a scheduled task.
+
+**4. Entry order on the transaction-detail page is arbitrary.** Entries
 are sorted by `(created_at, id)`; within one transaction `created_at` is
 shared, so a random UUID decides the order, and a rebuild can change it.
 Storing each entry's position in the event payload and in
 `ledger_entries` would make it submission order and stable.
 
-**7. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
+**5. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
 the whole log at once and replays from `sequence` 1. There are no
 snapshots, and no incremental catch-up of a projection from a known
 position. Fine at this size, and the first thing to change if it grows.
 While a rebuild runs, postings wait on its lock (§3.3).
 
-**8. Event payloads are unversioned.** `transaction.posted` has had one
+**6. Event payloads are unversioned.** `transaction.posted` has had one
 shape since it was introduced. The first change to it will need either a
 version field in the payload or a new event type, with replay rules for
 both.
 
 ### Missing interfaces
 
-**9. No JSON API.** Every write is a form post that answers with HTML or
+**7. No JSON API.** Every write is a form post that answers with HTML or
 a redirect. `post_transaction_once` and `create_account_record` are
 already free of HTTP concerns, so a JSON `POST /api/transactions` taking
 an `Idempotency-Key` header is mostly wiring.

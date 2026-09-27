@@ -178,7 +178,7 @@ event share a single commit.
 | `ledger_entries` | projection | `transaction_id`, `account_id`, `entry_type` (CHECK: debit/credit), `amount` (CHECK > 0), `currency` |
 | `idempotency_keys` | retry protection | `key` (PK), `request_hash`, `response_body` |
 
-Schema is managed by Alembic (5 migrations, applied automatically on
+Schema is managed by Alembic (8 migrations, applied automatically on
 container start). Every column and index is explained in
 [§5.2](docs/ARCHITECTURE.md#52-appdbschemapy--the-tables).
 
@@ -229,7 +229,7 @@ pytest -v
 ruff check .
 ```
 
-62 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+75 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -237,8 +237,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 45 database-backed tests are **skipped,
-not failed**. A green run of the remaining 17 is partial coverage:
+Without `TEST_DATABASE_URL`, the 57 database-backed tests are **skipped,
+not failed**. A green run of the remaining 18 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -247,10 +247,10 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | File | Covers |
 |---|---|
 | `test_ledger_domain.py` | the balance invariant and entry validation, no database |
-| `test_ledger_pages.py` | every page, inline errors, filters, pagination, `sequence` ordering |
-| `test_idempotency.py` | retries, 409 on key reuse, key release after rejection, concurrent duplicates and conflicts |
-| `test_ledger_invariants.py` | both DB triggers against writes that bypass the app, atomic rollback, log ↔ read-model agreement, trial balance |
-| `test_rebuild.py` | round trip, recovery from corruption, repeatability, rebuild alongside a live posting, the CLI |
+| `test_ledger_pages.py` | every page, inline errors, filters (UTC day boundaries whatever the session time zone), pagination, `sequence` ordering, the search's trigram index |
+| `test_idempotency.py` | retries, 409 on key reuse, key release after rejection, concurrent duplicates and conflicts, key retention and its CLI |
+| `test_ledger_invariants.py` | every DB trigger against writes that bypass the app, atomic rollback, log ↔ read-model agreement, trial balance |
+| `test_rebuild.py` | round trip, recovery from corruption, repeatability, rebuild alongside a live posting, backfilling a legacy ledger, both CLIs |
 | `test_observability.py` | request ids, JSON log format, ledger identifiers on log lines |
 | `test_health.py` | `/health` always answers |
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
@@ -321,10 +321,10 @@ app/
 ├── observability.py      JSON logging, request-id middleware
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
-alembic/versions/         5 migrations
+alembic/versions/         8 migrations
 scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py,
                           prune_idempotency_keys.py
-tests/                    62 tests; see above
+tests/                    75 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
