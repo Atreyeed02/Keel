@@ -1,5 +1,3 @@
-import hashlib
-import json
 import uuid
 from collections import defaultdict
 from datetime import date, timedelta
@@ -13,12 +11,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import case, func, insert, select
+from sqlalchemy import case, func, select
 
 from app.api.health import router as health_router
 from app.config import settings
 from app.db.engine import engine
-from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
+from app.db.schema import accounts, events, ledger_entries, transactions
 from app.domain.accounts import (
     ACCOUNT_TYPES,
     InvalidAccountError,
@@ -26,12 +24,16 @@ from app.domain.accounts import (
     validate_account,
 )
 from app.domain.errors import describe_validation_error
+from app.domain.idempotency import (
+    IdempotencyConflictError,
+    post_transaction_once,
+    request_fingerprint,
+)
 from app.domain.ledger import (
     EntryAccountError,
     EntryInput,
     UnbalancedTransactionError,
     assert_balanced,
-    post_transaction,
 )
 
 app = FastAPI(
@@ -405,44 +407,21 @@ async def submit_post_transaction(
         return await invalid(
             describe_validation_error(exc) if isinstance(exc, ValidationError) else str(exc)
         )
-    request_hash = hashlib.sha256(
-        json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
-    ).hexdigest()
+    fingerprint = request_fingerprint(description, raw_entries)
     # post_transaction validates entries against the accounts they name,
     # which needs a connection — so those failures surface here rather than
     # in the pre-flight block above. The engine.begin() context rolls the
-    # whole thing back before the error page is rendered.
+    # whole thing back, idempotency claim included, before the error page
+    # is rendered — so the same key can be resubmitted once it is fixed.
     try:
         async with engine.begin() as conn:
-            saved = (
-                (
-                    await conn.execute(
-                        select(
-                            idempotency_keys.c.request_hash, idempotency_keys.c.response_body
-                        ).where(idempotency_keys.c.key == submission_key)
-                    )
-                )
-                .mappings()
-                .one_or_none()
+            transaction_id, _ = await post_transaction_once(
+                conn, submission_key, fingerprint, entries, description or None
             )
-            if saved:
-                if saved["request_hash"] != request_hash:
-                    raise HTTPException(
-                        status_code=409, detail="submission key was used for another request"
-                    )
-                transaction_id = uuid.UUID(saved["response_body"]["transaction_id"])
-            else:
-                transaction_id = await post_transaction(conn, entries, description or None)
-                await conn.execute(
-                    insert(idempotency_keys).values(
-                        key=submission_key,
-                        request_hash=request_hash,
-                        response_body={"transaction_id": str(transaction_id)},
-                        response_status="302",
-                    )
-                )
     except EntryAccountError as exc:
         return await invalid(str(exc))
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
 
