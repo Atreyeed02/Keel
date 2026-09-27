@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-09-27.** A snapshot of what is actually built, what is
+**As of 2026-09-27, JSON API added.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -16,20 +16,20 @@ older prose in `ARCHITECTURE.md`.
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **75 tests** |
-| `pytest` (no database available) | 18 passed, 57 skipped |
-| `pytest` (local Postgres 16) | 75 passed |
-| `pytest -W error::DeprecationWarning` on the pinned stack | 75 passed |
+| `pytest` collection | **119 tests** |
+| `pytest` (no database available) | 48 passed, 71 skipped |
+| `pytest` (local Postgres 16) | 119 passed |
+| `pytest -W error::DeprecationWarning` on the pinned stack | 119 passed |
 | `pip-audit -r requirements.txt` | no known vulnerabilities |
 | `alembic upgrade head` → `downgrade base` → `upgrade head` | clean (8 migrations each way), on a scratch database |
 | Migrated schema vs. `metadata.create_all` | identical functions, triggers and indexes (only alembic's own table differs) |
-| App booted with uvicorn on a migrated database | health, account creation, posting, retry, 409, the transaction filter and all three maintenance CLIs verified |
+| App booted with uvicorn on a migrated database | health, account creation, posting, retry, 409, the transaction filter and all three maintenance CLIs verified; the JSON API's 201, 200 replay (`Idempotent-Replayed`), 400, 409, balances and `/docs` verified over real HTTP |
 | `docker compose config` (base, and base + override) | valid |
 | Docker image build | **not run**: the Docker daemon was not running on this machine |
 
-The 57 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 18 tests
-means under a quarter of the suite actually executed.** Do not read it
+The 71 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 48 tests
+means well under half of the suite actually executed.** Do not read it
 as a passing build. See §5 for the command that runs the real thing.
 
 > **Known drift, not fixed:** `alembic check` reports one difference.
@@ -104,6 +104,25 @@ transaction detail with debit/credit columns, account creation. Plus
 `/transactions` date filters are UTC days, matching the UTC timestamps
 the pages show, whatever time zone the database session uses.
 
+### JSON API — four endpoints
+
+`POST /api/accounts`, `GET /api/accounts`, `POST /api/transactions`
+(requires `Idempotency-Key`; `201` first post, `200` replay with
+`Idempotent-Replayed: true`, `409` on reuse, `400` without a valid key)
+and `GET /api/transactions/{id}`. They live in `app/api/` and call the
+same domain functions as the pages; the shared read queries moved to
+`app/domain/reads.py`. Errors share `{"error": {"code", "message"}}`
+under `/api/` only, amounts are strings in and out, and the fingerprint
+compares requests by meaning rather than bytes (`ARCHITECTURE.md` §4 and
+§5.16 have the reasoning). `tests/test_api.py` has 33 tests, 22 of them
+database-free, including concurrent duplicate requests; each was checked
+to fail when the code it covers is broken.
+
+Found on the way and fixed for the forms too: an amount with a third
+decimal place was silently rounded on storage (`100.005` stored as
+`100.01`), one that rounded to zero was a 500, and so was a description
+over 512 characters. All three are now `422`s.
+
 ### Idempotency — correct under concurrency, with retention
 
 Every posting carries a `submission_key`. A replay with the same key
@@ -174,30 +193,26 @@ limit: entry ids are not reproduced.
 
 Ordered so that earlier items unblock or de-risk later ones.
 
-**1. An HTTP API alongside the pages**
-Everything today is form-posted HTML. The domain layer is already clean
-enough to expose directly: `post_transaction_once` takes a connection, a
-key, a fingerprint and `EntryInput`s, nothing HTTP-shaped. A JSON
-`POST /api/transactions` taking an `Idempotency-Key` header is mostly
-wiring, and it is what makes the service consumable by anything other
-than a browser.
-
-**2. A live deployment**
+**1. A live deployment**
 Nothing is hosted, so there is no URL to click without cloning the repo.
 The image-only `docker-compose.yml` is what a deployment would run. This
 needs a hosting decision, and whatever host is chosen also needs to run
 `scripts.prune_idempotency_keys` on a schedule.
 
-**3. Authentication**
+**2. Authentication**
 Every route is public. Fine for a demo, disqualifying otherwise.
 
-**4. Stable entry order on the transaction-detail page**
+**3. Stable entry order on the transaction-detail page**
 Entries sort by `(created_at, id)`, so within a transaction a random UUID
 decides the order, and a rebuild can change it. Storing each entry's
 position in the event payload and in `ledger_entries` fixes both.
 
-**Done since the previous version of this list:** the `account.created`
-backfill, the account-currency rule in the database, idempotency key
+**4. Round out the JSON API**
+No single-account read, no transaction listing, no pagination and no
+event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
+
+**Done since the previous version of this list:** the JSON API, the
+`account.created` backfill, the account-currency rule in the database, idempotency key
 retention, UTC date filtering, the trigram search index, the
 FastAPI/Starlette upgrade, and the test fixtures' guard against migrated
 databases.
@@ -221,7 +236,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 18 of 75 tests:
+you are running 48 of 119 tests:
 
 ```bash
 docker compose up -d db

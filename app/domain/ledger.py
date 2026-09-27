@@ -19,17 +19,25 @@ import uuid
 from collections import defaultdict
 from decimal import Decimal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.schema import accounts, events, ledger_entries, transactions
 
+# The longest description `transactions.description` can hold. Longer
+# ones used to reach Postgres and fail there as an unhandled 500.
+DESCRIPTION_MAX_LENGTH = transactions.c.description.type.length
+
 
 class EntryInput(BaseModel):
     account_id: uuid.UUID
     entry_type: str  # "debit" | "credit"
-    amount: Decimal
+    # Matches the column, Numeric(18, 2). Without it Postgres rounds instead
+    # of refusing: 100.005 was stored as 100.01, silently changing what was
+    # posted, and 0.001 became 0.00 and failed the `amount > 0` CHECK as an
+    # unhandled 500. `100.000` is still accepted; it is exactly 100.00.
+    amount: Decimal = Field(max_digits=18, decimal_places=2)
     currency: str
 
     @field_validator("entry_type")
@@ -125,6 +133,12 @@ async def assert_accounts_valid(conn: AsyncConnection, entries: list[EntryInput]
         raise EntryAccountError(missing, mismatched)
 
 
+def validate_description(description: str | None) -> None:
+    """Raise if `description` is too long for `transactions.description`."""
+    if description is not None and len(description) > DESCRIPTION_MAX_LENGTH:
+        raise ValueError(f"description must be at most {DESCRIPTION_MAX_LENGTH} characters")
+
+
 def assert_balanced(entries: list[EntryInput]) -> None:
     """Sum debits and credits per currency; raise if any currency doesn't net to zero."""
     net: dict[str, Decimal] = defaultdict(Decimal)
@@ -150,6 +164,7 @@ async def post_transaction(
     """
     if len(entries) < 2:
         raise ValueError("a transaction needs at least two entries")
+    validate_description(description)
     # Before the balance check: an entry naming an account that doesn't
     # exist would otherwise reach Postgres and fail the foreign key as an
     # unhandled IntegrityError, and one naming the wrong currency would

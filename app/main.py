@@ -11,9 +11,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import case, func, select
+from sqlalchemy import func, select
 
+from app.api.accounts import router as accounts_api_router
+from app.api.errors import register_api_error_handlers
 from app.api.health import router as health_router
+from app.api.transactions import router as transactions_api_router
 from app.config import settings
 from app.db.engine import engine
 from app.db.schema import accounts, events, ledger_entries, transactions
@@ -34,8 +37,17 @@ from app.domain.ledger import (
     EntryInput,
     UnbalancedTransactionError,
     assert_balanced,
+    validate_description,
 )
-from app.observability import configure_logging, log, request_context_middleware
+from app.domain.reads import account_balances, currency_totals, transaction_with_entries
+from app.observability import (
+    configure_logging,
+    log_account_created,
+    log_idempotency_conflict,
+    log_transaction,
+    log_transaction_rejected,
+    request_context_middleware,
+)
 
 configure_logging(settings.log_level)
 
@@ -46,10 +58,14 @@ app = FastAPI(
 )
 app.middleware("http")(request_context_middleware)
 app.include_router(health_router)
+# The JSON API (app/api/): same domain layer as the pages below, with its own
+# error shape under /api/.
+app.include_router(accounts_api_router)
+app.include_router(transactions_api_router)
+register_api_error_handlers(app)
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-NORMAL_DEBIT_TYPES = {"asset", "expense"}
 
 
 def _money(value: Decimal | None) -> str:
@@ -145,65 +161,9 @@ async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str
 
 @app.get("/", response_class=HTMLResponse)
 async def read_overview(request: Request):
-    debit = func.coalesce(
-        func.sum(case((ledger_entries.c.entry_type == "debit", ledger_entries.c.amount), else_=0)),
-        0,
-    )
-    credit = func.coalesce(
-        func.sum(case((ledger_entries.c.entry_type == "credit", ledger_entries.c.amount), else_=0)),
-        0,
-    )
-    balance = func.coalesce(
-        func.sum(
-            case(
-                (ledger_entries.c.entry_type == "debit", ledger_entries.c.amount),
-                else_=-ledger_entries.c.amount,
-            )
-        ),
-        0,
-    )
     async with engine.connect() as conn:
-        account_rows = (
-            (
-                await conn.execute(
-                    select(
-                        accounts.c.id,
-                        accounts.c.name,
-                        accounts.c.account_type,
-                        accounts.c.currency,
-                        debit.label("debits"),
-                        credit.label("credits"),
-                        balance.label("raw_balance"),
-                    )
-                    .outerjoin(ledger_entries, ledger_entries.c.account_id == accounts.c.id)
-                    .group_by(
-                        accounts.c.id, accounts.c.name, accounts.c.account_type, accounts.c.currency
-                    )
-                    .order_by(accounts.c.account_type, accounts.c.name)
-                )
-            )
-            .mappings()
-            .all()
-        )
-        # Grouped by currency, not summed across all of them: adding USD
-        # to EUR produces a real number that means nothing. Entries are
-        # now guaranteed to carry their account's currency, so grouping
-        # on the entry column gives one honest total per currency.
-        totals = (
-            (
-                await conn.execute(
-                    select(
-                        ledger_entries.c.currency,
-                        debit.label("debits"),
-                        credit.label("credits"),
-                    )
-                    .group_by(ledger_entries.c.currency)
-                    .order_by(ledger_entries.c.currency)
-                )
-            )
-            .mappings()
-            .all()
-        )
+        balances = await account_balances(conn)
+        totals = await currency_totals(conn)
         recent = (
             (
                 await conn.execute(
@@ -214,27 +174,14 @@ async def read_overview(request: Request):
             .all()
         )
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in account_rows:
-        data = dict(row)
-        data["normal_side"] = "debit" if row["account_type"] in NORMAL_DEBIT_TYPES else "credit"
-        data["balance"] = (
-            row["raw_balance"] if data["normal_side"] == "debit" else -row["raw_balance"]
-        )
-        grouped[row["account_type"]].append(data)
+    for account in balances:
+        grouped[account["account_type"]].append(account)
     return templates.TemplateResponse(
         request=request,
         name="overview.html",
         context={
             "accounts_by_type": grouped,
-            "totals_by_currency": [
-                {
-                    "currency": row["currency"],
-                    "debits": row["debits"],
-                    "credits": row["credits"],
-                    "delta": row["debits"] - row["credits"],
-                }
-                for row in totals
-            ],
+            "totals_by_currency": totals,
             "recent_transactions": recent,
         },
     )
@@ -376,14 +323,7 @@ async def create_account(
     async with engine.begin() as conn:
         account_id = await create_account_record(conn, account)
     # after the commit, so the line only ever describes an account that exists
-    log.info(
-        "account.created",
-        extra={
-            "account_id": str(account_id),
-            "account_type": account.account_type,
-            "currency": account.currency,
-        },
-    )
+    log_account_created(account_id, account.account_type, account.currency)
     return RedirectResponse(url="/", status_code=302)
 
 
@@ -426,6 +366,7 @@ async def submit_post_transaction(
         assert_balanced(entries)
         if len(entries) < 2:
             raise ValueError("a transaction needs at least two entries")
+        validate_description(description)
     except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
         # UnbalancedTransactionError and the bare ValueError already carry a
         # single readable sentence. A raw pydantic ValidationError does not —
@@ -445,48 +386,21 @@ async def submit_post_transaction(
                 conn, submission_key, fingerprint, entries, description or None
             )
     except EntryAccountError as exc:
-        log.info(
-            "transaction.rejected",
-            extra={"idempotency_key": submission_key, "reason": str(exc)},
-        )
+        log_transaction_rejected(submission_key, str(exc))
         return await invalid(str(exc))
     except IdempotencyConflictError as exc:
-        log.warning("idempotency.conflict", extra={"idempotency_key": submission_key})
+        log_idempotency_conflict(submission_key)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    log.info(
-        "transaction.replayed" if replayed else "transaction.posted",
-        extra={
-            "transaction_id": str(transaction_id),
-            "idempotency_key": submission_key,
-            "entry_count": len(entries),
-            "account_ids": sorted({str(e.account_id) for e in entries}),
-        },
-    )
+    log_transaction(transaction_id, submission_key, entries, replayed=replayed)
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
 
 @app.get("/transaction-detail/{transaction_id}", response_class=HTMLResponse)
 async def read_transaction_detail(request: Request, transaction_id: uuid.UUID):
     async with engine.connect() as conn:
-        transaction = (
-            (await conn.execute(select(transactions).where(transactions.c.id == transaction_id)))
-            .mappings()
-            .one_or_none()
-        )
+        transaction, entry_rows = await transaction_with_entries(conn, transaction_id)
         if transaction is None:
             raise HTTPException(status_code=404, detail="transaction not found")
-        entry_rows = (
-            (
-                await conn.execute(
-                    select(ledger_entries, accounts.c.name, accounts.c.account_type)
-                    .join(accounts, accounts.c.id == ledger_entries.c.account_id)
-                    .where(ledger_entries.c.transaction_id == transaction_id)
-                    .order_by(ledger_entries.c.created_at, ledger_entries.c.id)
-                )
-            )
-            .mappings()
-            .all()
-        )
         event = (
             (
                 await conn.execute(
