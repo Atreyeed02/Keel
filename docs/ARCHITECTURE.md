@@ -1432,6 +1432,52 @@ normal-side sign), `currency_totals` (the overview's trial balance) and
 from `main.py` when the API needed them. The pages were rendered from a
 seeded ledger before and after the move and are byte-identical.
 
+### 5.18 `app/security.py` — body size limit and security headers
+
+Two ASGI middlewares, neither of them about the ledger.
+
+**Body size limit** (`MAX_REQUEST_BODY_BYTES`, default 64 KiB). A request
+whose `Content-Length` is over the limit is answered `413` before the app
+runs, which is the only protection for a route that never reads its body.
+A chunked request, which declares no length, is counted as it arrives and
+cut off with a `413` once it passes the limit. Under `/api/` the 413 uses the
+API's error shape. The middleware sits *inside* the request log, so a 413 is
+logged as an ordinary `request.completed`, not a `request.failed` with a
+traceback.
+
+**Security headers**, on every response, a 413 included (this middleware
+is outermost):
+
+| Header | Value | Why |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | a browser never guesses a content type |
+| `X-Frame-Options` | `DENY` | no framing, so no clickjacking; CSP `frame-ancestors 'none'` says the same to newer browsers |
+| `Referrer-Policy` | `same-origin` | other sites never see which Keel URL a visitor came from |
+| `Content-Security-Policy` | below | limits what a page may load and run |
+
+The page policy allows scripts from Keel itself, from
+`https://cdn.tailwindcss.com`, and inline only with this response's nonce.
+A fresh nonce is made per request, stored in `request.state.csp_nonce`, and
+put on the posting form's one inline script. Styles need `'unsafe-inline'`,
+because the Tailwind Play CDN builds its CSS in the browser and injects it
+as `<style>` elements; without it the pages lose their styling. FastAPI's
+`/docs` (Swagger UI) and `/redoc` load their UI from jsDelivr and bootstrap
+it with an inline script FastAPI writes, so those two paths get a separate
+policy that allows that CDN and inline scripts.
+
+Checked in headless Chrome, against the branch running on real data, over
+the DevTools protocol: every page (overview, transactions, event log, both
+forms, a transaction's detail, `/docs`, `/redoc`) loaded with no CSP
+violation, the Tailwind styles applied, Swagger UI and ReDoc rendered, and
+typing an amount into the posting form updated its live total. As a
+control, removing the nonce from the form's script made Chrome block it and
+the total stay at `0.00`.
+
+The Tailwind Play CDN is meant for development, not production: it ships
+the whole compiler to every visitor and is the reason styles need
+`'unsafe-inline'`. Building the CSS at image build time would remove both
+(§8).
+
 ---
 
 ## 6. Two request walkthroughs

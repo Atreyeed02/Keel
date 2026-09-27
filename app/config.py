@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # could then claim any address.
     forwarded_allow_ips: str = "127.0.0.1"
 
+    # Largest request body accepted, in bytes (app/security.py). A posting with
+    # dozens of lines is a few kilobytes.
+    max_request_body_bytes: int = Field(65536, ge=1024)
+
     # Level for the `keel` JSON logger (app/observability.py)
     log_level: str = "INFO"
 

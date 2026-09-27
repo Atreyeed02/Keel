@@ -48,6 +48,7 @@ from app.observability import (
     log_transaction_rejected,
     request_context_middleware,
 )
+from app.security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 
 configure_logging(settings.log_level)
 
@@ -56,7 +57,12 @@ app = FastAPI(
     description="Event-sourced, double-entry ledger service.",
     version="0.1.0",
 )
+# Starlette runs the middleware added last first. The body limit sits inside
+# the request log, so a 413 is logged like any other response; the security
+# headers sit outside everything, so every response gets them, a 413 included.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
 app.middleware("http")(request_context_middleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(health_router)
 # The JSON API (app/api/): same domain layer as the pages below, with its own
 # error shape under /api/.
