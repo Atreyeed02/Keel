@@ -200,12 +200,16 @@ you are running 17 of 62 tests:
 
 ```bash
 docker compose up -d db
-export TEST_DATABASE_URL=postgresql+asyncpg://ledger:ledger@localhost:5432/ledger
+docker compose exec db createdb -U ledger ledger_test
+export TEST_DATABASE_URL=postgresql+asyncpg://ledger:ledger@localhost:5432/ledger_test
 pytest -v
 ```
 
 The fixture **drops and recreates every table**, so point it only at a
-database you do not mind losing.
+scratch database. It refuses to run on a database alembic has migrated:
+`alembic_version` is not in `metadata`, so the drop would leave that
+database stamped at head with no tables, and a later `alembic upgrade
+head` would silently do nothing. `tests/support.py` holds the check.
 
 A note on ports: the compose database is on **5432**. This machine also
 has a native PostgreSQL 16 on **5433**. An earlier version of this note

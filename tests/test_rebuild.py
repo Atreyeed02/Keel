@@ -24,6 +24,7 @@ from app.domain.rebuild import UnknownEventError, rebuild_read_model
 from app.main import app
 from scripts import rebuild_read_model as rebuild_script
 from scripts.seed_demo_data import DEMO_ACCOUNTS, DEMO_TRANSACTIONS, seed
+from tests.support import reset_schema
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -36,8 +37,7 @@ async def ledger(monkeypatch):
     test_engine = create_async_engine(TEST_DATABASE_URL)
     monkeypatch.setattr("app.main.engine", test_engine)
     async with test_engine.begin() as conn:
-        await conn.run_sync(metadata.drop_all)
-        await conn.run_sync(metadata.create_all)
+        await reset_schema(conn)
     yield test_engine
     async with test_engine.begin() as conn:
         await conn.run_sync(metadata.drop_all)

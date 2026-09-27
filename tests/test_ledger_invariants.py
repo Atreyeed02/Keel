@@ -33,6 +33,7 @@ from app.db.schema import accounts, events, ledger_entries, metadata, transactio
 from app.domain.accounts import create_account_record, validate_account
 from app.domain.ledger import EntryAccountError, EntryInput, post_transaction
 from scripts.seed_demo_data import seed
+from tests.support import reset_schema
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -45,8 +46,7 @@ async def ledger(monkeypatch):
     test_engine = create_async_engine(TEST_DATABASE_URL)
     monkeypatch.setattr("app.main.engine", test_engine)
     async with test_engine.begin() as conn:
-        await conn.run_sync(metadata.drop_all)
-        await conn.run_sync(metadata.create_all)
+        await reset_schema(conn)
         ids = {}
         for name, account_type, currency in [
             ("Cash", "asset", "USD"),

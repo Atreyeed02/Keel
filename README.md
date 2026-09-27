@@ -204,14 +204,19 @@ migrations failed never reports healthy.
 ```bash
 pip install -r requirements.txt
 docker compose up -d db
-export TEST_DATABASE_URL=postgresql+asyncpg://ledger:ledger@localhost:5432/ledger
+docker compose exec db createdb -U ledger ledger_test
+export TEST_DATABASE_URL=postgresql+asyncpg://ledger:ledger@localhost:5432/ledger_test
 pytest -v
 ruff check .
 ```
 
-62 tests. Point `TEST_DATABASE_URL` at a database you do not mind losing:
-the fixtures drop and recreate every table around each test, with
-`metadata.create_all()`, so no migrations need to be applied first.
+62 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+app runs on: the fixtures drop and recreate every table around each test,
+with `metadata.create_all()`, so no migrations need to be applied first.
+They refuse to run on a database alembic has migrated (one with an
+`alembic_version` table). Dropping the app tables there would leave it
+stamped "at head" with nothing in it, and `alembic upgrade head` would then
+do nothing.
 
 Without `TEST_DATABASE_URL`, the 45 database-backed tests are **skipped,
 not failed**. A green run of the remaining 17 is partial coverage:
@@ -229,6 +234,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_rebuild.py` | round trip, recovery from corruption, repeatability, rebuild alongside a live posting, the CLI |
 | `test_observability.py` | request ids, JSON log format, ledger identifiers on log lines |
 | `test_health.py` | `/health` always answers |
+| `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
 
 CI (`.github/workflows/ci.yml`) runs ruff and the full suite against a
 PostgreSQL service container. A separate `docker-smoke` job builds the

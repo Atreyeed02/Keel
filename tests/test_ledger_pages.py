@@ -11,6 +11,7 @@ from app import main as main_module
 from app.db.schema import accounts, events, metadata, transactions
 from app.domain.ledger import EntryAccountError
 from app.main import app
+from tests.support import reset_schema
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -22,8 +23,7 @@ async def database(monkeypatch):
     test_engine = create_async_engine(TEST_DATABASE_URL)
     monkeypatch.setattr("app.main.engine", test_engine)
     async with test_engine.begin() as conn:
-        await conn.run_sync(metadata.drop_all)
-        await conn.run_sync(metadata.create_all)
+        await reset_schema(conn)
         cash_id, revenue_id = uuid.uuid4(), uuid.uuid4()
         await conn.execute(
             insert(accounts),
