@@ -641,6 +641,28 @@ why running on the host needs `DATABASE_URL` pointed at `localhost`.
 
 `extra="ignore"` means unknown keys in `.env` are not an error.
 
+**Whatever URL a host hands out.** Hosts give `DATABASE_URL` as
+`postgres://…` or `postgresql://…`, often with `?sslmode=require`.
+`database_target()` accepts any of those, or `postgresql+<driver>://`, and
+spells the URL twice: `postgresql+asyncpg://` for the app and
+`postgresql+psycopg://` for Alembic. `sslmode` needs separate handling,
+because asyncpg refuses it in the URL. It is taken out of the asyncpg URL
+and passed as asyncpg's own `ssl` argument (`app/db/engine.py`), while
+psycopg, which is libpq underneath, keeps it in the URL. `DATABASE_SSL`
+(one of libpq's modes, from `disable` to `verify-full`) overrides whatever
+the URL says. A malformed URL or unknown mode stops the process at start.
+Alembic stores the URL in an ini-style config where `%` is special, so it
+gets `alembic_url`, the psycopg URL with `%` escaped; a percent-encoded
+password would otherwise break every migration.
+
+**Production refuses the development default.** With
+`ENVIRONMENT=production`, `Settings` raises at import, so the process never
+starts, if `DATABASE_URL` was not set or is the `ledger:ledger@db` default
+in any spelling.
+
+**`PORT`** (default 8000) and `HOST` (default `0.0.0.0`) are where
+`python -m app.serve` listens (§5.12).
+
 ### 5.2 `app/db/schema.py` — the tables
 
 SQLAlchemy **Core**, not the ORM. Tables are described as data
