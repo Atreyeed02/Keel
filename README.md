@@ -178,7 +178,7 @@ event share a single commit.
 | `ledger_entries` | projection | `transaction_id`, `account_id`, `entry_type` (CHECK: debit/credit), `amount` (CHECK > 0), `currency` |
 | `idempotency_keys` | retry protection | `key` (PK), `request_hash`, `response_body` |
 
-Schema is managed by Alembic (8 migrations, applied automatically on
+Schema is managed by Alembic (10 migrations, applied automatically on
 container start). Every column and index is explained in
 [§5.2](docs/ARCHITECTURE.md#52-appdbschemapy--the-tables).
 
@@ -229,7 +229,7 @@ pytest -v
 ruff check .
 ```
 
-119 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+134 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -237,7 +237,7 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 71 database-backed tests are **skipped,
+Without `TEST_DATABASE_URL`, the 86 database-backed tests are **skipped,
 not failed**. A green run of the remaining 48 is partial coverage:
 
 ```
@@ -250,7 +250,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_ledger_pages.py` | every page, inline errors, filters (UTC day boundaries whatever the session time zone), pagination, `sequence` ordering, the search's trigram index |
 | `test_idempotency.py` | retries, 409 on key reuse, key release after rejection, concurrent duplicates and conflicts, key retention and its CLI |
 | `test_ledger_invariants.py` | every DB trigger against writes that bypass the app, atomic rollback, log ↔ read-model agreement, trial balance |
-| `test_rebuild.py` | round trip, recovery from corruption, repeatability, rebuild alongside a live posting, backfilling a legacy ledger, both CLIs |
+| `test_rebuild.py` | round trip, recovery from corruption, repeatability, rebuild alongside a live posting, backfilling a legacy ledger, entry order across a rebuild, payload schema versions, both CLIs |
 | `test_observability.py` | request ids, JSON log format, ledger identifiers on log lines |
 | `test_health.py` | `/health` always answers |
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
@@ -351,10 +351,10 @@ app/
 ├── observability.py      JSON logging, request-id middleware
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
-alembic/versions/         8 migrations
+alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py,
                           prune_idempotency_keys.py
-tests/                    119 tests; see above
+tests/                    134 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
@@ -373,8 +373,9 @@ What this does **not** do today. The full, maintained list is
   `scripts.prune_idempotency_keys` periodically; nothing in the stack does.
 - **Idempotency covers postings only**, not account creation, since a
   duplicate account moves no money.
-- **No FX.** A transaction may touch several currencies, but each must
-  balance on its own. Conversion needs a clearing-account pattern.
+- **No FX yet** (deferred future work). A transaction may touch several
+  currencies, but each must balance on its own. Conversion needs a
+  clearing-account pattern.
 - **Observability is logs only.** No metrics, no tracing.
 
 **Deliberately out of scope.** These are the layers a payments platform

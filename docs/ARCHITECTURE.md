@@ -179,7 +179,7 @@ value-neutral movement, it involves a rate and usually a gain or loss.
 The standard modelling is a **currency-exchange clearing account** and two
 transactions, each balanced in its own currency, with any difference
 posted to an FX gain/loss account. Nothing in the codebase implements
-that yet; see §8.
+that yet. It is deferred future work, not out of scope; see §8.
 
 ---
 
@@ -1158,7 +1158,7 @@ backfill it does nothing.
 | `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters (UTC day boundaries under any session time zone) and pagination, `sequence` ordering, the trigram index behind the search |
 | `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads, key retention and its CLI (§4) |
 | `test_ledger_invariants.py` | **yes** | every database trigger (balance, account currency, append-only log) against writes that bypass the app; atomic rollback; log and read model agree; trial balance nets to zero |
-| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; both CLIs |
+| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; entry order before and after a rebuild, for new and old events; payload schema versions, missing and unknown; both CLIs |
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
@@ -1464,6 +1464,14 @@ carry its account's currency, and an account's currency cannot change
 for sequential retries. Includes the 409 on key reuse, and a rejected
 attempt releases the key (§4).
 
+**Entry order and payload versions** — each entry's submission position
+is stored and shown, and survives a rebuild; `account.created` and
+`transaction.posted` payloads carry a `schema_version`, and replay refuses
+one it does not know (§3.3).
+
+**Schema drift check** — `alembic check` runs in CI on a freshly migrated
+database (§5.13).
+
 **Rebuild tooling** — `python -m scripts.rebuild_read_model`, safe to run
 alongside live postings, and `python -m scripts.backfill_account_events`
 for databases whose accounts predate `account.created` (§3.3).
@@ -1481,11 +1489,11 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 119 tests (§5.11). 48 run with no database at all: the
+**Testing** — 134 tests (§5.11). 48 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, and every JSON API rejection that happens
-before the database is touched. The other 71 are Postgres-backed.
+before the database is touched. The other 86 are Postgres-backed.
 They cover the pages, filters and pagination; idempotency, including
 concurrent duplicates and key retention; the database triggers against
 writes that bypass the app; atomic rollback; agreement between the log
@@ -1494,7 +1502,7 @@ projection, a posting made mid-rebuild and a backfilled legacy ledger.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"48 passed, 71 skipped" and is not a passing build. See the README for
+"48 passed, 86 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1508,8 +1516,9 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. No FX handling.** Per §2.4, currency conversion cannot be expressed.
-Needs a clearing-account pattern plus an FX gain/loss account.
+**1. No FX handling (deferred future work).** Per §2.4, currency
+conversion cannot be expressed. Needs a clearing-account pattern plus an
+FX gain/loss account.
 
 ### Robustness
 
@@ -1522,35 +1531,32 @@ routes.
 does the cleanup (§4), but nothing in the stack runs it. A deployment
 needs a cron job or a scheduled task.
 
-**4. Entry order on the transaction-detail page is arbitrary.** Entries
-are sorted by `(created_at, id)`; within one transaction `created_at` is
-shared, so a random UUID decides the order, and a rebuild can change it.
-Storing each entry's position in the event payload and in
-`ledger_entries` would make it submission order and stable.
-
-**5. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
+**4. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
 the whole log at once and replays from `sequence` 1. There are no
 snapshots, and no incremental catch-up of a projection from a known
 position. Fine at this size, and the first thing to change if it grows.
 While a rebuild runs, postings wait on its lock (§3.3).
 
-**6. Event payloads are unversioned.** `transaction.posted` has had one
-shape since it was introduced. The first change to it will need either a
-version field in the payload or a new event type, with replay rules for
-both.
-
 ### Missing interfaces
 
-**7. The JSON API is minimal.** It has what a client needs to create
+**5. The JSON API is minimal.** It has what a client needs to create
 accounts, post transactions safely and read one back (§5.16). It has no
 single-account read, no transaction listing, and no pagination:
 `GET /api/accounts` returns every account at once. There is no event-log
-endpoint and no API version in the path; `entries_fingerprint`'s
-`json-v2` marker is the only place a version exists so far. Like every
-route, it is unauthenticated (item 2).
+endpoint and no API version in the path. Like every route, it is
+unauthenticated (item 2).
 
-### Roadmap items not started
+### Future work, not started
 
-Webhook ingestion, multi-provider payment orchestration, reconciliation,
-the outbox pattern for reliable event publishing, metrics and tracing
-(structured logs exist, §5.15), and a deployment pipeline.
+**FX handling** (item 1) and **metrics and tracing** (structured logs
+exist, §5.15). Both are planned: they belong inside the ledger service and
+are deferred, not ruled out.
+
+### Out of scope
+
+These are the layers a payments platform puts *around* a ledger. They are
+listed to mark the boundary of this project, not as planned work: webhook
+ingestion, multi-provider payment orchestration, reconciliation, the
+outbox pattern for reliable event publishing, and a deployment pipeline.
+A hosted demo instance is different from a deployment pipeline and is
+still wanted (`STATUS.md` §4).
