@@ -255,12 +255,14 @@ does. `tests/test_ledger_invariants.py` checks this directly: a failure
 raised *after* `post_transaction` has written its rows, but before
 commit, leaves no transaction, no entry and no event behind.
 
-### 3.3 Rebuildability: tested, with two known limits
+### 3.3 Rebuildability: tested, with one known limit
 
 `app/domain/rebuild.py` provides `rebuild_read_model(conn)`. It truncates
 `ledger_entries`, `transactions` and `accounts` in one `TRUNCATE ...
 RESTART IDENTITY` (listing all three at once is what makes it FK-safe),
-then replays `events` in `sequence` order:
+then replays `events`: every `account.created` first, then everything
+else, each group in `sequence` order (why accounts go first is under
+*Accounts from before the event*, below):
 
 | `event_type` | Replay |
 |---|---|
@@ -285,7 +287,7 @@ events (append-only, ordered by sequence)
   ▼
 rebuild_read_model(conn)            one database transaction
   1. TRUNCATE ledger_entries, transactions, accounts RESTART IDENTITY
-  2. SELECT * FROM events ORDER BY sequence
+  2. SELECT * FROM events ORDER BY (event_type <> 'account.created'), sequence
   3. for each event:
        account.created    → INSERT accounts
        transaction.posted → INSERT transactions + ledger_entries
@@ -339,8 +341,34 @@ runs them on every push:
   the posting to succeed and to survive a further rebuild.
 - `test_rebuild_script_refuses_without_confirmation_then_repairs` covers
   the CLI.
+- `test_backfill_makes_a_legacy_ledger_rebuildable` and
+  `test_backfill_and_rebuild_scripts_on_a_legacy_ledger` cover the
+  backfill, below.
 
-**The two limits.**
+**Accounts from before the event.** Until `account.created` was
+introduced, account creation appended nothing, so an older database has
+accounts with no event. Replaying its log would fail on the
+`ledger_entries.account_id` foreign key, and an unused account would
+silently vanish. `backfill_account_events(conn)`
+(`python -m scripts.backfill_account_events --yes`) appends an
+`account.created` for every account without one, recorded as the read
+model describes it now. `scripts/rebuild_read_model.py` checks for
+accounts the log uses but never creates, and refuses up front with a
+pointer to the backfill instead of failing part-way.
+
+Two details make the backfilled log replay correctly:
+
+- A backfilled event is appended *now*, so its `sequence` is later than
+  the transactions that use the account. That is why replay takes
+  account events first. Creating an account depends on nothing and
+  nothing but creation happens to one, so for a log with no backfilled
+  events this gives the same result as strict order. With strict order
+  the backfill test fails on the foreign key; that was checked.
+- The event's own `created_at` is when it was appended, which keeps the
+  log honest. The account's original `created_at` travels in the payload,
+  with `"backfilled": true`, and replay restores it from there.
+
+**The limit.**
 
 - **`ledger_entries.id` is not reproduced.** The `transaction.posted`
   payload never carried entry ids, so replay mints new ones. Nothing
@@ -351,12 +379,6 @@ runs them on every push:
   entries share `created_at`, so their order within the debit and credit
   columns is decided by the random id and can change across a rebuild.
   (It was already arbitrary rather than submission order.)
-- **Accounts written before `account.created` existed are not in the log.**
-  Until that event was introduced, account creation appended nothing, so
-  a database created before then has accounts with no event. Replaying
-  such a log fails on the `ledger_entries.account_id` foreign key and rolls
-  back — safely, but the database cannot be rebuilt until those accounts
-  are backfilled into the log (§8).
 
 ---
 
@@ -978,7 +1000,13 @@ dataset is written inside one `engine.begin()` block.
 **`scripts/rebuild_read_model.py`** is the operator entry point for §3.3.
 Without `--yes` it reports row counts and exits non-zero having changed
 nothing. With `--yes` it replays inside one transaction and reports what
-changed.
+changed. Either way it first refuses a log that names accounts it never
+created.
+
+**`scripts/backfill_account_events.py`** appends `account.created` for
+accounts that predate the event (§3.3). Without `--yes` it lists them;
+with `--yes` it appends their events. On a database with nothing to
+backfill it does nothing.
 
 ### 5.11 `tests/`
 
@@ -989,7 +1017,7 @@ changed.
 | `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters and pagination, `sequence` ordering |
 | `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads (§4) |
 | `test_ledger_invariants.py` | **yes** | both database triggers against writes that bypass the app; atomic rollback; log and read model agree; trial balance nets to zero |
-| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the CLI |
+| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; both CLIs |
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 
 The Postgres-backed tests skip unless `TEST_DATABASE_URL` is set, then

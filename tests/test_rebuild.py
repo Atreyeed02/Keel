@@ -11,6 +11,8 @@ the accounts its entries point at is exactly what a rebuild must refuse.
 import asyncio
 import os
 import uuid
+from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -20,8 +22,16 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.db.schema import accounts, events, ledger_entries, metadata, transactions
 from app.domain.accounts import create_account_record, validate_account
-from app.domain.rebuild import UnknownEventError, rebuild_read_model
+from app.domain.ledger import EntryInput, post_transaction
+from app.domain.rebuild import (
+    UnknownEventError,
+    accounts_missing_from_log,
+    accounts_without_events,
+    backfill_account_events,
+    rebuild_read_model,
+)
 from app.main import app
+from scripts import backfill_account_events as backfill_script
 from scripts import rebuild_read_model as rebuild_script
 from scripts.seed_demo_data import DEMO_ACCOUNTS, DEMO_TRANSACTIONS, seed
 from tests.support import reset_schema
@@ -470,3 +480,121 @@ async def test_rebuild_script_refuses_without_confirmation_then_repairs(
         # a healthy ledger: nothing to correct
         assert await rebuild_script.main(confirmed=True) == 0
         assert "Every account balance is unchanged" in capsys.readouterr().out
+
+
+async def _build_legacy_ledger(engine) -> dict[str, uuid.UUID]:
+    """
+    A database from before account.created existed: accounts inserted with
+    no event, each with its own creation time, one of them never used, and
+    transactions posted normally on top.
+    """
+    ids = {name: uuid.uuid4() for name in ("Cash", "Revenue", "Dormant")}
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(accounts),
+            [
+                {
+                    "id": ids[name],
+                    "name": name,
+                    "account_type": account_type,
+                    "currency": "USD",
+                    "created_at": datetime(2026, 1, day, 9, 30, tzinfo=UTC),
+                }
+                for day, (name, account_type) in enumerate(
+                    [("Cash", "asset"), ("Revenue", "revenue"), ("Dormant", "expense")], start=1
+                )
+            ],
+        )
+    for amount in ("40.00", "60.00"):
+        async with engine.begin() as conn:
+            await post_transaction(
+                conn,
+                [
+                    EntryInput(
+                        account_id=ids["Cash"],
+                        entry_type="debit",
+                        amount=Decimal(amount),
+                        currency="USD",
+                    ),
+                    EntryInput(
+                        account_id=ids["Revenue"],
+                        entry_type="credit",
+                        amount=Decimal(amount),
+                        currency="USD",
+                    ),
+                ],
+                "Legacy sale",
+            )
+    return ids
+
+
+async def test_backfill_makes_a_legacy_ledger_rebuildable(ledger):
+    ids = await _build_legacy_ledger(ledger)
+    async with _client() as client:
+        before = await _snapshot(ledger, client)
+
+        async with ledger.connect() as conn:
+            assert await accounts_missing_from_log(conn) == sorted([ids["Cash"], ids["Revenue"]])
+            last_posting = await conn.scalar(select(func.max(events.c.sequence)))
+
+        async with ledger.begin() as conn:
+            backfilled = await backfill_account_events(conn)
+        # every event-less account, the unused one too, oldest first
+        assert backfilled == [ids["Cash"], ids["Revenue"], ids["Dormant"]]
+
+        async with ledger.connect() as conn:
+            assert await accounts_missing_from_log(conn) == []
+            assert await accounts_without_events(conn) == []
+            appended = (
+                await conn.execute(
+                    select(events.c.sequence, events.c.payload).where(
+                        events.c.event_type == "account.created"
+                    )
+                )
+            ).all()
+        # Appended after the postings that use them, which is why replay
+        # takes account events first, and marked as backfilled.
+        assert all(sequence > last_posting for sequence, _ in appended)
+        assert all(payload["backfilled"] is True for _, payload in appended)
+
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+        after = await _snapshot(ledger, client)
+
+    # Same accounts (Dormant included) with their original created_at, same
+    # transactions, same balances, same pages.
+    assert after == before
+    assert {row.name for row in after["accounts"]} == {"Cash", "Revenue", "Dormant"}
+
+    async with ledger.begin() as conn:
+        assert await backfill_account_events(conn) == []
+
+
+async def test_backfill_and_rebuild_scripts_on_a_legacy_ledger(ledger, monkeypatch, capsys):
+    monkeypatch.setattr("scripts.rebuild_read_model.engine", ledger)
+    monkeypatch.setattr("scripts.backfill_account_events.engine", ledger)
+    await _build_legacy_ledger(ledger)
+    async with _client() as client:
+        original = await _snapshot(ledger, client)
+
+        # the rebuild refuses up front instead of failing on a foreign key
+        assert await rebuild_script.main(confirmed=True) == 1
+        assert "scripts.backfill_account_events" in capsys.readouterr().out
+        assert await _snapshot(ledger, client) == original
+
+        # without --yes the backfill only lists what it would do
+        assert await backfill_script.main(confirmed=False) == 1
+        listing = capsys.readouterr().out
+        assert "3 account(s) have no account.created event" in listing
+        assert "Dormant (expense, USD), created 2026-01-03" in listing
+        async with ledger.connect() as conn:
+            assert await accounts_without_events(conn) != []
+
+        assert await backfill_script.main(confirmed=True) == 0
+        assert "Appended account.created for 3 account(s)" in capsys.readouterr().out
+        assert await backfill_script.main(confirmed=False) == 0
+        assert "Every account already has" in capsys.readouterr().out
+
+        assert await rebuild_script.main(confirmed=True) == 0
+        assert "Every account balance is unchanged" in capsys.readouterr().out
+        assert await _snapshot(ledger, client) == original

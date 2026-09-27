@@ -22,6 +22,12 @@ posting that arrives mid-rebuild waits for the rebuild to commit and
 then lands on the rebuilt tables. Nothing is lost; requests are delayed
 for as long as the replay takes.
 
+A log that names accounts it never created, which is what a database
+from before `account.created` existed looks like, cannot be replayed.
+The script checks for that first and points at
+`python -m scripts.backfill_account_events` rather than failing part-way
+on a foreign key.
+
 Deliberately not an HTTP route: nothing in the app has authentication
 yet, and who may rewrite the whole read model is a separate decision.
 """
@@ -37,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.engine import engine
 from app.db.schema import accounts, events, ledger_entries, transactions
-from app.domain.rebuild import rebuild_read_model
+from app.domain.rebuild import accounts_missing_from_log, rebuild_read_model
 
 TABLES = (events, accounts, transactions, ledger_entries)
 
@@ -68,6 +74,14 @@ async def main(confirmed: bool) -> int:
         # and leaves the old read model exactly as it was.
         async with engine.begin() as conn:
             before = await _counts(conn)
+            unreplayable = await accounts_missing_from_log(conn)
+            if unreplayable:
+                print(
+                    f"The log has entries for {len(unreplayable)} account(s) it never "
+                    "created, so it cannot be replayed. Run "
+                    "`python -m scripts.backfill_account_events` first."
+                )
+                return 1
             if not confirmed:
                 print("Read model now: " + ", ".join(f"{k}={v}" for k, v in before.items()))
                 print("Nothing changed. Re-run with --yes to truncate and replay from events.")

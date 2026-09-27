@@ -90,7 +90,7 @@ events  (append-only, total order = events.sequence, a DB identity column)
    ▼
 rebuild_read_model(conn)                       one database transaction
    1. TRUNCATE ledger_entries, transactions, accounts RESTART IDENTITY
-   2. read every event ORDER BY sequence
+   2. read every event: account.created first, then the rest, each ORDER BY sequence
    3. account.created    → INSERT accounts        (id = event.aggregate_id)
       transaction.posted → INSERT transactions + ledger_entries
       unknown type       → raise; the whole rebuild rolls back
@@ -102,6 +102,20 @@ rebuilt projection  (the balance trigger re-checks every transaction at commit)
 python -m scripts.rebuild_read_model          # report only
 python -m scripts.rebuild_read_model --yes    # truncate and replay
 ```
+
+Accounts are replayed before transactions because of the backfill. A
+database from before `account.created` existed has accounts with no
+event, and the rebuild refuses to run on it until they are appended:
+
+```bash
+python -m scripts.backfill_account_events          # list them
+python -m scripts.backfill_account_events --yes    # append their events
+```
+
+Those events land after the transactions that use the accounts, so a
+strictly sequential replay would insert entries before their account.
+Each backfilled event carries the account's original `created_at`, which
+the rebuild restores.
 
 With `--yes` it prints every account whose balance the rebuild changed.
 On a healthy ledger that list is empty. If the projection has drifted
@@ -116,10 +130,8 @@ The tests check that a rebuild:
 - is safe while postings are arriving. The `TRUNCATE` lock makes a
   concurrent posting wait, and that posting is not lost.
 
-Known limits: entry ids are regenerated, and a database whose accounts
-predate the `account.created` event cannot be rebuilt until they are
-backfilled. See
-[§3.3](docs/ARCHITECTURE.md#33-rebuildability-tested-with-two-known-limits).
+Known limit: entry ids are regenerated. See
+[§3.3](docs/ARCHITECTURE.md#33-rebuildability-tested-with-one-known-limit).
 
 ## Architecture
 
@@ -304,7 +316,7 @@ app/
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
 alembic/versions/         5 migrations
-scripts/                  seed_demo_data.py, rebuild_read_model.py
+scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py
 tests/                    62 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
@@ -320,8 +332,6 @@ What this does **not** do today. The full, maintained list is
   is also why rebuild is a CLI and not a route.
 - **Rebuild is all-or-nothing and in memory.** No snapshots, no
   incremental projection catch-up. Postings wait while a rebuild runs.
-- **Accounts created before `account.created` existed** need a backfill
-  before such a database can be rebuilt.
 - **`idempotency_keys` is never pruned.**
 - **Idempotency covers postings only**, not account creation, since a
   duplicate account moves no money.
