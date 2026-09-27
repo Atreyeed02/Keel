@@ -375,7 +375,6 @@ What this does **not** do today. The full, maintained list is
   duplicate account moves no money.
 - **No FX.** A transaction may touch several currencies, but each must
   balance on its own. Conversion needs a clearing-account pattern.
-- **Event payloads are unversioned.**
 - **Observability is logs only.** No metrics, no tracing.
 
 **Deliberately out of scope.** These are the layers a payments platform

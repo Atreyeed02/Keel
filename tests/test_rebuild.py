@@ -26,6 +26,7 @@ from app.domain.accounts import create_account_record, validate_account
 from app.domain.ledger import EntryInput, post_transaction
 from app.domain.rebuild import (
     UnknownEventError,
+    UnsupportedEventVersionError,
     accounts_missing_from_log,
     accounts_without_events,
     backfill_account_events,
@@ -705,3 +706,121 @@ async def test_a_rebuild_orders_an_event_without_positions_by_its_payload(ledger
     assert await _positions(ledger, transaction_id) == list(range(8))
     async with _client() as client:
         assert await _shown_debit_order(client, transaction_id) == (SCRAMBLED, SCRAMBLED)
+
+
+# --- payload schema versions ---------------------------------------------------
+
+
+async def _payload_versions(engine) -> dict[str, list]:
+    async with engine.connect() as conn:
+        rows = (await conn.execute(select(events.c.event_type, events.c.payload))).all()
+    versions: dict[str, list] = {}
+    for event_type, payload in rows:
+        versions.setdefault(event_type, []).append(payload.get("schema_version"))
+    return versions
+
+
+async def test_new_payloads_carry_their_schema_version(ledger):
+    cash, revenue = await _cash_and_revenue(ledger)
+    async with ledger.begin() as conn:
+        await post_transaction(
+            conn,
+            [EntryInput.model_validate(e) for e in _scrambled_entries(cash, revenue)],
+            "Versioned",
+        )
+        # and the backfill, the third place that writes account.created
+        await conn.execute(
+            insert(accounts).values(
+                id=uuid.uuid4(), name="Legacy", account_type="asset", currency="USD"
+            )
+        )
+        assert len(await backfill_account_events(conn)) == 1
+    assert await _payload_versions(ledger) == {
+        "account.created": [1, 1, 1],
+        "transaction.posted": [1],
+    }
+
+
+async def test_payloads_without_a_schema_version_replay_as_version_1(ledger, monkeypatch):
+    """Every event written before the field existed has none; replay reads it as version 1."""
+    monkeypatch.setattr("app.api.transactions.engine", ledger)
+    cash, revenue = uuid.uuid4(), uuid.uuid4()
+    transaction_id = uuid.uuid4()
+    async with ledger.begin() as conn:
+        for account_id, name, account_type in (
+            (cash, "Cash", "asset"),
+            (revenue, "Revenue", "revenue"),
+        ):
+            await conn.execute(
+                insert(events).values(
+                    id=uuid.uuid4(),
+                    aggregate_type="account",
+                    aggregate_id=account_id,
+                    event_type="account.created",
+                    payload={"name": name, "account_type": account_type, "currency": "USD"},
+                )
+            )
+        await conn.execute(
+            insert(events).values(
+                id=uuid.uuid4(),
+                aggregate_type="transaction",
+                aggregate_id=transaction_id,
+                event_type="transaction.posted",
+                payload={
+                    "description": "Unversioned",
+                    "entries": _scrambled_entries(cash, revenue),
+                },
+            )
+        )
+    assert await _payload_versions(ledger) == {
+        "account.created": [None, None],
+        "transaction.posted": [None],
+    }
+
+    async with ledger.begin() as conn:
+        await rebuild_read_model(conn)
+
+    async with ledger.connect() as conn:
+        assert {n for n in (await conn.scalars(select(accounts.c.name))).all()} == {
+            "Cash",
+            "Revenue",
+        }
+    async with _client() as client:
+        assert await _shown_debit_order(client, transaction_id) == (SCRAMBLED, SCRAMBLED)
+
+
+@pytest.mark.parametrize("version", [2, 0, "1", True, None], ids=["2", "0", "str", "bool", "null"])
+@pytest.mark.parametrize("event_type", ["account.created", "transaction.posted"])
+async def test_replay_refuses_a_schema_version_it_does_not_know(ledger, event_type, version):
+    cash, revenue = await _cash_and_revenue(ledger)
+    if event_type == "account.created":
+        aggregate_type, payload = (
+            "account",
+            {"name": "X", "account_type": "asset", "currency": "USD"},
+        )
+    else:
+        aggregate_type = "transaction"
+        payload = {"description": "X", "entries": _scrambled_entries(cash, revenue)}
+    async with ledger.begin() as conn:
+        await conn.execute(
+            insert(events).values(
+                id=uuid.uuid4(),
+                aggregate_type=aggregate_type,
+                aggregate_id=uuid.uuid4(),
+                event_type=event_type,
+                payload={"schema_version": version, **payload},
+            )
+        )
+
+    with pytest.raises(UnsupportedEventVersionError, match=f"{event_type}' schema_version"):
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+
+    # the replay rolled back: the read model is exactly as it was
+    async with ledger.connect() as conn:
+        assert {n for n in (await conn.scalars(select(accounts.c.name))).all()} == {
+            "Cash",
+            "Revenue",
+        }
+    # and it is still an UnknownEventError, for anything that catches that
+    assert issubclass(UnsupportedEventVersionError, UnknownEventError)

@@ -53,10 +53,36 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.schema import accounts, events, ledger_entries, transactions
+from app.domain.event_versions import CURRENT_VERSION, SUPPORTED_VERSIONS, UNVERSIONED
 
 
 class UnknownEventError(ValueError):
     """Raised when replay meets an event type it has no rule for."""
+
+
+class UnsupportedEventVersionError(UnknownEventError):
+    """
+    Raised when replay meets a payload `schema_version` it has no rule for.
+
+    A subclass of UnknownEventError because it is the same failure one level
+    down: an event replay cannot interpret. Skipping it would build a read
+    model that disagrees with the log.
+    """
+
+
+def _schema_version(event) -> int:
+    """
+    The payload's shape version: `schema_version`, or 1 for events written
+    before the field existed. Raises if replay has no rule for it.
+    """
+    version = event["payload"].get("schema_version", UNVERSIONED)
+    # `type(...) is int`, not isinstance: JSON true would otherwise pass as 1.
+    if type(version) is not int or version not in SUPPORTED_VERSIONS[event["event_type"]]:
+        raise UnsupportedEventVersionError(
+            f"no replay rule for {event['event_type']!r} schema_version {version!r} "
+            f"(event {event['id']}, sequence {event['sequence']})"
+        )
+    return version
 
 
 async def rebuild_read_model(conn: AsyncConnection) -> None:
@@ -91,6 +117,10 @@ async def rebuild_read_model(conn: AsyncConnection) -> None:
 
     for event in log:
         payload = event["payload"]
+        if event["event_type"] in SUPPORTED_VERSIONS:
+            # Every supported type has one version today, so there is nothing
+            # to branch on yet; the check is what matters.
+            _schema_version(event)
 
         if event["event_type"] == "account.created":
             # Only a backfilled event carries created_at; see backfill_account_events.
@@ -213,6 +243,7 @@ async def backfill_account_events(conn: AsyncConnection) -> list[uuid.UUID]:
                 aggregate_id=account["id"],
                 event_type="account.created",
                 payload={
+                    "schema_version": CURRENT_VERSION["account.created"],
                     "name": account["name"],
                     "account_type": account["account_type"],
                     "currency": account["currency"],

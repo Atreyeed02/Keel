@@ -24,6 +24,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.schema import accounts, events, ledger_entries, transactions
+from app.domain.event_versions import CURRENT_VERSION
 
 # The longest description `transactions.description` can hold. Longer
 # ones used to reach Postgres and fail there as an unhandled 500.
@@ -200,6 +201,7 @@ async def post_transaction(
             aggregate_id=txn_id,
             event_type="transaction.posted",
             payload={
+                "schema_version": CURRENT_VERSION["transaction.posted"],
                 "description": description,
                 "entries": [
                     {**e.model_dump(mode="json"), "position": position}

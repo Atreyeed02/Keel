@@ -270,6 +270,27 @@ else, each group in `sequence` order (why accounts go first is under
 | `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item, with its `position` |
 | anything else | raise `UnknownEventError` — a rebuild that silently skipped an event would disagree with the log |
 
+**Payload versions.** Every `account.created` and `transaction.posted`
+payload written now carries `"schema_version": 1`
+(`app/domain/event_versions.py`). Before replaying an event, the rebuild
+checks it. A payload with no `schema_version`, which is every event written
+before the field existed, is read as version 1, because that is what it
+is. A version replay has no rule for, including a non-integer such as `"1"`
+or `true`, raises `UnsupportedEventVersionError`, a subclass of
+`UnknownEventError`, and the whole replay rolls back, for the same reason an
+unknown event type does.
+
+A version changes only for a change an existing reader could not handle: a
+field renamed, removed or given a new meaning. Adding an optional field is
+not one. Entries gained `position` that way and are still version 1,
+because replay already knows what an entry without one means (below). The
+first incompatible change will add a version to `SUPPORTED_VERSIONS` and a
+branch in `rebuild_read_model`, with the old version still readable.
+`test_new_payloads_carry_their_schema_version`,
+`test_payloads_without_a_schema_version_replay_as_version_1` and
+`test_replay_refuses_a_schema_version_it_does_not_know` cover the three
+cases.
+
 Account and transaction ids are the events' `aggregate_id`s, so they come
 back unchanged: every entry still points at the right account, and
 anything holding a transaction id (a detail-page URL, a stored
