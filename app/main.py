@@ -34,6 +34,7 @@ from app.domain.ledger import (
     EntryInput,
     UnbalancedTransactionError,
     assert_balanced,
+    validate_description,
 )
 from app.observability import configure_logging, log, request_context_middleware
 
@@ -426,6 +427,7 @@ async def submit_post_transaction(
         assert_balanced(entries)
         if len(entries) < 2:
             raise ValueError("a transaction needs at least two entries")
+        validate_description(description)
     except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
         # UnbalancedTransactionError and the bare ValueError already carry a
         # single readable sentence. A raw pydantic ValidationError does not —

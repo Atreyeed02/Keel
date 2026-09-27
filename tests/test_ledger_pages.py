@@ -612,3 +612,49 @@ async def test_description_search_can_use_the_trigram_index(database):
         compiled = search.compile(conn.sync_engine, compile_kwargs={"literal_binds": True})
         plan = "\n".join((await conn.scalars(text(f"EXPLAIN {compiled}"))).all())
     assert "ix_transactions_description_trgm" in plan, plan
+
+
+async def _ledger_is_empty() -> bool:
+    async with main_module.engine.connect() as conn:
+        return not (await conn.scalars(select(transactions.c.id))).all()
+
+
+async def test_an_amount_with_a_third_decimal_place_is_refused_not_rounded(database):
+    """It used to post, stored as 100.01: a different amount from the one submitted."""
+    cash_id, revenue_id = database
+    submission = _submission(cash_id, revenue_id, amount="100.005")
+    submission["amount"] = ["100.005", "100.005"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/post-transaction", data=submission)
+    assert response.status_code == 422
+    assert "no more than 2 decimal places" in response.text
+    assert await _ledger_is_empty()
+
+
+async def test_an_amount_that_would_round_to_zero_is_a_422_not_a_500(database):
+    cash_id, revenue_id = database
+    submission = {
+        "description": "Rounds away",
+        "submission_key": "rounds-away",
+        "account_id": [str(cash_id), str(cash_id), str(revenue_id)],
+        "entry_type": ["debit", "debit", "credit"],
+        "amount": ["100.004", "0.001", "100.005"],
+        "currency": ["USD", "USD", "USD"],
+    }
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/post-transaction", data=submission)
+    assert response.status_code == 422
+    assert await _ledger_is_empty()
+
+
+async def test_an_overlong_description_is_a_422_not_a_500(database):
+    cash_id, revenue_id = database
+    submission = _submission(cash_id, revenue_id)
+    submission["description"] = "x" * 513
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/post-transaction", data=submission)
+    assert response.status_code == 422
+    assert "description must be at most 512 characters" in response.text
+    assert await _ledger_is_empty()
