@@ -629,7 +629,21 @@ manual `INSERT`, a future importer.
   because there is no entry row for it to fire on. Such a row moves no
   money, so balances are unaffected.
 
-Both triggers are declared twice, in the migration and in
+**So is the account-currency rule.** `assert_accounts_valid` refuses an
+entry whose currency differs from its account's, with a readable error.
+Since migration `3c9e5a7b2d14`, two triggers hold the rule for every
+other writer:
+
+- `ledger_entries_match_account_currency`, a `BEFORE INSERT OR UPDATE`
+  row trigger, looks the entry's account up and refuses a mismatch. An
+  entry naming a nonexistent account is left to the foreign key, which
+  reports that more precisely.
+- `accounts_currency_immutable` refuses an UPDATE that changes an
+  account's currency. Checking entries alone would miss this: rewriting
+  the account would put every entry already on it in violation without
+  touching a single entry row. Renaming an account is still allowed.
+
+All of these triggers are declared twice, in the migrations and in
 `app/db/schema.py` (as `after_create` listeners, so `metadata.create_all`
 in the tests builds them too), for the same reason the indexes are. The
 two copies were checked to produce byte-identical function bodies and
@@ -917,9 +931,11 @@ and `transactions(created_at DESC)` — and adds the `account_type` `CHECK`.
 `fca143a4d6d9_transactions_sequence_identity_column.py` gives
 `transactions` its own identity `sequence`, which every listing sorts by.
 `7d2e4b9c1a58_enforce_append_only_events_and_balanced_entries.py` adds
-the two triggers described in §5.2. Its SQL is spelled out literally
-rather than imported from `schema.py`, because a migration must keep
-producing the DDL it produced the day it was written.
+the two triggers described in §5.2, and
+`3c9e5a7b2d14_enforce_account_currency_in_the_database.py` the two
+account-currency triggers. Their SQL is spelled out literally rather than
+imported from `schema.py`, because a migration must keep producing the
+DDL it produced the day it was written.
 
 The interesting part is `alembic/env.py`:
 

@@ -5,8 +5,9 @@ Three groups:
 
 - **The database enforces the rules itself.** Writes that go around the
   app, as a migration, a `psql` session or a buggy importer would, are
-  refused: unbalanced entries, a tampered amount, a deleted leg, any
-  UPDATE, DELETE or TRUNCATE of `events`.
+  refused: unbalanced entries, a tampered amount, a deleted leg, an entry
+  in a currency other than its account's, a change to an account's
+  currency, any UPDATE, DELETE or TRUNCATE of `events`.
 - **Failure is atomic.** A posting that fails at any point, including
   after its rows were written but before commit, leaves no trace in the
   read model or the log.
@@ -191,6 +192,70 @@ async def test_database_rejects_moving_an_entry_to_another_transaction(ledger):
                 .where(ledger_entries.c.entry_type == "debit")
                 .values(transaction_id=second)
             )
+
+
+async def test_database_rejects_an_entry_in_another_currency_than_its_account(ledger):
+    """Balanced in EUR, so only the currency rule can catch it: both accounts are USD."""
+    engine, ids = ledger
+    with pytest.raises(IntegrityError, match="entry currency EUR does not match account"):
+        await _write_around_the_app(
+            engine,
+            uuid.uuid4(),
+            [
+                _entry(ids["Cash"], "debit", "10.00", "EUR"),
+                _entry(ids["Revenue"], "credit", "10.00", "EUR"),
+            ],
+        )
+    assert await _count(engine, transactions) == 0
+    assert await _count(engine, ledger_entries) == 0
+
+
+async def test_database_rejects_relabelling_a_posted_transaction_in_another_currency(ledger):
+    engine, ids = ledger
+    txn_id = await _post(engine, ids)
+    with pytest.raises(IntegrityError, match="does not match account"):
+        async with engine.begin() as conn:
+            # both legs together, so the transaction still balances
+            await conn.execute(
+                update(ledger_entries)
+                .where(ledger_entries.c.transaction_id == txn_id)
+                .values(currency="EUR")
+            )
+    async with engine.connect() as conn:
+        assert set((await conn.scalars(select(ledger_entries.c.currency))).all()) == {"USD"}
+
+
+async def test_database_rejects_moving_an_entry_onto_an_account_in_another_currency(ledger):
+    engine, ids = ledger
+    txn_id = await _post(engine, ids)
+    with pytest.raises(IntegrityError, match="does not match account"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                update(ledger_entries)
+                .where(ledger_entries.c.transaction_id == txn_id)
+                .where(ledger_entries.c.entry_type == "debit")
+                .values(account_id=ids["EUR bank"])
+            )
+
+
+async def test_an_account_currency_cannot_change_but_its_name_can(ledger):
+    engine, ids = ledger
+    await _post(engine, ids)
+    with pytest.raises(IntegrityError, match="currency is fixed when it is created"):
+        async with engine.begin() as conn:
+            await conn.execute(
+                update(accounts).where(accounts.c.id == ids["Cash"]).values(currency="EUR")
+            )
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(accounts).where(accounts.c.id == ids["Cash"]).values(name="Petty cash")
+        )
+        row = (
+            await conn.execute(
+                select(accounts.c.name, accounts.c.currency).where(accounts.c.id == ids["Cash"])
+            )
+        ).one()
+    assert tuple(row) == ("Petty cash", "USD")
 
 
 @pytest.mark.parametrize(

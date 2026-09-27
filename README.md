@@ -13,12 +13,13 @@ FastAPI · PostgreSQL 16 · SQLAlchemy 2.0 Core · Alembic · Docker Compose
 | Guarantee | Enforced by | Proven by |
 |---|---|---|
 | Every transaction's debits equal its credits, **per currency** | `assert_balanced` in Python *and* a deferred Postgres constraint trigger | `tests/test_ledger_domain.py`, `tests/test_ledger_invariants.py` |
+| Every entry carries its account's currency, and an account's currency never changes | `assert_accounts_valid` in Python *and* two Postgres triggers | `tests/test_ledger_pages.py`, `tests/test_ledger_invariants.py` |
 | The event log is never rewritten | a Postgres trigger refusing UPDATE / DELETE / TRUNCATE on `events` | `tests/test_ledger_invariants.py` |
 | A posting lands completely or not at all: rows *and* event | one database transaction per posting | `tests/test_ledger_invariants.py` |
 | One idempotency key → one committed ledger effect, even under concurrent retries | claim-first `INSERT … ON CONFLICT DO NOTHING` | `tests/test_idempotency.py` |
 | The read model can be thrown away and rebuilt from the log | `rebuild_read_model()` | `tests/test_rebuild.py` |
 
-Enforcing the two ledger rules in the database as well as in Python is
+Enforcing the ledger rules in the database as well as in Python is
 deliberate. The Python checks produce readable form errors. The triggers
 make the rules hold for anything that writes around the app: a migration,
 a `psql` session, a future importer.
@@ -321,9 +322,6 @@ What this does **not** do today. The full, maintained list is
   incremental projection catch-up. Postings wait while a rebuild runs.
 - **Accounts created before `account.created` existed** need a backfill
   before such a database can be rebuilt.
-- **"An entry carries its account's currency" is enforced only in
-  Python.** The balance rule has a database backstop; this rule doesn't
-  yet.
 - **`idempotency_keys` is never pruned.**
 - **Idempotency covers postings only**, not account creation, since a
   duplicate account moves no money.

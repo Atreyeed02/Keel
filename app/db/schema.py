@@ -13,12 +13,14 @@ Two concerns live here, deliberately kept separate:
 is stored with a hash of the request body and the response that was
 returned, so a retried request short-circuits instead of re-applying.
 
-Two rules are enforced by Postgres triggers rather than only by the code
-that writes: `events` refuses UPDATE, DELETE and TRUNCATE, and every
-transaction's entries must balance per currency at commit. Migration
-7d2e4b9c1a58 creates them for `alembic upgrade head`; the `after_create`
-listeners below create the same ones for `metadata.create_all`, which is
-what the integration tests build their schema with.
+Three rules are enforced by Postgres triggers rather than only by the code
+that writes: `events` refuses UPDATE, DELETE and TRUNCATE, every
+transaction's entries must balance per currency at commit, and an entry
+must carry its account's currency, which never changes. Migrations
+7d2e4b9c1a58 and 3c9e5a7b2d14 create them for `alembic upgrade head`; the
+`after_create` listeners below create the same ones for
+`metadata.create_all`, which is what the integration tests build their
+schema with.
 """
 
 import uuid
@@ -132,6 +134,32 @@ accounts = Table(
     ),
 )
 
+# The domain treats an account's currency as fixed at creation. Rewriting it
+# would put every entry already on the account in violation of the
+# entry-currency rule below, which only looks at entries, so the account
+# side is closed here.
+ACCOUNT_CURRENCY_FUNCTION = """
+CREATE OR REPLACE FUNCTION accounts_currency_immutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.currency IS DISTINCT FROM OLD.currency THEN
+        RAISE EXCEPTION 'account % is %: an account''s currency is fixed when it is created',
+            OLD.id, OLD.currency
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+ACCOUNT_CURRENCY_TRIGGER = """
+CREATE TRIGGER accounts_currency_immutable
+    BEFORE UPDATE OF currency ON accounts
+    FOR EACH ROW EXECUTE FUNCTION accounts_currency_immutable()
+"""
+event.listen(accounts, "after_create", _ddl(ACCOUNT_CURRENCY_FUNCTION))
+event.listen(accounts, "after_create", _ddl(ACCOUNT_CURRENCY_TRIGGER))
+event.listen(accounts, "after_drop", _ddl("DROP FUNCTION IF EXISTS accounts_currency_immutable()"))
+
 transactions = Table(
     "transactions",
     metadata,
@@ -221,6 +249,39 @@ event.listen(ledger_entries, "after_create", _ddl(LEDGER_BALANCE_FUNCTION))
 event.listen(ledger_entries, "after_create", _ddl(LEDGER_BALANCE_TRIGGER))
 event.listen(
     ledger_entries, "after_drop", _ddl("DROP FUNCTION IF EXISTS ledger_entries_assert_balanced()")
+)
+
+# An entry carries its account's currency. `assert_accounts_valid` checks
+# this before posting, to produce a readable error; this holds for every
+# other writer. A missing account is left to the foreign key, which says so
+# more precisely.
+ENTRY_CURRENCY_FUNCTION = """
+CREATE OR REPLACE FUNCTION ledger_entries_match_account_currency() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    account_currency text;
+BEGIN
+    SELECT currency INTO account_currency FROM accounts WHERE id = NEW.account_id;
+    IF account_currency IS NOT NULL AND account_currency <> NEW.currency THEN
+        RAISE EXCEPTION 'entry currency % does not match account %, which is %',
+            NEW.currency, NEW.account_id, account_currency
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+ENTRY_CURRENCY_TRIGGER = """
+CREATE TRIGGER ledger_entries_match_account_currency
+    BEFORE INSERT OR UPDATE OF account_id, currency ON ledger_entries
+    FOR EACH ROW EXECUTE FUNCTION ledger_entries_match_account_currency()
+"""
+event.listen(ledger_entries, "after_create", _ddl(ENTRY_CURRENCY_FUNCTION))
+event.listen(ledger_entries, "after_create", _ddl(ENTRY_CURRENCY_TRIGGER))
+event.listen(
+    ledger_entries,
+    "after_drop",
+    _ddl("DROP FUNCTION IF EXISTS ledger_entries_match_account_currency()"),
 )
 
 # Declared here as well as in the migration, for the same reason as the
