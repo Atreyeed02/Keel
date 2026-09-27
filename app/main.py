@@ -35,12 +35,16 @@ from app.domain.ledger import (
     UnbalancedTransactionError,
     assert_balanced,
 )
+from app.observability import configure_logging, log, request_context_middleware
+
+configure_logging(settings.log_level)
 
 app = FastAPI(
     title=settings.app_name,
     description="Event-sourced, double-entry ledger service.",
     version="0.1.0",
 )
+app.middleware("http")(request_context_middleware)
 app.include_router(health_router)
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -357,7 +361,16 @@ async def create_account(
             status_code=422,
         )
     async with engine.begin() as conn:
-        await create_account_record(conn, account)
+        account_id = await create_account_record(conn, account)
+    # after the commit, so the line only ever describes an account that exists
+    log.info(
+        "account.created",
+        extra={
+            "account_id": str(account_id),
+            "account_type": account.account_type,
+            "currency": account.currency,
+        },
+    )
     return RedirectResponse(url="/", status_code=302)
 
 
@@ -415,13 +428,27 @@ async def submit_post_transaction(
     # is rendered — so the same key can be resubmitted once it is fixed.
     try:
         async with engine.begin() as conn:
-            transaction_id, _ = await post_transaction_once(
+            transaction_id, replayed = await post_transaction_once(
                 conn, submission_key, fingerprint, entries, description or None
             )
     except EntryAccountError as exc:
+        log.info(
+            "transaction.rejected",
+            extra={"idempotency_key": submission_key, "reason": str(exc)},
+        )
         return await invalid(str(exc))
     except IdempotencyConflictError as exc:
+        log.warning("idempotency.conflict", extra={"idempotency_key": submission_key})
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    log.info(
+        "transaction.replayed" if replayed else "transaction.posted",
+        extra={
+            "transaction_id": str(transaction_id),
+            "idempotency_key": submission_key,
+            "entry_count": len(entries),
+            "account_ids": sorted({str(e.account_id) for e in entries}),
+        },
+    )
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
 
