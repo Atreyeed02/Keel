@@ -82,6 +82,11 @@ double-posted, but five concurrent duplicates got `[500, 302, 500, 500,
 `asyncio.Barrier` to force the race deterministically. Full walkthrough:
 [docs/ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-idempotency).
 
+Keys are not kept forever. `python -m scripts.prune_idempotency_keys
+--yes` deletes those over 30 days old (`--older-than-days` to change it,
+never under 1). Past that window a retry is no longer recognised and posts
+again, so the window has to outlast any client's retries.
+
 ## How replay / rebuild works
 
 ```
@@ -316,7 +321,8 @@ app/
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
 alembic/versions/         5 migrations
-scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py
+scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py,
+                          prune_idempotency_keys.py
 tests/                    62 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
@@ -332,7 +338,8 @@ What this does **not** do today. The full, maintained list is
   is also why rebuild is a CLI and not a route.
 - **Rebuild is all-or-nothing and in memory.** No snapshots, no
   incremental projection catch-up. Postings wait while a rebuild runs.
-- **`idempotency_keys` is never pruned.**
+- **Key pruning is a script, not a scheduler.** Something has to run
+  `scripts.prune_idempotency_keys` periodically; nothing in the stack does.
 - **Idempotency covers postings only**, not account creation, since a
   duplicate account moves no money.
 - **No FX.** A transaction may touch several currencies, but each must

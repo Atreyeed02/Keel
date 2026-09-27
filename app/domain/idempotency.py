@@ -32,13 +32,19 @@ yet: the second INSERT *waits* for the first transaction to finish.
 The claim, the posting and the stored response are all written in the
 caller's transaction, so a committed key always has its response. There
 is no "claimed but unfinished" state for anyone to observe.
+
+Keys are not kept forever: `prune_idempotency_keys` deletes old ones. A
+key only protects a retry while it exists, so once it is pruned the same
+submission posts again. The retention window has to outlast any client's
+retry window.
 """
 
 import hashlib
 import json
 import uuid
+from datetime import timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -117,3 +123,39 @@ async def post_transaction_once(
         .values(response_body={"transaction_id": str(transaction_id)}, response_status="302")
     )
     return transaction_id, False
+
+
+# Below this a pruned key could belong to a retry still in flight, which
+# would then post a second time.
+MINIMUM_RETENTION = timedelta(days=1)
+
+
+def _expired(older_than: timedelta):
+    if older_than < MINIMUM_RETENTION:
+        raise ValueError(
+            f"idempotency keys must be kept for at least {MINIMUM_RETENTION.days} day"
+        )
+    return idempotency_keys.c.created_at < func.now() - older_than
+
+
+async def count_expired_idempotency_keys(conn: AsyncConnection, older_than: timedelta) -> int:
+    """How many keys `prune_idempotency_keys` would delete."""
+    expired = _expired(older_than)
+    return await conn.scalar(select(func.count()).select_from(idempotency_keys).where(expired))
+
+
+async def prune_idempotency_keys(conn: AsyncConnection, older_than: timedelta) -> int:
+    """
+    Delete keys claimed more than `older_than` ago; return how many went.
+
+    Only the keys go. Their transactions and events are ledger history and
+    stay. What is lost is the ability to recognise a retry of one of those
+    submissions, which is why `older_than` has a floor.
+
+    Measured against the database clock, the same one that stamped
+    `created_at`. A claim that is not committed yet is invisible to the
+    DELETE, so an in-flight posting can never lose its key mid-request.
+    """
+    expired = _expired(older_than)  # validated before the connection is touched
+    result = await conn.execute(delete(idempotency_keys).where(expired))
+    return result.rowcount

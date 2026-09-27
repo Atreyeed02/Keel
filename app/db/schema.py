@@ -306,3 +306,6 @@ idempotency_keys = Table(
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
     UniqueConstraint("key", name="uq_idempotency_key"),
 )
+
+# Backs the retention cleanup's range delete, `created_at < now() - interval`.
+Index("ix_idempotency_keys_created_at", idempotency_keys.c.created_at)

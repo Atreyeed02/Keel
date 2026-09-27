@@ -480,11 +480,27 @@ refresh) carries the same key and collapses into one posting.
 | `test_concurrent_duplicates_commit_one_effect` | five simultaneous duplicates: all 302 to the same transaction |
 | `test_concurrent_conflicting_payloads_post_one_and_reject_the_other` | simultaneous conflicting payloads: one 302, one 409, never a mix |
 | `test_fingerprint_is_deterministic_and_strict` | the hash ignores key order and nothing else |
+| `test_pruning_deletes_only_expired_keys_and_keeps_the_ledger` | retention removes old keys only; transactions and events stay |
+| `test_a_pruned_key_no_longer_recognises_its_retry` | past the window, a retry posts again: the trade-off, pinned down |
+| `test_pruning_refuses_a_window_under_a_day` | the retention floor |
+| `test_prune_script_counts_then_deletes` | the CLI |
 
 The concurrent tests are deterministic. An `asyncio.Barrier` holds every
 request just before it touches the key and releases them together, so
 all of them reach the check at the same moment. The two concurrent tests fail against the old
 SELECT-then-INSERT code, with the 500s shown above.
+
+**Retention.** `idempotency_keys` gains a row per posting.
+`prune_idempotency_keys(conn, older_than)` deletes keys claimed longer
+ago than `older_than`, measured on the database clock that stamped
+`created_at` and backed by `ix_idempotency_keys_created_at` (migration
+`9b1f6e2c8a47`). `python -m scripts.prune_idempotency_keys --yes` runs it
+with a 30-day default, meant for a schedule. Transactions and events are
+untouched. What goes is the ability to recognise a retry: resubmitting a
+pruned key posts again. So the window must outlast any client's retry
+window, and the function refuses anything under a day. A claim not yet
+committed is invisible to the DELETE, so an in-flight posting never loses
+its key.
 
 **Scope note:** idempotency applies only to `POST /post-transaction`. It
 deliberately does *not* apply to account creation — it exists to protect
@@ -1002,6 +1018,10 @@ Without `--yes` it reports row counts and exits non-zero having changed
 nothing. With `--yes` it replays inside one transaction and reports what
 changed. Either way it first refuses a log that names accounts it never
 created.
+
+**`scripts/prune_idempotency_keys.py`** deletes idempotency keys older
+than the retention window (§4), 30 days unless `--older-than-days` says
+otherwise. Without `--yes` it only counts them.
 
 **`scripts/backfill_account_events.py`** appends `account.created` for
 accounts that predate the event (§3.3). Without `--yes` it lists them;

@@ -1,7 +1,7 @@
 """
 One submission key, one committed ledger effect: checked sequentially,
 under a conflicting payload, after a rejected attempt, and under
-concurrency.
+concurrency. Plus retention: pruning old keys, and what that gives up.
 
 The concurrent tests are deterministic, not a hopeful `gather`. Each
 request is held at an `asyncio.Barrier` placed just before
@@ -17,15 +17,21 @@ integration tests.
 import asyncio
 import os
 import uuid
+from datetime import timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
 from app.db.schema import accounts, events, idempotency_keys, ledger_entries, metadata, transactions
-from app.domain.idempotency import request_fingerprint
+from app.domain.idempotency import (
+    count_expired_idempotency_keys,
+    prune_idempotency_keys,
+    request_fingerprint,
+)
+from scripts import prune_idempotency_keys as prune_script
 from tests.support import reset_schema
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -206,3 +212,79 @@ def test_fingerprint_is_deterministic_and_strict():
     assert request_fingerprint("x", entries) != request_fingerprint("y", entries)
     changed = [dict(entries[0], amount="100"), entries[1]]
     assert request_fingerprint("x", entries) != request_fingerprint("x", changed)
+
+
+# --- retention ----------------------------------------------------------------
+
+
+async def _age_key(key: str, days: int) -> None:
+    """Backdate a key's claim, as if it had been stored `days` ago."""
+    async with main_module.engine.begin() as conn:
+        await conn.execute(
+            update(idempotency_keys)
+            .where(idempotency_keys.c.key == key)
+            .values(created_at=func.now() - timedelta(days=days))
+        )
+
+
+async def _keys() -> set[str]:
+    async with main_module.engine.connect() as conn:
+        return set((await conn.scalars(select(idempotency_keys.c.key))).all())
+
+
+async def test_pruning_deletes_only_expired_keys_and_keeps_the_ledger(database):
+    cash_id, revenue_id = database
+    async with _client() as client:
+        for key in ("old", "recent"):
+            response = await client.post(
+                "/post-transaction", data=_submission(cash_id, revenue_id, key=key)
+            )
+            assert response.status_code == 302
+    await _age_key("old", days=31)
+
+    async with main_module.engine.begin() as conn:
+        assert await count_expired_idempotency_keys(conn, timedelta(days=30)) == 1
+        assert await prune_idempotency_keys(conn, timedelta(days=30)) == 1
+
+    assert await _keys() == {"recent"}
+    counts = await _ledger_counts()
+    # the postings themselves are history and stay
+    assert (counts["transactions"], counts["events"]) == (2, 2)
+
+
+async def test_a_pruned_key_no_longer_recognises_its_retry(database):
+    """The trade-off retention makes, pinned down: past the window a retry posts again."""
+    cash_id, revenue_id = database
+    async with _client() as client:
+        first = await client.post("/post-transaction", data=_submission(cash_id, revenue_id))
+        await _age_key("same-key", days=31)
+        async with main_module.engine.begin() as conn:
+            await prune_idempotency_keys(conn, timedelta(days=30))
+        late_retry = await client.post("/post-transaction", data=_submission(cash_id, revenue_id))
+    assert late_retry.status_code == 302
+    assert late_retry.headers["location"] != first.headers["location"]
+    assert (await _ledger_counts())["transactions"] == 2
+
+
+async def test_pruning_refuses_a_window_under_a_day():
+    # refused before the connection is used, so no database is needed
+    with pytest.raises(ValueError, match="at least 1 day"):
+        await prune_idempotency_keys(None, timedelta(hours=23))
+
+
+async def test_prune_script_counts_then_deletes(database, monkeypatch, capsys):
+    cash_id, revenue_id = database
+    monkeypatch.setattr("scripts.prune_idempotency_keys.engine", main_module.engine)
+    async with _client() as client:
+        await client.post("/post-transaction", data=_submission(cash_id, revenue_id))
+    await _age_key("same-key", days=45)
+
+    assert await prune_script.main(older_than_days=30, confirmed=False) == 1
+    assert "1 idempotency key(s) are older than 30 days" in capsys.readouterr().out
+    assert await _keys() == {"same-key"}
+
+    assert await prune_script.main(older_than_days=60, confirmed=True) == 0
+    assert "Deleted 0" in capsys.readouterr().out
+    assert await prune_script.main(older_than_days=30, confirmed=True) == 0
+    assert "Deleted 1" in capsys.readouterr().out
+    assert await _keys() == set()
