@@ -37,6 +37,15 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
+      # A pinned dependency with a known vulnerability fails the build.
+      # `-r` audits exactly what requirements.txt resolves to, not pip-audit's
+      # own dependencies; `--strict` fails too if a package could not be
+      # audited, rather than skipping it quietly.
+      - name: Audit dependencies (pip-audit)
+        run: |
+          pip install pip-audit==2.10.1
+          pip-audit --strict -r requirements.txt
+
       # The models in app/db/schema.py and the migrations must describe the
       # same schema: the tests build theirs with metadata.create_all, the app
       # with alembic. `alembic check` fails if migrating to head leaves any

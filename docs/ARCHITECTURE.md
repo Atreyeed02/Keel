@@ -1259,7 +1259,9 @@ start.
 
 Two independent jobs:
 
-**`lint-and-test`** — ruff; then `alembic upgrade head` and `alembic check`
+**`lint-and-test`** — ruff; `pip-audit --strict -r requirements.txt`, which
+fails the build if any pinned dependency has a known vulnerability (or
+cannot be audited); then `alembic upgrade head` and `alembic check`
 on a database of their own, which fails the build if the migrations and
 `app/db/schema.py` have drifted apart in any way autogenerate can see
 (the tests build their schema from `schema.py`, the app from the
