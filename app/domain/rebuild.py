@@ -23,6 +23,10 @@ What a rebuild reproduces exactly:
   response) still resolves;
 - every account's name, type and currency; every transaction's
   description; every entry's account, side, amount and currency;
+- each entry's `position`, its place in the transaction as submitted.
+  An event written before entries carried one gets the entry's index in
+  the payload array, which is the same thing: `post_transaction` has
+  always written that array in submission order;
 - `created_at` on all three tables. Each row is stamped with its event's
   `created_at`, which is the value it had originally: the row and its
   event were written in one database transaction, and Postgres `now()`
@@ -34,8 +38,8 @@ What it does not:
 
 - `ledger_entries.id`. The `transaction.posted` payload does not carry
   entry ids, so replay mints new ones. Nothing references an entry by id
-  — no foreign key points at `ledger_entries`, and no query looks one up —
-  but see ARCHITECTURE.md §3.3 for the one place the value is visible.
+  — no foreign key points at `ledger_entries`, and no query looks one up.
+  Entry order used to fall back on the id; it comes from `position` now.
 - `transactions.sequence` values. The identity restarts at 1 and is
   reassigned in event order, so relative order is kept and gaps are not.
 """
@@ -49,10 +53,36 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.schema import accounts, events, ledger_entries, transactions
+from app.domain.event_versions import CURRENT_VERSION, SUPPORTED_VERSIONS, UNVERSIONED
 
 
 class UnknownEventError(ValueError):
     """Raised when replay meets an event type it has no rule for."""
+
+
+class UnsupportedEventVersionError(UnknownEventError):
+    """
+    Raised when replay meets a payload `schema_version` it has no rule for.
+
+    A subclass of UnknownEventError because it is the same failure one level
+    down: an event replay cannot interpret. Skipping it would build a read
+    model that disagrees with the log.
+    """
+
+
+def _schema_version(event) -> int:
+    """
+    The payload's shape version: `schema_version`, or 1 for events written
+    before the field existed. Raises if replay has no rule for it.
+    """
+    version = event["payload"].get("schema_version", UNVERSIONED)
+    # `type(...) is int`, not isinstance: JSON true would otherwise pass as 1.
+    if type(version) is not int or version not in SUPPORTED_VERSIONS[event["event_type"]]:
+        raise UnsupportedEventVersionError(
+            f"no replay rule for {event['event_type']!r} schema_version {version!r} "
+            f"(event {event['id']}, sequence {event['sequence']})"
+        )
+    return version
 
 
 async def rebuild_read_model(conn: AsyncConnection) -> None:
@@ -87,6 +117,10 @@ async def rebuild_read_model(conn: AsyncConnection) -> None:
 
     for event in log:
         payload = event["payload"]
+        if event["event_type"] in SUPPORTED_VERSIONS:
+            # Every supported type has one version today, so there is nothing
+            # to branch on yet; the check is what matters.
+            _schema_version(event)
 
         if event["event_type"] == "account.created":
             # Only a backfilled event carries created_at; see backfill_account_events.
@@ -125,8 +159,13 @@ async def rebuild_read_model(conn: AsyncConnection) -> None:
                         "amount": Decimal(entry["amount"]),
                         "currency": entry["currency"],
                         "created_at": event["created_at"],
+                        # Events written before entries carried a position
+                        # still have them in submission order: the payload
+                        # array has always been written that way, and JSONB
+                        # keeps array order. So the index is the position.
+                        "position": entry.get("position", index),
                     }
-                    for entry in payload["entries"]
+                    for index, entry in enumerate(payload["entries"])
                 ],
             )
 
@@ -204,6 +243,7 @@ async def backfill_account_events(conn: AsyncConnection) -> list[uuid.UUID]:
                 aggregate_id=account["id"],
                 event_type="account.created",
                 payload={
+                    "schema_version": CURRENT_VERSION["account.created"],
                     "name": account["name"],
                     "account_type": account["account_type"],
                     "currency": account["currency"],

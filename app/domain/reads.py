@@ -130,9 +130,10 @@ async def transaction_with_entries(
     One transaction and its entries, each entry with its account's name and
     type. `(None, [])` if there is no such transaction.
 
-    Entries are ordered by `(created_at, id)`. Within one transaction every
-    entry shares `created_at`, so that order is arbitrary but stable until a
-    rebuild; see ARCHITECTURE.md §8.
+    Entries are in submission order, by `position`. Rows written before
+    `position` existed have none; they sort after numbered ones and then by
+    `(created_at, id)`, the order they have always been shown in
+    (ARCHITECTURE.md §3.3).
     """
     transaction = (
         (await conn.execute(select(transactions).where(transactions.c.id == transaction_id)))
@@ -147,7 +148,11 @@ async def transaction_with_entries(
                 select(ledger_entries, accounts.c.name, accounts.c.account_type)
                 .join(accounts, accounts.c.id == ledger_entries.c.account_id)
                 .where(ledger_entries.c.transaction_id == transaction_id)
-                .order_by(ledger_entries.c.created_at, ledger_entries.c.id)
+                .order_by(
+                    ledger_entries.c.position.asc().nulls_last(),
+                    ledger_entries.c.created_at,
+                    ledger_entries.c.id,
+                )
             )
         )
         .mappings()

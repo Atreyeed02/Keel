@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.schema import accounts, events
 from app.domain.account_types import ACCOUNT_TYPES  # re-exported for the account form
 from app.domain.errors import describe_validation_error
+from app.domain.event_versions import CURRENT_VERSION
 
 
 class InvalidAccountError(ValueError):
@@ -94,6 +95,7 @@ async def create_account_record(conn: AsyncConnection, account: AccountInput) ->
             aggregate_id=account_id,
             event_type="account.created",
             payload={
+                "schema_version": CURRENT_VERSION["account.created"],
                 "name": account.name,
                 "account_type": account.account_type,
                 "currency": account.currency,

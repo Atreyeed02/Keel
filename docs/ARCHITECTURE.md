@@ -179,7 +179,7 @@ value-neutral movement, it involves a rate and usually a gain or loss.
 The standard modelling is a **currency-exchange clearing account** and two
 transactions, each balanced in its own currency, with any difference
 posted to an FX gain/loss account. Nothing in the codebase implements
-that yet; see §8.
+that yet. It is deferred future work, not out of scope; see §8.
 
 ---
 
@@ -267,8 +267,29 @@ else, each group in `sequence` order (why accounts go first is under
 | `event_type` | Replay |
 |---|---|
 | `account.created` | insert into `accounts` with `id = aggregate_id` |
-| `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item |
+| `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item, with its `position` |
 | anything else | raise `UnknownEventError` — a rebuild that silently skipped an event would disagree with the log |
+
+**Payload versions.** Every `account.created` and `transaction.posted`
+payload written now carries `"schema_version": 1`
+(`app/domain/event_versions.py`). Before replaying an event, the rebuild
+checks it. A payload with no `schema_version`, which is every event written
+before the field existed, is read as version 1, because that is what it
+is. A version replay has no rule for, including a non-integer such as `"1"`
+or `true`, raises `UnsupportedEventVersionError`, a subclass of
+`UnknownEventError`, and the whole replay rolls back, for the same reason an
+unknown event type does.
+
+A version changes only for a change an existing reader could not handle: a
+field renamed, removed or given a new meaning. Adding an optional field is
+not one. Entries gained `position` that way and are still version 1,
+because replay already knows what an entry without one means (below). The
+first incompatible change will add a version to `SUPPORTED_VERSIONS` and a
+branch in `rebuild_read_model`, with the old version still readable.
+`test_new_payloads_carry_their_schema_version`,
+`test_payloads_without_a_schema_version_replay_as_version_1` and
+`test_replay_refuses_a_schema_version_it_does_not_know` cover the three
+cases.
 
 Account and transaction ids are the events' `aggregate_id`s, so they come
 back unchanged: every entry still points at the right account, and
@@ -341,6 +362,9 @@ runs them on every push:
   the posting to succeed and to survive a further rebuild.
 - `test_rebuild_script_refuses_without_confirmation_then_repairs` covers
   the CLI.
+- `test_entries_are_shown_in_submission_order_and_a_rebuild_keeps_it` and
+  `test_a_rebuild_orders_an_event_without_positions_by_its_payload` cover
+  entry order, on the detail page and in the API, for new and old events.
 - `test_backfill_makes_a_legacy_ledger_rebuildable` and
   `test_backfill_and_rebuild_scripts_on_a_legacy_ledger` cover the
   backfill, below.
@@ -368,17 +392,40 @@ Two details make the backfilled log replay correctly:
   log honest. The account's original `created_at` travels in the payload,
   with `"backfilled": true`, and replay restores it from there.
 
+**Entry order survives a rebuild.** Each entry's place in the transaction
+as submitted is stored as `ledger_entries.position` and in the
+`transaction.posted` payload, and the detail page and
+`GET /api/transactions/{id}` sort by it (migration `c2e8f4a61b07`).
+Before that, entries were sorted by `(created_at, id)`. All of a
+transaction's entries share `created_at`, so a random UUID decided the
+order, and a rebuild, which mints new ids, could change it.
+
+Data written before `position` existed is handled on both sides:
+
+- **Read-model rows** stay `NULL`. The read model cannot recover their
+  submission order; the arbitrary order they show is all it knows. So
+  reads sort `NULL` after numbered positions and then by
+  `(created_at, id)`, and those rows keep exactly the order they had.
+- **Events** are better off. `post_transaction` has always written the
+  payload's `entries` array in submission order, and JSONB keeps array
+  order, so an entry's index in that array *is* its submission position.
+  Replay uses it when the entry has no `position`. That is a deliberate
+  step past "fall back to the current ordering": the current ordering
+  comes from random ids, and falling back to it on replay would scramble
+  those transactions again on every rebuild. A rebuild therefore gives old
+  transactions their real order back.
+
+This was checked on a database migrated with pre-existing entries: before
+a rebuild they render in the old order, `position` all `NULL`; after it,
+in submission order, positions `0..n`.
+
 **The limit.**
 
 - **`ledger_entries.id` is not reproduced.** The `transaction.posted`
   payload never carried entry ids, so replay mints new ones. Nothing
   depends on a particular value: no foreign key references
-  `ledger_entries`, and no query or template looks an entry up by id. The
-  one visible effect is ordering — the transaction-detail page sorts a
-  transaction's entries by `(created_at, id)`, all of a transaction's
-  entries share `created_at`, so their order within the debit and credit
-  columns is decided by the random id and can change across a rebuild.
-  (It was already arbitrary rather than submission order.)
+  `ledger_entries`, and no query or template looks an entry up by id.
+  Ordering no longer depends on it either.
 
 ---
 
@@ -508,24 +555,41 @@ different fingerprint, `entries_fingerprint()`. The form's raw-string hash
 suits a browser, which resends a form byte for byte. A JSON client
 re-serialises its request on every retry, and nothing obliges it to
 produce the same bytes: another key order, `"100"` for `"100.00"`, `usd`
-for `USD`, the entries in another order. Hashing the raw body would turn
+for `USD`, other whitespace. Hashing the raw body would turn
 such a genuine retry into a 409, which is exactly what idempotency exists
 to prevent. So the hash is taken over the *validated* request in
 canonical form:
 
 - each amount at exactly two decimal places (amounts are validated to
   have at most two), currency upper-cased, account id as a canonical UUID;
-- entries sorted, because the ledger does not keep their order;
+- entries in the order they were sent;
 - the description exactly as sent, except that an empty one counts as
   none, which is how both are stored.
 
 The rule is that two requests share a fingerprint exactly when they would
 post the same transaction. Anything that changes what would be stored
 changes the hash, and a key reused for it is a 409. The canonical form
-also carries a `"format": "json-v1"` marker, which keeps API hashes
+also carries a `"format": "json-v2"` marker, which keeps API hashes
 disjoint from form hashes: a key first used by the form and then sent to
 the API is a conflict, never a replay of a request made through the other
-door. The form fingerprint is unchanged, so every stored key stays valid.
+door. The form fingerprint is unchanged, so every stored form key stays
+valid.
+
+**Entry order is part of the fingerprint.** The first version sorted the
+entries before hashing, because the ledger kept no order: two requests
+listing the same entries differently posted the same transaction. Since
+§3.3 gave each entry a stored `position`, they no longer do; the order is
+kept and shown. Under the rule above, order therefore has to count, and
+a key reused with the entries reordered is a 409, not a replay that would
+hand back a transaction in an order the client did not send. It costs a
+genuine retry nothing. The re-serialisation the canonical form absorbs is
+about object keys, number spelling and case; JSON arrays are ordered, so
+a client resending a request keeps its entries in the same order. The
+marker went from `json-v1` to `json-v2` with this change. An API key
+stored under `json-v1` whose retry arrived afterwards would get a 409;
+nothing was deployed with `json-v1`, and keys are pruned after 30 days
+anyway. `test_the_same_entries_in_another_order_under_one_key_is_a_409`
+pins the behaviour.
 
 **Scope note:** idempotency applies to `POST /post-transaction` and
 `POST /api/transactions`. It deliberately does *not* apply to account
@@ -1021,6 +1085,16 @@ On 100,000 rows the planner now uses the index unprompted: a bitmap
 index scan, about 1.4 ms. `pg_trgm` is a trusted extension from
 PostgreSQL 13 on, so the database owner can install it without superuser
 rights. Downgrade drops the index and leaves the extension installed.
+`a4c7e2d9b813_drop_duplicate_idempotency_key_constraint.py` fixes the
+difference `alembic check` used to report. The initial schema declared
+both `PRIMARY KEY (key)` and `UNIQUE (key)` on `idempotency_keys`, but
+Postgres's `CREATE TABLE` folds a unique constraint identical to the
+primary key into it, so no database ever had two constraints: it had one
+primary key named `uq_idempotency_key`. `schema.py` now declares only the
+primary key, and the migration renames the constraint (and its index) to
+`idempotency_keys_pkey`, the name `create_all` gives it.
+`c2e8f4a61b07_ledger_entries_position.py` adds the nullable
+`ledger_entries.position` column (§3.3). Existing rows stay `NULL`.
 
 The interesting part is `alembic/env.py`:
 
@@ -1084,7 +1158,7 @@ backfill it does nothing.
 | `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters (UTC day boundaries under any session time zone) and pagination, `sequence` ordering, the trigram index behind the search |
 | `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads, key retention and its CLI (§4) |
 | `test_ledger_invariants.py` | **yes** | every database trigger (balance, account currency, append-only log) against writes that bypass the app; atomic rollback; log and read model agree; trial balance nets to zero |
-| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; both CLIs |
+| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; entry order before and after a rebuild, for new and old events; payload schema versions, missing and unknown; both CLIs |
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
@@ -1135,8 +1209,12 @@ start.
 
 Two independent jobs:
 
-**`lint-and-test`** — ruff, then pytest against a real Postgres service
-container.
+**`lint-and-test`** — ruff; then `alembic upgrade head` and `alembic check`
+on a database of their own, which fails the build if the migrations and
+`app/db/schema.py` have drifted apart in any way autogenerate can see
+(the tests build their schema from `schema.py`, the app from the
+migrations, so drift would mean the tests exercise a different schema);
+then pytest against a real Postgres service container.
 
 **`docker-smoke`** — proves the shipped image works: build, `up -d`, poll
 `/health` until it answers (with a deadline, not a fixed sleep), assert
@@ -1386,6 +1464,14 @@ carry its account's currency, and an account's currency cannot change
 for sequential retries. Includes the 409 on key reuse, and a rejected
 attempt releases the key (§4).
 
+**Entry order and payload versions** — each entry's submission position
+is stored and shown, and survives a rebuild; `account.created` and
+`transaction.posted` payloads carry a `schema_version`, and replay refuses
+one it does not know (§3.3).
+
+**Schema drift check** — `alembic check` runs in CI on a freshly migrated
+database (§5.13).
+
 **Rebuild tooling** — `python -m scripts.rebuild_read_model`, safe to run
 alongside live postings, and `python -m scripts.backfill_account_events`
 for databases whose accounts predate `account.created` (§3.3).
@@ -1403,11 +1489,11 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 119 tests (§5.11). 48 run with no database at all: the
+**Testing** — 134 tests (§5.11). 48 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, and every JSON API rejection that happens
-before the database is touched. The other 71 are Postgres-backed.
+before the database is touched. The other 86 are Postgres-backed.
 They cover the pages, filters and pagination; idempotency, including
 concurrent duplicates and key retention; the database triggers against
 writes that bypass the app; atomic rollback; agreement between the log
@@ -1416,7 +1502,7 @@ projection, a posting made mid-rebuild and a backfilled legacy ledger.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"48 passed, 71 skipped" and is not a passing build. See the README for
+"48 passed, 86 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1430,8 +1516,9 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. No FX handling.** Per §2.4, currency conversion cannot be expressed.
-Needs a clearing-account pattern plus an FX gain/loss account.
+**1. No FX handling (deferred future work).** Per §2.4, currency
+conversion cannot be expressed. Needs a clearing-account pattern plus an
+FX gain/loss account.
 
 ### Robustness
 
@@ -1444,35 +1531,32 @@ routes.
 does the cleanup (§4), but nothing in the stack runs it. A deployment
 needs a cron job or a scheduled task.
 
-**4. Entry order on the transaction-detail page is arbitrary.** Entries
-are sorted by `(created_at, id)`; within one transaction `created_at` is
-shared, so a random UUID decides the order, and a rebuild can change it.
-Storing each entry's position in the event payload and in
-`ledger_entries` would make it submission order and stable.
-
-**5. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
+**4. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
 the whole log at once and replays from `sequence` 1. There are no
 snapshots, and no incremental catch-up of a projection from a known
 position. Fine at this size, and the first thing to change if it grows.
 While a rebuild runs, postings wait on its lock (§3.3).
 
-**6. Event payloads are unversioned.** `transaction.posted` has had one
-shape since it was introduced. The first change to it will need either a
-version field in the payload or a new event type, with replay rules for
-both.
-
 ### Missing interfaces
 
-**7. The JSON API is minimal.** It has what a client needs to create
+**5. The JSON API is minimal.** It has what a client needs to create
 accounts, post transactions safely and read one back (§5.16). It has no
 single-account read, no transaction listing, and no pagination:
 `GET /api/accounts` returns every account at once. There is no event-log
-endpoint and no API version in the path; `entries_fingerprint`'s
-`json-v1` marker is the only place a version exists so far. Like every
-route, it is unauthenticated (item 2).
+endpoint and no API version in the path. Like every route, it is
+unauthenticated (item 2).
 
-### Roadmap items not started
+### Future work, not started
 
-Webhook ingestion, multi-provider payment orchestration, reconciliation,
-the outbox pattern for reliable event publishing, metrics and tracing
-(structured logs exist, §5.15), and a deployment pipeline.
+**FX handling** (item 1) and **metrics and tracing** (structured logs
+exist, §5.15). Both are planned: they belong inside the ledger service and
+are deferred, not ruled out.
+
+### Out of scope
+
+These are the layers a payments platform puts *around* a ledger. They are
+listed to mark the boundary of this project, not as planned work: webhook
+ingestion, multi-provider payment orchestration, reconciliation, the
+outbox pattern for reliable event publishing, and a deployment pipeline.
+A hosted demo instance is different from a deployment pipeline and is
+still wanted (`STATUS.md` §4).

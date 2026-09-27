@@ -114,7 +114,12 @@ async def test_created_account_is_recorded_in_the_event_log(database):
     assert event["aggregate_type"] == "account"
     assert event["aggregate_id"] == account["id"]
     # normalised values, not the raw form input ("usd")
-    assert event["payload"] == {"name": "Office rent", "account_type": "expense", "currency": "USD"}
+    assert event["payload"] == {
+        "schema_version": 1,
+        "name": "Office rent",
+        "account_type": "expense",
+        "currency": "USD",
+    }
     # the row and its event were written in one database transaction
     assert event["created_at"] == account["created_at"]
 

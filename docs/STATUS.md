@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-09-27: everything is on `main`.** A snapshot of what is actually built, what is
+**As of 2026-09-27.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -20,44 +20,50 @@ Both feature branches are merged, with regular merge commits, and deleted:
 CI passed both jobs on each PR and on `main` after each merge. No
 feature branches remain.
 
-Everything below was checked against `main` at `bd9db76`, not read off
-the older prose in `ARCHITECTURE.md`.
+Everything below was checked against the working tree at migration head
+`c2e8f4a61b07`, not read off the older prose in `ARCHITECTURE.md`.
 
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **119 tests** |
-| `pytest` (no database available) | 48 passed, 71 skipped |
-| `pytest` (local Postgres 16) | 119 passed |
-| `pytest -W error::DeprecationWarning` on the pinned stack | 119 passed |
+| `pytest` collection | **134 tests** |
+| `pytest` (no database available) | 48 passed, 86 skipped |
+| `pytest` (local Postgres 16) | 134 passed |
+| `pytest -W error::DeprecationWarning` on the pinned stack | 134 passed |
 | `pip-audit -r requirements.txt` | no known vulnerabilities |
-| `alembic upgrade head` → `downgrade base` → `upgrade head` | clean (8 migrations each way), on a scratch database |
+| `alembic upgrade head` → `downgrade base` → `upgrade head` | clean (10 migrations each way), on a scratch database |
+| `alembic check` | no differences; also runs in CI's `lint-and-test` job |
 | Migrated schema vs. `metadata.create_all` | identical functions, triggers and indexes (only alembic's own table differs) |
 | App booted with uvicorn on a migrated database | health, account creation, posting, retry, 409, the transaction filter and all three maintenance CLIs verified; the JSON API's 201, 200 replay (`Idempotent-Replayed`), 400, 409, balances and `/docs` verified over real HTTP |
 | `docker compose config` (base, and base + override) | valid |
 | Docker image build | built and smoke-tested by CI's `docker-smoke` on both PRs and on `main` at `bd9db76`: healthy `/health`, migrated to `5e8d2a1f9c63`, a real posting through the container. Not run locally, where Docker was not running. |
 | CI on `main` at `bd9db76` | `lint-and-test` (119 passed, 0 skipped) and `docker-smoke` both pass |
 
-The 71 skips are not failures. Every database-backed test skips itself
+The 86 skips are not failures. Every database-backed test skips itself
 unless `TEST_DATABASE_URL` is set, so **a green local run of 48 tests
-means well under half of the suite actually executed.** Do not read it
+means barely a third of the suite actually executed.** Do not read it
 as a passing build. See §5 for the command that runs the real thing.
 
-> **Known drift, not fixed:** `alembic check` reports one difference.
-> `schema.py` declares `UniqueConstraint("key", name="uq_idempotency_key")`
-> on a column that is already the primary key, and Postgres keeps only
-> one constraint for the pair. It predates this round of work (the same
-> report comes from `main` at `e94f44c`) and is harmless, but it means
-> `alembic check` cannot yet be used as a CI gate.
+> **`alembic check` passes and runs in CI.** It used to report one
+> difference: `schema.py` declared a unique constraint on
+> `idempotency_keys.key`, its primary key. Postgres had folded the two
+> into one primary key named `uq_idempotency_key`, so no database had a
+> duplicate; the model did. Migration `a4c7e2d9b813` removes it from the
+> model and renames the key to `idempotency_keys_pkey`.
+>
+> One cosmetic difference remains that `alembic check` does not see:
+> migrations spell the `created_at` defaults `CURRENT_TIMESTAMP`, and
+> `schema.py` spells them `now()`. Postgres evaluates both as the
+> transaction's start time.
 
 ---
 
 ## 2. What exists
 
-### Schema — complete, 8 migrations
+### Schema — complete, 10 migrations
 
 Five tables in `app/db/schema.py`, with `alembic/versions/` at head
-`5e8d2a1f9c63`:
+`c2e8f4a61b07`:
 
 - `events` — append-only log. `sequence` is `BigInteger Identity(always=True)`,
   so the log has a real database-generated total order that the
@@ -69,9 +75,11 @@ Five tables in `app/db/schema.py`, with `alembic/versions/` at head
 - `transactions` — carries its own `sequence` identity column for the
   same ordering reason; all listings sort by it, which also keeps
   pagination stable. A `pg_trgm` GIN index serves the description search.
-- `ledger_entries` — `Numeric(18,2)`, `CHECK`s on side and positivity.
-- `idempotency_keys` — key, request hash, stored response; `created_at`
-  is indexed for the retention cleanup.
+- `ledger_entries` — `Numeric(18,2)`, `CHECK`s on side and positivity, and
+  `position`, each entry's place in its transaction as submitted, which is
+  the order entries are shown in (`NULL` for rows written before it).
+- `idempotency_keys` — key (primary key, `idempotency_keys_pkey`), request
+  hash, stored response; `created_at` is indexed for the retention cleanup.
 
 Four triggers enforce the ledger's rules in Postgres itself, for writes
 that bypass the app as well as for the app:
@@ -85,8 +93,8 @@ that bypass the app as well as for the app:
 Indexes and triggers are declared in both the migrations *and*
 `schema.py`, so `metadata.create_all` (used by the tests) and
 `alembic upgrade head` produce the same schema. This was checked
-directly: the function bodies, trigger definitions and index definitions
-are byte-identical.
+directly: functions, triggers, indexes and constraints are byte-identical,
+and `alembic check` finds no difference in CI.
 
 ### Domain — the invariants live here
 
@@ -168,7 +176,8 @@ directly, so form parsing no longer goes through the deprecated
 
 ### CI — two jobs
 
-`lint-and-test` (ruff + pytest against a live Postgres service) and
+`lint-and-test` (ruff, `alembic check` on a freshly migrated database,
+then pytest against a live Postgres service) and
 `docker-smoke`, which is the more interesting one: it builds the image,
 waits for `/health`, asserts the exact healthy body `{"status":"ok","db":"up"}`
 (a bare 200 check would go green on a stack whose migrations failed),
@@ -195,8 +204,10 @@ closed. `python -m scripts.backfill_account_events --yes` appends the
 missing events, and the rebuild script refuses such a log up front with a
 pointer to it. Replay takes account events before the rest, because
 backfilled ones sit later in the log than the transactions that use their
-accounts. `ARCHITECTURE.md` §3.3 has the details and the one remaining
-limit: entry ids are not reproduced.
+accounts. Entries keep their submission order through a rebuild, old
+events included, and every payload's `schema_version` is checked, a
+missing one read as version 1. `ARCHITECTURE.md` §3.3 has the details and
+the one remaining limit: entry ids are not reproduced.
 
 ---
 
@@ -206,6 +217,8 @@ Ordered so that earlier items unblock or de-risk later ones.
 
 **1. A live deployment**
 Nothing is hosted, so there is no URL to click without cloning the repo.
+This means a hosted demo instance, not a deployment pipeline, which is
+out of scope (below).
 The image-only `docker-compose.yml` is what a deployment would run. This
 needs a hosting decision, and whatever host is chosen also needs to run
 `scripts.prune_idempotency_keys` on a schedule.
@@ -213,25 +226,28 @@ needs a hosting decision, and whatever host is chosen also needs to run
 **2. Authentication**
 Every route is public. Fine for a demo, disqualifying otherwise.
 
-**3. Stable entry order on the transaction-detail page**
-Entries sort by `(created_at, id)`, so within a transaction a random UUID
-decides the order, and a rebuild can change it. Storing each entry's
-position in the event payload and in `ledger_entries` fixes both.
-
-**4. Round out the JSON API**
+**3. Round out the JSON API**
 No single-account read, no transaction listing, no pagination and no
-event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
+event-log endpoint yet (`ARCHITECTURE.md` §8 item 5).
 
-**Done since the previous version of this list:** the JSON API, the
+**Done since the previous version of this list:** stable entry order
+(each entry's submission position, stored and replayed), payload schema
+versions, `alembic check` in CI with the duplicate idempotency-key
+constraint removed, the JSON API, the
 `account.created` backfill, the account-currency rule in the database, idempotency key
 retention, UTC date filtering, the trigram search index, the
 FastAPI/Starlette upgrade, and the test fixtures' guard against migrated
 databases.
 
-**Not started at all:** FX handling (needs a clearing-account pattern
-plus an FX gain/loss account — see `ARCHITECTURE.md` §2.4 for why the
-current model *cannot* express conversion), webhook ingestion, the
-outbox pattern, reconciliation, metrics and tracing.
+**Future work, not started:** FX handling (needs a clearing-account
+pattern plus an FX gain/loss account — see `ARCHITECTURE.md` §2.4 for why
+the current model *cannot* express conversion), and metrics and tracing.
+Both are deferred, not ruled out.
+
+**Out of scope:** webhook ingestion, multi-provider payment orchestration,
+reconciliation, the outbox pattern and a deployment pipeline. These are
+the layers a payments platform puts around a ledger; they mark the
+project's boundary and are not planned (`ARCHITECTURE.md` §8).
 
 ---
 
@@ -247,7 +263,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 48 of 119 tests:
+you are running 48 of 134 tests:
 
 ```bash
 docker compose up -d db

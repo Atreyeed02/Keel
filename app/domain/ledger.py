@@ -24,6 +24,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.schema import accounts, events, ledger_entries, transactions
+from app.domain.event_versions import CURRENT_VERSION
 
 # The longest description `transactions.description` can hold. Longer
 # ones used to reach Postgres and fail there as an unhandled 500.
@@ -175,6 +176,9 @@ async def post_transaction(
     txn_id = uuid.uuid4()
 
     await conn.execute(insert(transactions).values(id=txn_id, description=description))
+    # Each entry keeps its place in the submission, in the read model and in
+    # the event, so the order it is shown in is the order it was entered in
+    # and a rebuild reproduces it.
     await conn.execute(
         insert(ledger_entries),
         [
@@ -185,8 +189,9 @@ async def post_transaction(
                 "entry_type": e.entry_type,
                 "amount": e.amount,
                 "currency": e.currency,
+                "position": position,
             }
-            for e in entries
+            for position, e in enumerate(entries)
         ],
     )
     await conn.execute(
@@ -196,8 +201,12 @@ async def post_transaction(
             aggregate_id=txn_id,
             event_type="transaction.posted",
             payload={
+                "schema_version": CURRENT_VERSION["transaction.posted"],
                 "description": description,
-                "entries": [e.model_dump(mode="json") for e in entries],
+                "entries": [
+                    {**e.model_dump(mode="json"), "position": position}
+                    for position, e in enumerate(entries)
+                ],
             },
         )
     )

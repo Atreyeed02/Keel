@@ -250,11 +250,14 @@ def test_the_json_fingerprint_hashes_meaning_not_bytes():
 
     base = fingerprint("Invoice 7", _entries(cash, revenue, "100.00"))
     # same transaction, written differently: another amount spelling, a
-    # lower-case currency, an upper-case UUID, entries in another order
+    # lower-case currency, an upper-case UUID
     reworded = _entries(cash, revenue, "100")
     reworded[0].update(currency="usd", account_id=str(cash).upper())
-    assert fingerprint("Invoice 7", list(reversed(reworded))) == base
-    # anything that would store something different is a different request
+    assert fingerprint("Invoice 7", reworded) == base
+    # anything that would store something different is a different request,
+    # including the same entries in another order: each entry's position is
+    # stored and shown
+    assert fingerprint("Invoice 7", list(reversed(_entries(cash, revenue)))) != base
     assert fingerprint("Invoice 7", _entries(cash, revenue, "100.01")) != base
     assert fingerprint("Invoice 8", _entries(cash, revenue, "100.00")) != base
     assert fingerprint("Invoice 7", _entries(revenue, cash, "100.00")) != base
@@ -402,23 +405,34 @@ async def test_a_retry_is_a_200_replay_of_the_same_transaction(api, captured):
 
 
 async def test_a_retry_written_differently_is_still_a_replay(api):
-    """The fingerprint compares meaning: order, spelling of amounts, case."""
+    """The fingerprint compares meaning: key order, spelling of amounts, case, whitespace."""
     async with _client() as client:
         cash, revenue = await _cash_and_revenue(client)
         first = await _post(
             client, {"description": "Invoice 7", "entries": _entries(cash, revenue)}
         )
-        reworded = _entries(cash, revenue, "100")
+        # every object's keys in reverse, as another serialiser might write them
+        reworded = [dict(reversed(list(e.items()))) for e in _entries(cash, revenue, "100")]
         reworded[1]["currency"] = "usd"
         retry = await client.post(
             "/api/transactions",
-            content=json.dumps(
-                {"entries": list(reversed(reworded)), "description": "Invoice 7"}, indent=4
-            ),
+            content=json.dumps({"entries": reworded, "description": "Invoice 7"}, indent=4),
             headers={"Idempotency-Key": "key-1", "Content-Type": "application/json"},
         )
     assert retry.status_code == 200
     assert retry.json()["id"] == first.json()["id"]
+    assert (await _counts(api))["transactions"] == 1
+
+
+async def test_the_same_entries_in_another_order_under_one_key_is_a_409(api):
+    """Entry order is stored, so a reordered request would post a different transaction."""
+    async with _client() as client:
+        cash, revenue = await _cash_and_revenue(client)
+        first = await _post(client, {"entries": _entries(cash, revenue)})
+        reordered = await _post(client, {"entries": list(reversed(_entries(cash, revenue)))})
+    assert first.status_code == 201
+    assert reordered.status_code == 409
+    assert _error(reordered)[0] == "idempotency_conflict"
     assert (await _counts(api))["transactions"] == 1
 
 
