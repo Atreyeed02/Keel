@@ -534,24 +534,41 @@ different fingerprint, `entries_fingerprint()`. The form's raw-string hash
 suits a browser, which resends a form byte for byte. A JSON client
 re-serialises its request on every retry, and nothing obliges it to
 produce the same bytes: another key order, `"100"` for `"100.00"`, `usd`
-for `USD`, the entries in another order. Hashing the raw body would turn
+for `USD`, other whitespace. Hashing the raw body would turn
 such a genuine retry into a 409, which is exactly what idempotency exists
 to prevent. So the hash is taken over the *validated* request in
 canonical form:
 
 - each amount at exactly two decimal places (amounts are validated to
   have at most two), currency upper-cased, account id as a canonical UUID;
-- entries sorted, because the ledger does not keep their order;
+- entries in the order they were sent;
 - the description exactly as sent, except that an empty one counts as
   none, which is how both are stored.
 
 The rule is that two requests share a fingerprint exactly when they would
 post the same transaction. Anything that changes what would be stored
 changes the hash, and a key reused for it is a 409. The canonical form
-also carries a `"format": "json-v1"` marker, which keeps API hashes
+also carries a `"format": "json-v2"` marker, which keeps API hashes
 disjoint from form hashes: a key first used by the form and then sent to
 the API is a conflict, never a replay of a request made through the other
-door. The form fingerprint is unchanged, so every stored key stays valid.
+door. The form fingerprint is unchanged, so every stored form key stays
+valid.
+
+**Entry order is part of the fingerprint.** The first version sorted the
+entries before hashing, because the ledger kept no order: two requests
+listing the same entries differently posted the same transaction. Since
+§3.3 gave each entry a stored `position`, they no longer do; the order is
+kept and shown. Under the rule above, order therefore has to count, and
+a key reused with the entries reordered is a 409, not a replay that would
+hand back a transaction in an order the client did not send. It costs a
+genuine retry nothing. The re-serialisation the canonical form absorbs is
+about object keys, number spelling and case; JSON arrays are ordered, so
+a client resending a request keeps its entries in the same order. The
+marker went from `json-v1` to `json-v2` with this change. An API key
+stored under `json-v1` whose retry arrived afterwards would get a 409;
+nothing was deployed with `json-v1`, and keys are pruned after 30 days
+anyway. `test_the_same_entries_in_another_order_under_one_key_is_a_409`
+pins the behaviour.
 
 **Scope note:** idempotency applies to `POST /post-transaction` and
 `POST /api/transactions`. It deliberately does *not* apply to account
@@ -1508,7 +1525,7 @@ accounts, post transactions safely and read one back (§5.16). It has no
 single-account read, no transaction listing, and no pagination:
 `GET /api/accounts` returns every account at once. There is no event-log
 endpoint and no API version in the path; `entries_fingerprint`'s
-`json-v1` marker is the only place a version exists so far. Like every
+`json-v2` marker is the only place a version exists so far. Like every
 route, it is unauthenticated (item 2).
 
 ### Roadmap items not started

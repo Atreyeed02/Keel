@@ -286,8 +286,9 @@ curl -i -X POST http://localhost:8000/api/transactions \
 
 A retry with the same key answers `200` with the same transaction and
 `Idempotent-Replayed: true`. Retries are matched by meaning, not bytes:
-`"100"` and `"100.00"`, key order, currency case and entry order do not
-make a retry a different request. Amounts are strings in both
+`"100"` and `"100.00"`, object key order, currency case and whitespace do
+not make a retry a different request. Entry order does, since it is
+stored. Amounts are strings in both
 directions, never JSON numbers. Every error is
 `{"error": {"code": ..., "message": ...}}`. Details:
 [docs/ARCHITECTURE.md §5.16](docs/ARCHITECTURE.md#516-appapi--the-json-api).

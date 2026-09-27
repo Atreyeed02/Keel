@@ -85,33 +85,34 @@ def entries_fingerprint(description: str | None, entries: list[EntryInput]) -> s
     - amounts at exactly two decimal places (they have been validated to
       have at most two), currencies upper-cased, account ids as canonical
       UUID strings;
-    - entries sorted, because the ledger does not keep their order;
+    - entries in the order they were sent, because that order is stored
+      (each entry's `position`) and shown;
     - the description exactly as sent, after an empty one has become None,
       which is how it is stored.
 
     Two requests hash the same exactly when they would post the same
     transaction. Anything that would change what is stored changes the
-    hash, and a key reused for it is a 409.
+    hash, and a key reused for it is a 409. Entry order is part of that now.
+    It costs a genuine retry nothing: JSON arrays are ordered, and a client
+    re-serialising a request keeps its array in order, whatever it does
+    with object keys.
 
     The `format` marker keeps these hashes apart from `request_fingerprint`
     ones, so a key first used by the HTML form and then sent to the API is
-    a conflict, never a replay of a request made through the other door.
+    a conflict, never a replay of a request made through the other door. It
+    went from `json-v1` to `json-v2` when entry order joined the canonical
+    form.
     """
-    canonical_entries = sorted(
-        (
-            {
-                "account_id": str(e.account_id),
-                "entry_type": e.entry_type,
-                "amount": f"{e.amount:.2f}",
-                "currency": e.currency.upper(),
-            }
-            for e in entries
-        ),
-        key=lambda entry: (
-            entry["account_id"], entry["entry_type"], entry["currency"], entry["amount"]
-        ),
-    )
-    canonical = {"format": "json-v1", "description": description, "entries": canonical_entries}
+    canonical_entries = [
+        {
+            "account_id": str(e.account_id),
+            "entry_type": e.entry_type,
+            "amount": f"{e.amount:.2f}",
+            "currency": e.currency.upper(),
+        }
+        for e in entries
+    ]
+    canonical = {"format": "json-v2", "description": description, "entries": canonical_entries}
     return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
 
 
