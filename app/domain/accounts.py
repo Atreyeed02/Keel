@@ -1,20 +1,27 @@
 """
-Account creation input.
+Account creation: input validation, then the write.
 
-Accounts are reference data for the ledger: entries point at them, but
-creating one carries no double-entry invariant, so there's no event or
-idempotency handling here — just validation of what the form submitted.
+Creating an account carries no double-entry invariant, so there is no
+idempotency handling here. It does get an event: `create_account_record`
+appends `account.created` alongside the `accounts` row, exactly as
+`post_transaction` appends `transaction.posted`. Without it the event log
+would not contain the accounts every entry points at, and the read model
+could never be rebuilt from the log alone — see `app/domain/rebuild.py`.
 
 `account_type` is closed over the five classical types the schema
 comments reference; the balance-sign logic in the overview page keys
 off it, so an unrecognised value would silently render a wrong balance.
 """
 
+import uuid
+
 from pydantic import BaseModel, Field, ValidationError, field_validator
+from sqlalchemy import insert
+from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.schema import accounts, events
+from app.domain.account_types import ACCOUNT_TYPES  # re-exported for the account form
 from app.domain.errors import describe_validation_error
-
-ACCOUNT_TYPES = ("asset", "liability", "equity", "revenue", "expense")
 
 
 class InvalidAccountError(ValueError):
@@ -56,3 +63,42 @@ def validate_account(data: dict[str, str]) -> AccountInput:
         return AccountInput.model_validate(data)
     except ValidationError as exc:
         raise InvalidAccountError(describe_validation_error(exc)) from exc
+
+
+async def create_account_record(conn: AsyncConnection, account: AccountInput) -> uuid.UUID:
+    """
+    Write a validated account and its `account.created` event.
+
+    Same contract as `post_transaction`: the caller owns the connection's
+    transaction boundary. This issues statements but doesn't commit, so the
+    row and its event land together or not at all.
+
+    The event's `aggregate_id` is the account's id, which is what lets a
+    rebuild recreate the account under the same id — every ledger entry
+    that names it keeps pointing at the right row.
+    """
+    account_id = uuid.uuid4()
+
+    await conn.execute(
+        insert(accounts).values(
+            id=account_id,
+            name=account.name,
+            account_type=account.account_type,
+            currency=account.currency,
+        )
+    )
+    await conn.execute(
+        insert(events).values(
+            id=uuid.uuid4(),
+            aggregate_type="account",
+            aggregate_id=account_id,
+            event_type="account.created",
+            payload={
+                "name": account.name,
+                "account_type": account.account_type,
+                "currency": account.currency,
+            },
+        )
+    )
+
+    return account_id

@@ -3,14 +3,15 @@ Populate an empty ledger with a small, realistic demo dataset.
 
     python -m scripts.seed_demo_data
 
-Everything is written through the domain layer — `validate_account` for
-the chart of accounts, `post_transaction` for the entries — rather than
-by raw INSERT. That matters for more than tidiness: `post_transaction`
-appends the `events` row alongside the read-model rows, so a seeded
-database has the same event log it would have had if a human had typed
-every transaction into the app. A SQL dump would leave the event log
-empty and the event-log page blank, which is precisely the page a demo
-most wants to show.
+Everything is written through the domain layer — `validate_account` and
+`create_account_record` for the chart of accounts, `post_transaction` for
+the entries — rather than by raw INSERT. That matters for more than
+tidiness: both write functions append an `events` row alongside the
+read-model rows, so a seeded database has the same event log it would
+have had if a human had typed everything into the app, and can be
+rebuilt from that log by `app.domain.rebuild.rebuild_read_model`. A SQL
+dump would leave the event log empty and the event-log page blank, which
+is precisely the page a demo most wants to show.
 
 Safe to run repeatedly: it refuses to touch a ledger that already has
 accounts rather than duplicating the dataset.
@@ -20,12 +21,12 @@ import asyncio
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.engine import engine
 from app.db.schema import accounts
-from app.domain.accounts import validate_account
+from app.domain.accounts import create_account_record, validate_account
 from app.domain.ledger import EntryInput, post_transaction
 
 # A one-person consultancy's books: every account type the ledger
@@ -136,17 +137,9 @@ async def seed(conn: AsyncConnection) -> tuple[int, int, int]:
         account = validate_account(
             {"name": name, "account_type": account_type, "currency": currency}
         )
-        # Server-generated id, the same way POST /accounts does it.
-        account_id = uuid.uuid4()
-        await conn.execute(
-            insert(accounts).values(
-                id=account_id,
-                name=account.name,
-                account_type=account.account_type,
-                currency=account.currency,
-            )
-        )
-        account_ids[account.name] = account_id
+        # The same call POST /accounts makes, so the account.created event
+        # is written too.
+        account_ids[account.name] = await create_account_record(conn, account)
 
     entry_count = 0
     for description, lines in DEMO_TRANSACTIONS:

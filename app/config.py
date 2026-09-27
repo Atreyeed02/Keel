@@ -16,5 +16,8 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 10
 
+    # Level for the `keel` JSON logger (app/observability.py)
+    log_level: str = "INFO"
+
 
 settings = Settings()

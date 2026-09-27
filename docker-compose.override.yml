@@ -7,7 +7,16 @@
 # the running container is NOT the shipped artifact — so anything verifying
 # that the image is self-contained (the docker-smoke CI job, any deployment)
 # must bypass this file with `docker compose -f docker-compose.yml`.
+#
+# Long syntax so `create_host_path` can be turned off. With the short form,
+# Compose creates a missing ./app as an empty directory and mounts that over
+# the image's code, so a checkout without it would start a container with no
+# application in it. Now `docker compose up` refuses instead.
 services:
   app:
     volumes:
-      - ./app:/app/app
+      - type: bind
+        source: ./app
+        target: /app/app
+        bind:
+          create_host_path: false

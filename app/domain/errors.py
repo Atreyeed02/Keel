@@ -7,9 +7,8 @@ a traceback and the wrong thing in an inline alert above a form, so every
 handler that renders a validation failure to a person routes it through
 here first.
 
-This module deliberately imports nothing but pydantic: `app.db.schema`
-imports `app.domain.accounts`, which imports this, so anything heavier
-here would put a database import underneath the schema definition.
+This module deliberately imports nothing but pydantic, so any domain
+module can use it without pulling in the database layer.
 """
 
 from pydantic import ValidationError

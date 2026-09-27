@@ -1,8 +1,6 @@
-import hashlib
-import json
 import uuid
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -13,27 +11,40 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import case, func, insert, select
+from sqlalchemy import case, func, select
 
 from app.api.health import router as health_router
 from app.config import settings
 from app.db.engine import engine
-from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
-from app.domain.accounts import ACCOUNT_TYPES, InvalidAccountError, validate_account
+from app.db.schema import accounts, events, ledger_entries, transactions
+from app.domain.accounts import (
+    ACCOUNT_TYPES,
+    InvalidAccountError,
+    create_account_record,
+    validate_account,
+)
 from app.domain.errors import describe_validation_error
+from app.domain.idempotency import (
+    IdempotencyConflictError,
+    post_transaction_once,
+    request_fingerprint,
+)
 from app.domain.ledger import (
     EntryAccountError,
     EntryInput,
     UnbalancedTransactionError,
     assert_balanced,
-    post_transaction,
 )
+from app.observability import configure_logging, log, request_context_middleware
+
+configure_logging(settings.log_level)
 
 app = FastAPI(
     title=settings.app_name,
     description="Event-sourced, double-entry ledger service.",
     version="0.1.0",
 )
+app.middleware("http")(request_context_middleware)
 app.include_router(health_router)
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -66,6 +77,19 @@ def _like_contains(term: str) -> str:
     for char in (_LIKE_ESCAPE, "%", "_"):
         term = term.replace(char, _LIKE_ESCAPE + char)
     return f"%{term}%"
+
+
+def _utc_midnight(day: date) -> datetime:
+    """
+    The instant `day` starts in UTC.
+
+    The date filters compare against this rather than the bare date. Given a
+    date, Postgres casts it to a timestamptz in the *session's* time zone, so
+    the same filter would select different rows depending on how the server
+    was configured. The pages show timestamps in UTC, so UTC days are the
+    ones a person reading them means.
+    """
+    return datetime.combine(day, time.min, tzinfo=UTC)
 
 
 def _transaction_rows():
@@ -265,12 +289,12 @@ async def read_transactions(
             transactions.c.description.ilike(_like_contains(q), escape=_LIKE_ESCAPE)
         )
     if date_from:
-        conditions.append(transactions.c.created_at >= date_from)
+        conditions.append(transactions.c.created_at >= _utc_midnight(date_from))
     if date_to:
         # created_at is a timestamp; a bare `<= date_to` would exclude
         # everything after midnight on the closing day, so the range is
         # half-open against the following day instead.
-        conditions.append(transactions.c.created_at < date_to + timedelta(days=1))
+        conditions.append(transactions.c.created_at < _utc_midnight(date_to + timedelta(days=1)))
 
     count_stmt = select(func.count()).select_from(transactions)
     listing = _transaction_rows()
@@ -350,14 +374,16 @@ async def create_account(
             status_code=422,
         )
     async with engine.begin() as conn:
-        await conn.execute(
-            insert(accounts).values(
-                id=uuid.uuid4(),
-                name=account.name,
-                account_type=account.account_type,
-                currency=account.currency,
-            )
-        )
+        account_id = await create_account_record(conn, account)
+    # after the commit, so the line only ever describes an account that exists
+    log.info(
+        "account.created",
+        extra={
+            "account_id": str(account_id),
+            "account_type": account.account_type,
+            "currency": account.currency,
+        },
+    )
     return RedirectResponse(url="/", status_code=302)
 
 
@@ -407,44 +433,35 @@ async def submit_post_transaction(
         return await invalid(
             describe_validation_error(exc) if isinstance(exc, ValidationError) else str(exc)
         )
-    request_hash = hashlib.sha256(
-        json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
-    ).hexdigest()
+    fingerprint = request_fingerprint(description, raw_entries)
     # post_transaction validates entries against the accounts they name,
     # which needs a connection — so those failures surface here rather than
     # in the pre-flight block above. The engine.begin() context rolls the
-    # whole thing back before the error page is rendered.
+    # whole thing back, idempotency claim included, before the error page
+    # is rendered — so the same key can be resubmitted once it is fixed.
     try:
         async with engine.begin() as conn:
-            saved = (
-                (
-                    await conn.execute(
-                        select(
-                            idempotency_keys.c.request_hash, idempotency_keys.c.response_body
-                        ).where(idempotency_keys.c.key == submission_key)
-                    )
-                )
-                .mappings()
-                .one_or_none()
+            transaction_id, replayed = await post_transaction_once(
+                conn, submission_key, fingerprint, entries, description or None
             )
-            if saved:
-                if saved["request_hash"] != request_hash:
-                    raise HTTPException(
-                        status_code=409, detail="submission key was used for another request"
-                    )
-                transaction_id = uuid.UUID(saved["response_body"]["transaction_id"])
-            else:
-                transaction_id = await post_transaction(conn, entries, description or None)
-                await conn.execute(
-                    insert(idempotency_keys).values(
-                        key=submission_key,
-                        request_hash=request_hash,
-                        response_body={"transaction_id": str(transaction_id)},
-                        response_status="302",
-                    )
-                )
     except EntryAccountError as exc:
+        log.info(
+            "transaction.rejected",
+            extra={"idempotency_key": submission_key, "reason": str(exc)},
+        )
         return await invalid(str(exc))
+    except IdempotencyConflictError as exc:
+        log.warning("idempotency.conflict", extra={"idempotency_key": submission_key})
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    log.info(
+        "transaction.replayed" if replayed else "transaction.posted",
+        extra={
+            "transaction_id": str(transaction_id),
+            "idempotency_key": submission_key,
+            "entry_count": len(entries),
+            "account_ids": sorted({str(e.account_id) for e in entries}),
+        },
+    )
     return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
 
 

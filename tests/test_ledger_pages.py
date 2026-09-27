@@ -4,13 +4,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
-from app.db.schema import accounts, metadata, transactions
+from app.db.schema import accounts, events, metadata, transactions
 from app.domain.ledger import EntryAccountError
 from app.main import app
+from tests.support import reset_schema
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -22,8 +23,7 @@ async def database(monkeypatch):
     test_engine = create_async_engine(TEST_DATABASE_URL)
     monkeypatch.setattr("app.main.engine", test_engine)
     async with test_engine.begin() as conn:
-        await conn.run_sync(metadata.drop_all)
-        await conn.run_sync(metadata.create_all)
+        await reset_schema(conn)
         cash_id, revenue_id = uuid.uuid4(), uuid.uuid4()
         await conn.execute(
             insert(accounts),
@@ -87,6 +87,36 @@ async def test_created_account_appears_in_overview(database):
     assert created.headers["location"] == "/"
     assert overview.status_code == 200
     assert "Office rent" in overview.text
+
+
+async def test_created_account_is_recorded_in_the_event_log(database):
+    """
+    POST /accounts appends an account.created event carrying everything a
+    rebuild needs to recreate the row — including its id, as aggregate_id.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/accounts",
+            data={"name": "Office rent", "account_type": "expense", "currency": "usd"},
+        )
+    async with main_module.engine.connect() as conn:
+        account = (
+            (await conn.execute(select(accounts).where(accounts.c.name == "Office rent")))
+            .mappings()
+            .one()
+        )
+        event = (
+            (await conn.execute(select(events).where(events.c.event_type == "account.created")))
+            .mappings()
+            .one()
+        )
+    assert event["aggregate_type"] == "account"
+    assert event["aggregate_id"] == account["id"]
+    # normalised values, not the raw form input ("usd")
+    assert event["payload"] == {"name": "Office rent", "account_type": "expense", "currency": "USD"}
+    # the row and its event were written in one database transaction
+    assert event["created_at"] == account["created_at"]
 
 
 async def test_invalid_account_type_renders_inline_error(database):
@@ -382,6 +412,32 @@ async def test_transactions_date_range_filter(database):
     assert "June entry" not in march.text
 
 
+async def test_date_range_uses_utc_days_whatever_the_session_time_zone(database, monkeypatch):
+    # UTC-11. Were the bare dates bound, Postgres would read "2026-03-31" as
+    # 11:00 UTC that day: the early-morning row would fall outside the range
+    # and the next day's early row inside it.
+    engine = create_async_engine(
+        TEST_DATABASE_URL, connect_args={"server_settings": {"timezone": "Pacific/Pago_Pago"}}
+    )
+    monkeypatch.setattr("app.main.engine", engine)
+    try:
+        await _insert_transactions(
+            ["Early on the 31st"], base=datetime(2026, 3, 31, 2, 0, tzinfo=UTC)
+        )
+        await _insert_transactions(
+            ["Early on the 1st"], base=datetime(2026, 4, 1, 5, 0, tzinfo=UTC)
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            day = await client.get(
+                "/transactions", params={"date_from": "2026-03-31", "date_to": "2026-03-31"}
+            )
+    finally:
+        await engine.dispose()
+    assert day.status_code == 200
+    assert "Early on the 31st" in day.text
+    assert "Early on the 1st" not in day.text
+
+
 async def test_transactions_pagination_beyond_page_one(database):
     # 30 rows against a page size of 25 => 25 on page 1, 5 on page 2
     base = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
@@ -537,3 +593,22 @@ async def test_description_filter_treats_wildcards_literally(database):
     assert "1 transaction matching" in percent_term.text
     assert "50% off winter sale" in percent_term.text
     assert "5000 units shipped" not in percent_term.text
+
+
+async def test_description_search_can_use_the_trigram_index(database):
+    """
+    The planner would pick a sequential scan on a table this small anyway,
+    so seq scans are switched off for the check: what matters is that the
+    index can serve the page's exact predicate, ILIKE with ESCAPE and a
+    leading wildcard, which no btree index could.
+    """
+    search = select(transactions.c.id).where(
+        transactions.c.description.ilike(
+            main_module._like_contains("50% off"), escape=main_module._LIKE_ESCAPE
+        )
+    )
+    async with main_module.engine.begin() as conn:
+        await conn.execute(text("SET LOCAL enable_seqscan = off"))
+        compiled = search.compile(conn.sync_engine, compile_kwargs={"literal_binds": True})
+        plan = "\n".join((await conn.scalars(text(f"EXPLAIN {compiled}"))).all())
+    assert "ix_transactions_description_trgm" in plan, plan

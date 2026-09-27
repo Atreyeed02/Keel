@@ -10,8 +10,9 @@ Posting a transaction does two things atomically:
   1. Appends an `events` row (the source-of-truth log).
   2. Writes the `transactions` + `ledger_entries` rows (the read model).
 
-If step 2 ever needs to be rebuilt, it's replayed from `events` —
-that's the whole point of keeping them separate.
+If step 2 ever needs to be rebuilt, it's replayed from `events` by
+`app.domain.rebuild.rebuild_read_model` — that's the whole point of
+keeping them separate.
 """
 
 import uuid

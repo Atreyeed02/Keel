@@ -4,7 +4,7 @@ A complete walkthrough of what this service is, the accounting and
 event-sourcing ideas it is built on, what every file does, and what is
 still missing.
 
-Written against commit `7a4bb37`.
+Last brought up to date on 2026-09-24.
 
 ---
 
@@ -32,11 +32,13 @@ Two design commitments drive everything else:
 
 **Money is conserved.** Every transaction is a set of debit and credit
 entries that must net to zero. There is no way to write a transaction
-that creates or destroys value, because the code rejects it before the
-database is touched.
+that creates or destroys value: the code rejects it before the database
+is touched, and the database itself refuses to commit one even from a
+writer that bypasses the code (§5.2).
 
-**History is immutable.** Nothing is ever updated in place. Every change
-is appended to an `events` log. The tables you query for balances are a
+**History is immutable.** Nothing in the log is ever updated in place.
+Every change is appended to an `events` log, which Postgres refuses to
+UPDATE, DELETE or TRUNCATE. The tables you query for balances are a
 *derived projection* of that log, not the truth itself.
 
 The contrast this is built against: a naive ledger stores a `balance`
@@ -189,13 +191,13 @@ The database holds two logically distinct things:
 
 ```
 events                      ← append-only source of truth
-  ├─ id, aggregate_type, aggregate_id
-  ├─ event_type ("transaction.posted")
-  └─ payload (JSONB — the full transaction as submitted)
+  ├─ id, sequence, aggregate_type, aggregate_id
+  ├─ event_type ("account.created" | "transaction.posted")
+  └─ payload (JSONB — the account, or the full transaction as submitted)
 
+accounts                    ← derived read model
 transactions                ← derived read model
 ledger_entries              ← derived read model
-accounts                    ← reference data
 ```
 
 The **event log** records *what happened*, as it happened, forever. It is
@@ -207,15 +209,24 @@ explicitly:
 # a compensating event gets appended, not a mutation.
 ```
 
-The **read model** (`transactions` + `ledger_entries`) is shaped for
-fast queries — balances, transaction detail, account listings. It is
-*derived* information: in principle it could be deleted entirely and
-rebuilt by replaying every event in order.
+For a long time that comment was the only enforcement. Migration
+`7d2e4b9c1a58` added a statement-level trigger, `events_append_only`,
+that raises on any UPDATE, DELETE or TRUNCATE of `events`, so the rule
+now holds for a `psql` session or a stray migration too. It is
+statement-level because TRUNCATE fires no row triggers. DROP TABLE is
+not blocked: that is a schema change, not a rewrite of history.
+
+The **read model** (`accounts` + `transactions` + `ledger_entries`) is
+shaped for fast queries — balances, transaction detail, account listings.
+It is *derived* information: it can be deleted entirely and rebuilt by
+replaying every event in order, and `rebuild_read_model()` does exactly
+that (§3.3).
 
 ### 3.2 Why both are written in one transaction
 
 `post_transaction()` writes the event **and** the read-model rows inside
-the caller's database transaction:
+the caller's database transaction (`create_account_record()` does the
+same for accounts, appending `account.created`):
 
 ```python
 await conn.execute(insert(transactions).values(id=txn_id, description=description))
@@ -237,19 +248,137 @@ function **does not commit**; its docstring explains why:
 > idempotency check wrapping it in the same DB transaction.
 
 That is a deliberate composability choice. The route handler opens
-`engine.begin()`, does the idempotency lookup, calls `post_transaction`,
-writes the idempotency record, and only then commits — all atomic.
+`engine.begin()` and calls `post_transaction_once` (§4), which claims the
+idempotency key, calls `post_transaction` and records the result. Only
+then does the handler commit, so all of it lands atomically or none of it
+does. `tests/test_ledger_invariants.py` checks this directly: a failure
+raised *after* `post_transaction` has written its rows, but before
+commit, leaves no transaction, no entry and no event behind.
 
-### 3.3 Rebuildability: the aspiration vs. the current reality
+### 3.3 Rebuildability: tested, with one known limit
 
-The README says the read model is "always rebuildable from events". The
-*data* supports that — the event payload contains every entry with
-account id, side, amount and currency.
+`app/domain/rebuild.py` provides `rebuild_read_model(conn)`. It truncates
+`ledger_entries`, `transactions` and `accounts` in one `TRUNCATE ...
+RESTART IDENTITY` (listing all three at once is what makes it FK-safe),
+then replays `events`: every `account.created` first, then everything
+else, each group in `sequence` order (why accounts go first is under
+*Accounts from before the event*, below):
 
-**But no replay code exists.** There is no function that reads the
-`events` table and reconstructs `transactions` / `ledger_entries`. The
-property is currently a claim about the data layout, not a tested
-capability. This is listed in §8.
+| `event_type` | Replay |
+|---|---|
+| `account.created` | insert into `accounts` with `id = aggregate_id` |
+| `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item |
+| anything else | raise `UnknownEventError` — a rebuild that silently skipped an event would disagree with the log |
+
+Account and transaction ids are the events' `aggregate_id`s, so they come
+back unchanged: every entry still points at the right account, and
+anything holding a transaction id (a detail-page URL, a stored
+idempotency response) still resolves. Each row takes its event's
+`created_at`, which is the value it originally had — row and event were
+written in one database transaction and Postgres `now()` is
+transaction-start time.
+
+```
+events (append-only, ordered by sequence)
+  │  seq 1  account.created     aggregate_id = <cash id>
+  │  seq 2  account.created     aggregate_id = <revenue id>
+  │  seq 3  transaction.posted  aggregate_id = <txn id>  payload: entries[]
+  │  ...
+  ▼
+rebuild_read_model(conn)            one database transaction
+  1. TRUNCATE ledger_entries, transactions, accounts RESTART IDENTITY
+  2. SELECT * FROM events ORDER BY (event_type <> 'account.created'), sequence
+  3. for each event:
+       account.created    → INSERT accounts
+       transaction.posted → INSERT transactions + ledger_entries
+       anything else      → raise UnknownEventError (whole replay rolls back)
+  ▼
+accounts / transactions / ledger_entries      the rebuilt projection
+  (balance trigger re-checks every replayed transaction at commit)
+```
+
+It follows the `post_transaction` contract: it issues statements, does
+not commit and does not open its own transaction. A replay that fails
+part-way rolls back with the caller's transaction and the old read model
+survives. It is deliberately **not** exposed over HTTP; who may trigger a
+whole-database rewrite is a separate decision.
+
+**Running it.** `python -m scripts.rebuild_read_model` reports the current
+row counts and changes nothing. With `--yes` it replays, then prints the
+counts before and after plus every account whose balance the rebuild
+changed. On a healthy ledger that list is empty. A non-empty list means
+the projection had drifted from the log (a row deleted or edited around
+the app) and the rebuild corrected it.
+
+**Rebuilding while the app serves.** The `TRUNCATE` takes an ACCESS
+EXCLUSIVE lock on the three read-model tables and holds it until the
+rebuild commits. A posting that arrives mid-rebuild therefore blocks on
+its first read of `accounts`, then continues against the rebuilt tables.
+Its event is appended after the replay's snapshot of the log, so it is
+neither replayed twice nor lost. The cost is that requests wait for as
+long as the replay takes.
+
+**What proves it.** All in `tests/test_rebuild.py`, Postgres-backed, so CI
+runs them on every push:
+
+- `test_rebuild_reproduces_the_read_model` builds a ledger through the
+  demo seed, `POST /accounts` and `POST /post-transaction` (all five
+  account types, three currencies, one transaction that moves two
+  currencies at once, one with no description), snapshots it, rebuilds,
+  and requires every account, transaction (in posting order), entry,
+  per-account balance, per-currency total and the rendered `/` and
+  `/transactions` pages to be identical.
+- `test_rebuild_repairs_a_corrupted_read_model` damages the projection
+  around the app (a whole transaction's rows deleted, an account renamed,
+  an account row no event created), checks that the damage is visible,
+  then requires the rebuild to restore the original snapshot exactly.
+- `test_rebuild_is_repeatable_and_posting_continues_after_it`: two
+  rebuilds in a row give identical results, and a posting made afterwards
+  continues the renumbered `transactions.sequence` and lists first.
+- `test_a_posting_during_a_rebuild_waits_for_it_and_is_not_lost` holds a
+  rebuild uncommitted, starts a posting, and watches `pg_stat_activity`
+  until that posting is waiting on a lock. It then commits, and requires
+  the posting to succeed and to survive a further rebuild.
+- `test_rebuild_script_refuses_without_confirmation_then_repairs` covers
+  the CLI.
+- `test_backfill_makes_a_legacy_ledger_rebuildable` and
+  `test_backfill_and_rebuild_scripts_on_a_legacy_ledger` cover the
+  backfill, below.
+
+**Accounts from before the event.** Until `account.created` was
+introduced, account creation appended nothing, so an older database has
+accounts with no event. Replaying its log would fail on the
+`ledger_entries.account_id` foreign key, and an unused account would
+silently vanish. `backfill_account_events(conn)`
+(`python -m scripts.backfill_account_events --yes`) appends an
+`account.created` for every account without one, recorded as the read
+model describes it now. `scripts/rebuild_read_model.py` checks for
+accounts the log uses but never creates, and refuses up front with a
+pointer to the backfill instead of failing part-way.
+
+Two details make the backfilled log replay correctly:
+
+- A backfilled event is appended *now*, so its `sequence` is later than
+  the transactions that use the account. That is why replay takes
+  account events first. Creating an account depends on nothing and
+  nothing but creation happens to one, so for a log with no backfilled
+  events this gives the same result as strict order. With strict order
+  the backfill test fails on the foreign key; that was checked.
+- The event's own `created_at` is when it was appended, which keeps the
+  log honest. The account's original `created_at` travels in the payload,
+  with `"backfilled": true`, and replay restores it from there.
+
+**The limit.**
+
+- **`ledger_entries.id` is not reproduced.** The `transaction.posted`
+  payload never carried entry ids, so replay mints new ones. Nothing
+  depends on a particular value: no foreign key references
+  `ledger_entries`, and no query or template looks an entry up by id. The
+  one visible effect is ordering — the transaction-detail page sorts a
+  transaction's entries by `(created_at, id)`, all of a transaction's
+  entries share `created_at`, so their order within the debit and credit
+  columns is decided by the random id and can change across a rebuild.
+  (It was already arbitrary rather than submission order.)
 
 ---
 
@@ -271,30 +400,107 @@ request:
 | `response_body`   | what was returned the first time (JSONB) |
 | `response_status` | the status code returned |
 
-The logic in `app/main.py`:
+The logic lives in `app/domain/idempotency.py`. `request_fingerprint()`
+hashes the request as submitted:
 
 ```python
-request_hash = hashlib.sha256(
+hashlib.sha256(
     json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
 ).hexdigest()
 ```
 
-then, inside the transaction:
+`sort_keys=True` matters: it makes the JSON serialisation deterministic,
+so the same logical request always hashes identically. The hash is over
+the raw form values, so `"100"` and `"100.00"` are different requests.
+That is deliberately strict: a client reusing a key should be resending
+the same bytes.
 
-- **Key not seen** → post the transaction, store key + hash + result.
-- **Key seen, hash matches** → a genuine retry. Return the *original*
-  transaction id without posting again.
-- **Key seen, hash differs** → the same key was reused for a *different*
-  request. Raise `409 Conflict` — this is a client bug and silently
+Then `post_transaction_once()`, inside the handler's transaction,
+**claims the key before posting anything**:
+
+```sql
+INSERT INTO idempotency_keys (key, request_hash) VALUES (...)
+ON CONFLICT (key) DO NOTHING
+RETURNING key
+```
+
+- **The claim succeeds** → this request owns the key. Post the
+  transaction, store its id on the key row, commit.
+- **The claim conflicts, hash matches** → a genuine retry. Return the
+  *original* transaction id without posting again.
+- **The claim conflicts, hash differs** → the same key was reused for a
+  *different* request. `409 Conflict`: this is a client bug, and silently
   accepting it would hide it.
 
-`sort_keys=True` matters: it makes the JSON serialisation deterministic,
-so the same logical request always hashes identically.
+**Why claim first.** The earlier version looked the key up with a plain
+`SELECT` and only inserted it after posting. Under concurrency that has a
+gap: two requests with the same key can both see "no such key" and both
+post. The primary key on `idempotency_keys` still stopped the second one
+committing, so the ledger never double-posted. But that request died with
+an unhandled `IntegrityError`, a 500, when it should have been answered
+with the original result. Reproduced before the fix: five concurrent
+duplicates returned `[500, 302, 500, 500, 500]`.
+
+Claiming first closes the gap because of how Postgres handles a
+unique-index conflict with a row another transaction has not committed
+yet: the second `INSERT` **waits** for the first transaction to end.
+
+```
+request A                               request B (same key)
+─────────                               ────────────────────
+BEGIN                                   BEGIN
+INSERT key … ON CONFLICT DO NOTHING
+  → claimed                             INSERT key … ON CONFLICT DO NOTHING
+post_transaction(...)                     → blocks on A's uncommitted key row
+UPDATE key SET response_body = …                    │
+COMMIT ─────────────────────────────────────────────┘
+                                          → conflict: DO NOTHING
+                                        SELECT key   (new snapshot: sees A's row)
+                                          hash matches → A's transaction id
+                                        COMMIT  (wrote nothing)
+```
+
+If A rolls back instead (its entries named a nonexistent account, say),
+its claim vanishes with it, B's insert succeeds, and B posts. A rejected
+attempt never burns the key. The claim, the posting and the stored result
+share one database transaction, so no other request can ever observe a
+key that is claimed but has no result.
 
 The form supplies the key via a hidden `submission_key` field generated
 when the page is rendered, so a double-submit (double-click, browser
-refresh) carries the same key and collapses into one posting. This is
-covered by `test_idempotent_retry_returns_same_transaction_id`.
+refresh) carries the same key and collapses into one posting.
+
+**What proves it.** `tests/test_idempotency.py`:
+
+| Test | Case |
+|---|---|
+| `test_retry_writes_the_ledger_exactly_once` | same key, same payload, retried: one transaction, two entries, one event |
+| `test_same_key_with_a_different_payload_is_a_409` | conflicting payload: 409, stored result untouched |
+| `test_a_rejected_attempt_does_not_consume_the_key` | a 422 releases the key; the fixed resubmission posts |
+| `test_concurrent_duplicates_commit_one_effect` | five simultaneous duplicates: all 302 to the same transaction |
+| `test_concurrent_conflicting_payloads_post_one_and_reject_the_other` | simultaneous conflicting payloads: one 302, one 409, never a mix |
+| `test_fingerprint_is_deterministic_and_strict` | the hash ignores key order and nothing else |
+| `test_pruning_deletes_only_expired_keys_and_keeps_the_ledger` | retention removes old keys only; transactions and events stay |
+| `test_a_pruned_key_no_longer_recognises_its_retry` | past the window, a retry posts again: the trade-off, pinned down |
+| `test_pruning_refuses_a_window_under_a_day` | the retention floor |
+| `test_prune_script_counts_then_deletes` | the CLI |
+
+The concurrent tests are deterministic. An `asyncio.Barrier` holds every
+request just before it touches the key and releases them together, so
+all of them reach the check at the same moment. The two concurrent tests fail against the old
+SELECT-then-INSERT code, with the 500s shown above.
+
+**Retention.** `idempotency_keys` gains a row per posting.
+`prune_idempotency_keys(conn, older_than)` deletes keys claimed longer
+ago than `older_than`, measured on the database clock that stamped
+`created_at` and backed by `ix_idempotency_keys_created_at` (migration
+`9b1f6e2c8a47`). `python -m scripts.prune_idempotency_keys --yes` runs it
+with a 30-day default, meant for a schedule. Transactions and events are
+untouched. What goes is the ability to recognise a retry: resubmitting a
+pruned key posts again. So the window must outlast any client's retry
+window, and the function refuses anything under a day. A claim not yet
+committed is invisible to the DELETE, so an in-flight posting never loses
+its key.
 
 **Scope note:** idempotency applies only to `POST /post-transaction`. It
 deliberately does *not* apply to account creation — it exists to protect
@@ -312,7 +518,9 @@ app/
 ├── db/schema.py       SQLAlchemy Core table definitions
 ├── db/engine.py       async engine, connection helpers
 ├── domain/ledger.py   double-entry invariant + posting
-├── domain/accounts.py account input validation
+├── domain/accounts.py account input validation + creation
+├── domain/account_types.py  the closed set of account types
+├── domain/rebuild.py  replays the event log into the read model (§3.3)
 ├── templates/         Jinja2 server-rendered pages
 ├── config.py          settings via pydantic-settings
 └── main.py            app wiring + all page routes
@@ -387,7 +595,7 @@ for many entity kinds.
 > `created_at` stays as the human-facing timestamp: it is what the event
 > log *displays*, while `sequence` is what it *sorts by*.
 
-**`accounts`** — reference data.
+**`accounts`** — one row per `account.created` event.
 
 | Column | Type | Note |
 |---|---|---|
@@ -401,15 +609,16 @@ An account's `currency` is fixed at creation and never updated, which
 makes it the authority on what that account holds: `post_transaction()`
 rejects any entry whose currency differs from it, so an account cannot
 accumulate two currencies and the overview's per-account balance is a
-single meaningful figure by construction. This is enforced in the domain
-layer, like the balance invariant, not by a database constraint.
+single meaningful figure by construction. Unlike the balance invariant,
+this is enforced only in the domain layer, not by a database constraint.
 
 `account_type` carries a database `CHECK` (`ck_account_type_valid`,
 added by migration `de4f1aec2fe6`) restricting it to the five types, so
 a write that bypasses `app/domain/accounts.py` is rejected by Postgres
 rather than silently mis-signing a balance. `app/db/schema.py` generates
-the constraint from that module's `ACCOUNT_TYPES` tuple, so the two
-cannot drift.
+the constraint from the `ACCOUNT_TYPES` tuple in
+`app/domain/account_types.py` — the same tuple the validator checks — so
+the two cannot drift.
 
 **`transactions`** — id, optional description, created_at. Deliberately
 thin; all the money lives in the entries.
@@ -436,11 +645,47 @@ Two details worth understanding:
   a credit, not a negative debit. This removes a whole class of
   sign-confusion bugs.
 
-The file notes what is *not* enforced here:
+**The balance rule is enforced twice.** `assert_balanced` in
+`app/domain/ledger.py` checks it before anything is written, and that is
+what turns a bad form submission into a readable error. Behind it, since
+migration `7d2e4b9c1a58`, sits a constraint trigger,
+`ledger_entries_balanced`, which holds for every writer: a migration, a
+manual `INSERT`, a future importer.
 
-> Double-entry balance (sum(debits) == sum(credits) per transaction)
-> is enforced in app/domain/ledger.py at write time, not here — a
-> DB-level trigger is a reasonable v2 hardening step.
+- It is `DEFERRABLE INITIALLY DEFERRED`, so it runs at **commit**. A
+  transaction's entries arrive one row at a time and only balance once
+  the last one is in.
+- It sums per `(transaction_id, currency)`, so 100 USD against 100 EUR is
+  rejected just as `assert_balanced` rejects it.
+- An UPDATE re-checks both the old and the new `transaction_id`, because
+  moving an entry unbalances the transaction it left.
+- It fires per row, so a four-entry transaction runs four checks at
+  commit, each an index lookup on `ix_ledger_entries_transaction_id`.
+- Its error names the transaction, the amount it is off by and the
+  currency, with SQLSTATE `23514` (`IntegrityError` in SQLAlchemy).
+- What it cannot catch: a `transactions` row with **no** entries at all,
+  because there is no entry row for it to fire on. Such a row moves no
+  money, so balances are unaffected.
+
+**So is the account-currency rule.** `assert_accounts_valid` refuses an
+entry whose currency differs from its account's, with a readable error.
+Since migration `3c9e5a7b2d14`, two triggers hold the rule for every
+other writer:
+
+- `ledger_entries_match_account_currency`, a `BEFORE INSERT OR UPDATE`
+  row trigger, looks the entry's account up and refuses a mismatch. An
+  entry naming a nonexistent account is left to the foreign key, which
+  reports that more precisely.
+- `accounts_currency_immutable` refuses an UPDATE that changes an
+  account's currency. Checking entries alone would miss this: rewriting
+  the account would put every entry already on it in violation without
+  touching a single entry row. Renaming an account is still allowed.
+
+All of these triggers are declared twice, in the migrations and in
+`app/db/schema.py` (as `after_create` listeners, so `metadata.create_all`
+in the tests builds them too), for the same reason the indexes are. The
+two copies were checked to produce byte-identical function bodies and
+trigger definitions.
 
 **`idempotency_keys`** — described in §4.
 
@@ -527,15 +772,19 @@ touches the database.
 
 ### 5.5 `app/domain/accounts.py`
 
-Mirrors the shape of `ledger.py` — a Pydantic model plus a validation
-entry point, kept out of the route handler.
+Mirrors the shape of `ledger.py` — a Pydantic model, a validation entry
+point, and a write function, all kept out of the route handler.
 
 ```python
 ACCOUNT_TYPES = ("asset", "liability", "equity", "revenue", "expense")
 ```
 
 An **ordered tuple**, not a set, because the `<select>` in the form
-renders from it and a set has no stable order.
+renders from it and a set has no stable order. It lives in its own
+import-free module, `app/domain/account_types.py`, and `accounts.py`
+re-exports it: `schema.py` builds its `CHECK` constraint from the tuple,
+and `accounts.py` imports `schema.py` for its tables, so keeping the
+constant in `accounts.py` would make the two import each other.
 
 `AccountInput` normalises as it validates: `name` is stripped and capped
 at 255 (matching the column width, so over-long input is a 422 rather
@@ -561,12 +810,19 @@ The reason: rendering `str()` of a raw `ValidationError` into a form's
 alert box produces a multi-line internal dump. This produces
 `account_type must be one of: asset, liability, equity, revenue, expense`.
 
+`create_account_record(conn, account)` is the write, and has the same
+contract as `post_transaction`: it inserts the `accounts` row, appends an
+`account.created` event (`aggregate_type="account"`,
+`aggregate_id=<account id>`, payload `name` / `account_type` /
+`currency`), and does not commit. The event is what lets a rebuild
+recreate the account under its original id (§3.3).
+
 It lives in its own module rather than in `accounts.py` because the
 transaction form needs it too — `submit_post_transaction` routes
 `ValidationError` through the same helper, so a malformed amount renders
 `amount input should be a valid decimal` instead of pydantic's dump.
-`app/domain/errors.py` imports nothing but pydantic on purpose:
-`app/db/schema.py` imports `app.domain.accounts`, which imports it.
+`app/domain/errors.py` imports nothing but pydantic on purpose, so any
+domain module can use it without pulling in the database layer.
 
 ### 5.6 `app/api/health.py`
 
@@ -585,8 +841,9 @@ database. See §5.13.
 
 ### 5.7 `app/main.py` — wiring and routes
 
-**Setup.** Creates the FastAPI app, mounts `/static`, points Jinja2 at
-`templates/`, and registers a custom filter:
+**Setup.** Configures the JSON logger and registers the request-id
+middleware (§5.15), creates the FastAPI app, mounts `/static`, points
+Jinja2 at `templates/`, and registers a custom filter:
 
 ```python
 def _money(value: Decimal | None) -> str:
@@ -648,8 +905,11 @@ currency:   list[str] = Form(...),
 ```
 
 zipped with `strict=True` (Python 3.10+) so mismatched lengths raise
-rather than silently truncating. Then validation, then the idempotency
-logic of §4.
+rather than silently truncating. Then validation, then
+`post_transaction_once` (§4) inside `engine.begin()`. The handler maps
+its outcomes to HTTP: `EntryAccountError` becomes the 422 form,
+`IdempotencyConflictError` a 409, and success a 302. After the commit it
+logs `transaction.posted` or `transaction.replayed`.
 
 **`GET /transaction-detail/{id}`** — loads the transaction, joins entries
 to account names, splits them into debit and credit lists, totals each
@@ -706,6 +966,24 @@ three `events` indexes.
 `de4f1aec2fe6_read_model_indexes_and_account_type_check.py` indexes the
 read model — `ledger_entries(account_id)`, `ledger_entries(transaction_id)`
 and `transactions(created_at DESC)` — and adds the `account_type` `CHECK`.
+`fca143a4d6d9_transactions_sequence_identity_column.py` gives
+`transactions` its own identity `sequence`, which every listing sorts by.
+`7d2e4b9c1a58_enforce_append_only_events_and_balanced_entries.py` adds
+the two triggers described in §5.2, and
+`3c9e5a7b2d14_enforce_account_currency_in_the_database.py` the two
+account-currency triggers. Their SQL is spelled out literally rather than
+imported from `schema.py`, because a migration must keep producing the
+DDL it produced the day it was written.
+`9b1f6e2c8a47_index_idempotency_keys_created_at.py` backs the retention
+cleanup (§4).
+`5e8d2a1f9c63_trigram_index_on_transaction_descriptions.py` installs
+`pg_trgm` and adds a GIN trigram index on `transactions.description`. The
+`/transactions` search is `ILIKE '%term%'`, and a leading wildcard rules
+out any btree index, so before this every search read the whole table.
+On 100,000 rows the planner now uses the index unprompted: a bitmap
+index scan, about 1.4 ms. `pg_trgm` is a trusted extension from
+PostgreSQL 13 on, so the database owner can install it without superuser
+rights. Downgrade drops the index and leaves the extension installed.
 
 The interesting part is `alembic/env.py`:
 
@@ -735,15 +1013,30 @@ accounts across all five types and 10 transactions, including one in EUR
 and one three-legged entry.
 
 The key decision is that it writes **through the domain layer** —
-`validate_account` and `post_transaction` — rather than by raw `INSERT`.
-Because `post_transaction` appends the `events` row, a seeded database
-has the event log it would have had if a human had typed every
-transaction into the app. A SQL dump would leave `events` empty and the
-event-log page blank.
+`validate_account`, `create_account_record` and `post_transaction` —
+rather than by raw `INSERT`. Because the two write functions append the
+`events` rows, a seeded database has the event log it would have had if a
+human had typed everything into the app, and can be rebuilt from it. A
+SQL dump would leave `events` empty and the event-log page blank.
 
 It is **idempotent by refusal**: it counts `accounts` first and exits with
 a message if any exist, so a second run cannot duplicate data. The whole
 dataset is written inside one `engine.begin()` block.
+
+**`scripts/rebuild_read_model.py`** is the operator entry point for §3.3.
+Without `--yes` it reports row counts and exits non-zero having changed
+nothing. With `--yes` it replays inside one transaction and reports what
+changed. Either way it first refuses a log that names accounts it never
+created.
+
+**`scripts/prune_idempotency_keys.py`** deletes idempotency keys older
+than the retention window (§4), 30 days unless `--older-than-days` says
+otherwise. Without `--yes` it only counts them.
+
+**`scripts/backfill_account_events.py`** appends `account.created` for
+accounts that predate the event (§3.3). Without `--yes` it lists them;
+with `--yes` it appends their events. On a database with nothing to
+backfill it does nothing.
 
 ### 5.11 `tests/`
 
@@ -751,11 +1044,20 @@ dataset is written inside one `engine.begin()` block.
 |---|---|---|
 | `test_ledger_domain.py` | no | the balance invariant, per-currency independence, amount/type validation |
 | `test_health.py` | no | health endpoint always answers |
-| `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation, overview |
+| `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters (UTC day boundaries under any session time zone) and pagination, `sequence` ordering, the trigram index behind the search |
+| `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads, key retention and its CLI (§4) |
+| `test_ledger_invariants.py` | **yes** | every database trigger (balance, account currency, append-only log) against writes that bypass the app; atomic rollback; log and read model agree; trial balance nets to zero |
+| `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; both CLIs |
+| `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
+| `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 
-`test_ledger_pages.py` skips unless `TEST_DATABASE_URL` is set, then
-creates and drops the whole schema around each test for isolation. It
-drives the app in-process through `httpx.ASGITransport` — no real network
+The Postgres-backed tests skip unless `TEST_DATABASE_URL` is set, then
+create and drop the whole schema around each test for isolation. They do
+that through `tests/support.py`'s `reset_schema`, which refuses to run on
+a database with an `alembic_version` table: `metadata.drop_all` would
+leave the stamp behind, and the database would claim to be at head with
+no tables in it. They
+drive the app in-process through `httpx.ASGITransport` — no real network
 or server.
 
 `pyproject.toml` sets `asyncio_mode = "auto"`, so `async def` tests run
@@ -786,7 +1088,10 @@ so `docker compose up` is dev mode by default. The consequence is that a
 plain `docker compose up` is *not* running the shipped artifact, so
 anything proving the image is self-contained must bypass it — the
 `docker-smoke` job pins `COMPOSE_FILE: docker-compose.yml` for exactly
-that reason.
+that reason. The mount uses the long syntax with `create_host_path:
+false`: the short form would create a missing `./app` as an empty
+directory and mount it over the image's code, where this form refuses to
+start.
 
 ### 5.13 `.github/workflows/ci.yml`
 
@@ -815,6 +1120,51 @@ when the database is down (§5.6), a status-code check would go green over
 a failed migration. Verified by stopping the db container: `/health` still
 returned **HTTP 200** with `{"status":"degraded","db":"down"}`.
 
+### 5.14 `app/domain/idempotency.py`
+
+`request_fingerprint()` and `post_transaction_once()`, both described in
+§4, plus `IdempotencyConflictError`. The code used to live inline in the
+route handler. It moved out when the claim-first rewrite made it worth
+testing on its own, and so that a future JSON endpoint can reuse it
+rather than copy it. It takes the same "caller owns the transaction"
+contract as `post_transaction`, and for the same reason: the claim only
+protects anything if it commits atomically with the posting it guards.
+
+### 5.15 `app/observability.py`
+
+Structured logging, kept deliberately small: the standard library only,
+no metrics, no tracing.
+
+- `JsonFormatter` writes one JSON object per line. Fields passed with
+  `extra=` become top-level keys, and the current request id is added
+  automatically.
+- `request_context_middleware` gives every request an id. It uses the
+  client's `X-Request-ID` if that is 1–128 characters of
+  `[A-Za-z0-9._-]`, otherwise it generates one. A supplied id goes
+  straight into log lines, so one that could break them is not trusted.
+  The id is kept in a `ContextVar` for the duration of the request,
+  echoed back in the response's `X-Request-ID` header, and a
+  `request.completed` line is logged with method, path, status and
+  duration.
+- `configure_logging()` attaches the handler to the `keel` logger only,
+  with `propagate = False` so the lines stay out of uvicorn's own
+  handlers. Level comes from `LOG_LEVEL` (default `INFO`).
+
+What gets logged, always after the commit, so a line never describes a
+write that rolled back:
+
+| Event | Fields |
+|---|---|
+| `account.created` | `account_id`, `account_type`, `currency` |
+| `transaction.posted` / `transaction.replayed` | `transaction_id`, `idempotency_key`, `entry_count`, `account_ids` |
+| `transaction.rejected` | `idempotency_key`, `reason` |
+| `idempotency.conflict` (warning) | `idempotency_key` |
+| `request.completed` / `request.failed` | `method`, `path`, `status`, `duration_ms` |
+
+The event's own id is not logged: `post_transaction` does not return it.
+`transaction_id` is the event's `aggregate_id`, which is enough to find
+it.
+
 ---
 
 ## 6. Two request walkthroughs
@@ -828,9 +1178,11 @@ Browser form
       → AccountInput validators strip, upper-case, check membership
       → on failure: InvalidAccountError with a flat message
           → re-render form, values preserved, HTTP 422
-  → uuid.uuid4() server-side
-  → engine.begin(): INSERT INTO accounts
-  → commit
+  → engine.begin(): create_account_record(conn, account)
+                     ├─ uuid.uuid4() server-side
+                     ├─ INSERT accounts
+                     └─ INSERT events (account.created)
+  → commit  (row and event together)
   → 302 redirect to /
 ```
 
@@ -843,17 +1195,21 @@ Browser form (repeated fields → lists)
   → assert_balanced(entries)            (per-currency netting)
   → require >= 2 entries
       → any failure: re-render with values + inline error, HTTP 422
-  → sha256 of the canonical request JSON
-  → engine.begin():
-        lookup submission_key in idempotency_keys
-          ├─ found, hash matches  → reuse stored transaction id
-          ├─ found, hash differs  → HTTP 409
-          └─ not found → post_transaction(conn, entries, description)
-                            ├─ INSERT transactions
-                            ├─ INSERT ledger_entries (bulk)
-                            └─ INSERT events   ← the source of truth
-                         → INSERT idempotency_keys
-     commit  (all of the above, atomically)
+  → request_fingerprint(): sha256 of the canonical request JSON
+  → engine.begin(): post_transaction_once(...)
+        INSERT idempotency_keys ... ON CONFLICT (key) DO NOTHING
+          ├─ conflict (waits for any in-flight holder of the key to finish)
+          │    ├─ hash matches  → reuse stored transaction id
+          │    └─ hash differs  → IdempotencyConflictError → HTTP 409
+          └─ claimed → post_transaction(conn, entries, description)
+                          ├─ assert_accounts_valid   (→ 422 on failure,
+                          │                            claim rolls back)
+                          ├─ INSERT transactions
+                          ├─ INSERT ledger_entries (bulk)
+                          └─ INSERT events   ← the source of truth
+                       → UPDATE idempotency_keys SET response_body
+     commit  (all of the above, atomically; the balance trigger runs here)
+  → log transaction.posted | transaction.replayed
   → 302 redirect to /transaction-detail/{id}
 ```
 
@@ -870,8 +1226,9 @@ migrations that run automatically on container boot.
 **Domain layer** — the per-currency double-entry invariant, entry
 validation against the accounts an entry names (the account must exist,
 and its currency is the only one that entry may carry), atomic posting
-that writes the event log alongside the read model, and account input
-validation.
+that writes the event log alongside the read model, account validation
+and creation (which also writes an event), and `rebuild_read_model()`,
+which replays the log into a fresh read model.
 
 **HTTP layer** — health check, and six server-rendered pages: overview
 with per-account balances and normal-side signs, event log with
@@ -879,8 +1236,25 @@ pagination, the filterable paginated transaction list, transaction posting
 form with live client-side totals, transaction detail with debit/credit
 columns, and account creation.
 
-**Idempotency** — fully wired for transaction posting, including the
-409-on-key-reuse case.
+**Database-enforced invariants** — `events` refuses UPDATE, DELETE and
+TRUNCATE; a deferred constraint trigger refuses to commit any
+transaction whose entries do not balance per currency; an entry must
+carry its account's currency, and an account's currency cannot change
+(§5.2).
+
+**Idempotency** — claim-first, so it holds under concurrency as well as
+for sequential retries. Includes the 409 on key reuse, and a rejected
+attempt releases the key (§4).
+
+**Rebuild tooling** — `python -m scripts.rebuild_read_model`, safe to run
+alongside live postings, and `python -m scripts.backfill_account_events`
+for databases whose accounts predate `account.created` (§3.3).
+
+**Idempotency key retention** — `python -m scripts.prune_idempotency_keys`
+deletes keys past a retention window, 30 days by default (§4).
+
+**Structured logging** — JSON lines on the `keel` logger with a
+per-request id, echoed as `X-Request-ID` (§5.15).
 
 **Templates** — shared `base.html`; the four original pages were
 refactored onto it with rendered output verified byte-identical, and
@@ -889,17 +1263,19 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 27 tests. Eight run with no database at all (the balance
-invariant, entry input validation, the error-aggregation helper and the
-health endpoint); the other 19 are Postgres-backed page tests
-covering idempotent retry, the 409 on key reuse, inline validation
-errors, account creation, overview rendering, multi-currency posting,
-the transaction list's description and date filters, pagination, and the
-guarantee that listings order by `sequence` rather than `created_at`.
+**Testing** — 75 tests (§5.11). 18 run with no database at all: the
+balance invariant, entry input validation, the error-aggregation helper,
+the idempotency fingerprint and retention floor, request ids and the JSON
+formatter, and the health endpoint. The other 57 are Postgres-backed.
+They cover the pages, filters and pagination; idempotency, including
+concurrent duplicates and key retention; the database triggers against
+writes that bypass the app; atomic rollback; agreement between the log
+and the read model; and the rebuild, including recovery from a corrupted
+projection, a posting made mid-rebuild and a backfilled legacy ledger.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"8 passed, 19 skipped" and is not a passing build. See the README for
+"18 passed, 57 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -913,26 +1289,46 @@ Ordered roughly by how much they would hurt.
 
 ### Correctness
 
-**1. No replay/rebuild path.** The read model is described as rebuildable
-from `events`, but no code rebuilds it. Until a replay function exists and
-is tested, that is an untested claim.
-
-**2. No FX handling.** Per §2.4, currency conversion cannot be expressed.
+**1. No FX handling.** Per §2.4, currency conversion cannot be expressed.
 Needs a clearing-account pattern plus an FX gain/loss account.
 
 ### Robustness
 
-**3. No balance enforcement at the database level.** Noted in the schema
-comments as a deliberate v2 item. A constraint trigger would make a
-half-written transaction impossible even from outside the app.
+**2. No authentication or authorisation anywhere.** Every route is public.
+Acceptable for a demo, disqualifying for anything real. It is also why
+`rebuild_read_model()` and the other maintenance tasks are CLIs and not
+routes.
 
-**4. `idempotency_keys` grows forever.** No TTL or cleanup job.
+**3. Key pruning has no scheduler.** `scripts/prune_idempotency_keys.py`
+does the cleanup (§4), but nothing in the stack runs it. A deployment
+needs a cron job or a scheduled task.
 
-**5. No authentication or authorisation anywhere.** Every route is public.
-Acceptable for a demo, disqualifying for anything real.
+**4. Entry order on the transaction-detail page is arbitrary.** Entries
+are sorted by `(created_at, id)`; within one transaction `created_at` is
+shared, so a random UUID decides the order, and a rebuild can change it.
+Storing each entry's position in the event payload and in
+`ledger_entries` would make it submission order and stable.
+
+**5. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
+the whole log at once and replays from `sequence` 1. There are no
+snapshots, and no incremental catch-up of a projection from a known
+position. Fine at this size, and the first thing to change if it grows.
+While a rebuild runs, postings wait on its lock (§3.3).
+
+**6. Event payloads are unversioned.** `transaction.posted` has had one
+shape since it was introduced. The first change to it will need either a
+version field in the payload or a new event type, with replay rules for
+both.
+
+### Missing interfaces
+
+**7. No JSON API.** Every write is a form post that answers with HTML or
+a redirect. `post_transaction_once` and `create_account_record` are
+already free of HTTP concerns, so a JSON `POST /api/transactions` taking
+an `Idempotency-Key` header is mostly wiring.
 
 ### Roadmap items not started
 
 Webhook ingestion, multi-provider payment orchestration, reconciliation,
-the outbox pattern for reliable event publishing, structured logging and
-metrics, and a deployment pipeline.
+the outbox pattern for reliable event publishing, metrics and tracing
+(structured logs exist, §5.15), and a deployment pipeline.
