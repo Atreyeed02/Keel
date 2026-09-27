@@ -412,6 +412,32 @@ async def test_transactions_date_range_filter(database):
     assert "June entry" not in march.text
 
 
+async def test_date_range_uses_utc_days_whatever_the_session_time_zone(database, monkeypatch):
+    # UTC-11. Were the bare dates bound, Postgres would read "2026-03-31" as
+    # 11:00 UTC that day: the early-morning row would fall outside the range
+    # and the next day's early row inside it.
+    engine = create_async_engine(
+        TEST_DATABASE_URL, connect_args={"server_settings": {"timezone": "Pacific/Pago_Pago"}}
+    )
+    monkeypatch.setattr("app.main.engine", engine)
+    try:
+        await _insert_transactions(
+            ["Early on the 31st"], base=datetime(2026, 3, 31, 2, 0, tzinfo=UTC)
+        )
+        await _insert_transactions(
+            ["Early on the 1st"], base=datetime(2026, 4, 1, 5, 0, tzinfo=UTC)
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            day = await client.get(
+                "/transactions", params={"date_from": "2026-03-31", "date_to": "2026-03-31"}
+            )
+    finally:
+        await engine.dispose()
+    assert day.status_code == 200
+    assert "Early on the 31st" in day.text
+    assert "Early on the 1st" not in day.text
+
+
 async def test_transactions_pagination_beyond_page_one(database):
     # 30 rows against a page size of 25 => 25 on page 1, 5 on page 2
     base = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)

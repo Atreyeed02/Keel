@@ -1,6 +1,6 @@
 import uuid
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -77,6 +77,19 @@ def _like_contains(term: str) -> str:
     for char in (_LIKE_ESCAPE, "%", "_"):
         term = term.replace(char, _LIKE_ESCAPE + char)
     return f"%{term}%"
+
+
+def _utc_midnight(day: date) -> datetime:
+    """
+    The instant `day` starts in UTC.
+
+    The date filters compare against this rather than the bare date. Given a
+    date, Postgres casts it to a timestamptz in the *session's* time zone, so
+    the same filter would select different rows depending on how the server
+    was configured. The pages show timestamps in UTC, so UTC days are the
+    ones a person reading them means.
+    """
+    return datetime.combine(day, time.min, tzinfo=UTC)
 
 
 def _transaction_rows():
@@ -276,12 +289,12 @@ async def read_transactions(
             transactions.c.description.ilike(_like_contains(q), escape=_LIKE_ESCAPE)
         )
     if date_from:
-        conditions.append(transactions.c.created_at >= date_from)
+        conditions.append(transactions.c.created_at >= _utc_midnight(date_from))
     if date_to:
         # created_at is a timestamp; a bare `<= date_to` would exclude
         # everything after midnight on the closing day, so the range is
         # half-open against the following day instead.
-        conditions.append(transactions.c.created_at < date_to + timedelta(days=1))
+        conditions.append(transactions.c.created_at < _utc_midnight(date_to + timedelta(days=1)))
 
     count_stmt = select(func.count()).select_from(transactions)
     listing = _transaction_rows()
