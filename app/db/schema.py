@@ -34,6 +34,7 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     MetaData,
     Numeric,
     String,
@@ -189,6 +190,11 @@ ledger_entries = Table(
     Column("amount", Numeric(18, 2), nullable=False),
     Column("currency", String(3), nullable=False),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # The entry's zero-based place in its transaction as submitted, which is
+    # the order the pages and the API show. NULL only for rows written before
+    # the column existed (migration c2e8f4a61b07); those sort after numbered
+    # ones and then by (created_at, id), the order they always had.
+    Column("position", Integer, nullable=True),
     CheckConstraint("entry_type IN ('debit', 'credit')", name="ck_entry_type_valid"),
     CheckConstraint("amount > 0", name="ck_amount_positive"),
     # Double-entry balance (sum(debits) == sum(credits) per transaction,

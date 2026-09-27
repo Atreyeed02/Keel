@@ -23,6 +23,10 @@ What a rebuild reproduces exactly:
   response) still resolves;
 - every account's name, type and currency; every transaction's
   description; every entry's account, side, amount and currency;
+- each entry's `position`, its place in the transaction as submitted.
+  An event written before entries carried one gets the entry's index in
+  the payload array, which is the same thing: `post_transaction` has
+  always written that array in submission order;
 - `created_at` on all three tables. Each row is stamped with its event's
   `created_at`, which is the value it had originally: the row and its
   event were written in one database transaction, and Postgres `now()`
@@ -34,8 +38,8 @@ What it does not:
 
 - `ledger_entries.id`. The `transaction.posted` payload does not carry
   entry ids, so replay mints new ones. Nothing references an entry by id
-  — no foreign key points at `ledger_entries`, and no query looks one up —
-  but see ARCHITECTURE.md §3.3 for the one place the value is visible.
+  — no foreign key points at `ledger_entries`, and no query looks one up.
+  Entry order used to fall back on the id; it comes from `position` now.
 - `transactions.sequence` values. The identity restarts at 1 and is
   reassigned in event order, so relative order is kept and gaps are not.
 """
@@ -125,8 +129,13 @@ async def rebuild_read_model(conn: AsyncConnection) -> None:
                         "amount": Decimal(entry["amount"]),
                         "currency": entry["currency"],
                         "created_at": event["created_at"],
+                        # Events written before entries carried a position
+                        # still have them in submission order: the payload
+                        # array has always been written that way, and JSONB
+                        # keeps array order. So the index is the position.
+                        "position": entry.get("position", index),
                     }
-                    for entry in payload["entries"]
+                    for index, entry in enumerate(payload["entries"])
                 ],
             )
 

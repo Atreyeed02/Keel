@@ -10,6 +10,7 @@ the accounts its entries point at is exactly what a rebuild must refuse.
 
 import asyncio
 import os
+import re
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -598,3 +599,109 @@ async def test_backfill_and_rebuild_scripts_on_a_legacy_ledger(ledger, monkeypat
         assert await rebuild_script.main(confirmed=True) == 0
         assert "Every account balance is unchanged" in capsys.readouterr().out
         assert await _snapshot(ledger, client) == original
+
+
+# --- entry order -----------------------------------------------------------------
+
+# Seven debits in an order no sort would produce. Shown in (created_at, id)
+# order instead, which is what entries fell back on before `position`, all
+# seven would come out right by chance once in 5040 runs.
+SCRAMBLED = ["5.00", "2.00", "7.00", "1.00", "6.00", "3.00", "4.00"]
+
+
+async def _cash_and_revenue(engine) -> tuple[uuid.UUID, uuid.UUID]:
+    async with engine.begin() as conn:
+        ids = []
+        for name, account_type in (("Cash", "asset"), ("Revenue", "revenue")):
+            account = validate_account(
+                {"name": name, "account_type": account_type, "currency": "USD"}
+            )
+            ids.append(await create_account_record(conn, account))
+    return ids[0], ids[1]
+
+
+def _scrambled_entries(cash, revenue) -> list[dict]:
+    debits = [
+        {"account_id": str(cash), "entry_type": "debit", "amount": a, "currency": "USD"}
+        for a in SCRAMBLED
+    ]
+    return debits + [
+        {"account_id": str(revenue), "entry_type": "credit", "amount": "28.00", "currency": "USD"}
+    ]
+
+
+async def _shown_debit_order(client, transaction_id) -> tuple[list[str], list[str]]:
+    """The debit amounts in the order the detail page and the JSON API show them."""
+    page = (await client.get(f"/transaction-detail/{transaction_id}")).text
+    debit_column = page.split("Debit entries", 1)[1].split("Credit entries", 1)[0]
+    on_page = re.findall(r"<strong>([\d,.]+)</strong>", debit_column)
+    api = (await client.get(f"/api/transactions/{transaction_id}")).json()
+    in_api = [e["amount"] for e in api["entries"] if e["entry_type"] == "debit"]
+    return on_page, in_api
+
+
+async def _positions(engine, transaction_id) -> list[int]:
+    async with engine.connect() as conn:
+        return sorted(
+            (
+                await conn.scalars(
+                    select(ledger_entries.c.position).where(
+                        ledger_entries.c.transaction_id == transaction_id
+                    )
+                )
+            ).all()
+        )
+
+
+async def test_entries_are_shown_in_submission_order_and_a_rebuild_keeps_it(ledger, monkeypatch):
+    monkeypatch.setattr("app.api.transactions.engine", ledger)
+    cash, revenue = await _cash_and_revenue(ledger)
+    async with ledger.begin() as conn:
+        transaction_id = await post_transaction(
+            conn,
+            [EntryInput.model_validate(e) for e in _scrambled_entries(cash, revenue)],
+            "Seven receipts",
+        )
+        payload = await conn.scalar(
+            select(events.c.payload).where(events.c.aggregate_id == transaction_id)
+        )
+    # the event records each entry's place, as does the read model
+    assert [e["position"] for e in payload["entries"]] == list(range(8))
+    assert await _positions(ledger, transaction_id) == list(range(8))
+
+    async with _client() as client:
+        assert await _shown_debit_order(client, transaction_id) == (SCRAMBLED, SCRAMBLED)
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+        # new entry ids, same order
+        assert await _shown_debit_order(client, transaction_id) == (SCRAMBLED, SCRAMBLED)
+    assert await _positions(ledger, transaction_id) == list(range(8))
+
+
+async def test_a_rebuild_orders_an_event_without_positions_by_its_payload(ledger, monkeypatch):
+    """
+    Events written before entries carried a position still list them in
+    submission order, so replay takes the array index as the position.
+    """
+    monkeypatch.setattr("app.api.transactions.engine", ledger)
+    cash, revenue = await _cash_and_revenue(ledger)
+    transaction_id = uuid.uuid4()
+    async with ledger.begin() as conn:
+        await conn.execute(
+            insert(events).values(
+                id=uuid.uuid4(),
+                aggregate_type="transaction",
+                aggregate_id=transaction_id,
+                event_type="transaction.posted",
+                # the payload exactly as post_transaction wrote it before
+                payload={
+                    "description": "Old receipts",
+                    "entries": _scrambled_entries(cash, revenue),
+                },
+            )
+        )
+        await rebuild_read_model(conn)
+
+    assert await _positions(ledger, transaction_id) == list(range(8))
+    async with _client() as client:
+        assert await _shown_debit_order(client, transaction_id) == (SCRAMBLED, SCRAMBLED)

@@ -267,7 +267,7 @@ else, each group in `sequence` order (why accounts go first is under
 | `event_type` | Replay |
 |---|---|
 | `account.created` | insert into `accounts` with `id = aggregate_id` |
-| `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item |
+| `transaction.posted` | insert into `transactions` with `id = aggregate_id`, then one `ledger_entries` row per `payload["entries"]` item, with its `position` |
 | anything else | raise `UnknownEventError` — a rebuild that silently skipped an event would disagree with the log |
 
 Account and transaction ids are the events' `aggregate_id`s, so they come
@@ -341,6 +341,9 @@ runs them on every push:
   the posting to succeed and to survive a further rebuild.
 - `test_rebuild_script_refuses_without_confirmation_then_repairs` covers
   the CLI.
+- `test_entries_are_shown_in_submission_order_and_a_rebuild_keeps_it` and
+  `test_a_rebuild_orders_an_event_without_positions_by_its_payload` cover
+  entry order, on the detail page and in the API, for new and old events.
 - `test_backfill_makes_a_legacy_ledger_rebuildable` and
   `test_backfill_and_rebuild_scripts_on_a_legacy_ledger` cover the
   backfill, below.
@@ -368,17 +371,40 @@ Two details make the backfilled log replay correctly:
   log honest. The account's original `created_at` travels in the payload,
   with `"backfilled": true`, and replay restores it from there.
 
+**Entry order survives a rebuild.** Each entry's place in the transaction
+as submitted is stored as `ledger_entries.position` and in the
+`transaction.posted` payload, and the detail page and
+`GET /api/transactions/{id}` sort by it (migration `c2e8f4a61b07`).
+Before that, entries were sorted by `(created_at, id)`. All of a
+transaction's entries share `created_at`, so a random UUID decided the
+order, and a rebuild, which mints new ids, could change it.
+
+Data written before `position` existed is handled on both sides:
+
+- **Read-model rows** stay `NULL`. The read model cannot recover their
+  submission order; the arbitrary order they show is all it knows. So
+  reads sort `NULL` after numbered positions and then by
+  `(created_at, id)`, and those rows keep exactly the order they had.
+- **Events** are better off. `post_transaction` has always written the
+  payload's `entries` array in submission order, and JSONB keeps array
+  order, so an entry's index in that array *is* its submission position.
+  Replay uses it when the entry has no `position`. That is a deliberate
+  step past "fall back to the current ordering": the current ordering
+  comes from random ids, and falling back to it on replay would scramble
+  those transactions again on every rebuild. A rebuild therefore gives old
+  transactions their real order back.
+
+This was checked on a database migrated with pre-existing entries: before
+a rebuild they render in the old order, `position` all `NULL`; after it,
+in submission order, positions `0..n`.
+
 **The limit.**
 
 - **`ledger_entries.id` is not reproduced.** The `transaction.posted`
   payload never carried entry ids, so replay mints new ones. Nothing
   depends on a particular value: no foreign key references
-  `ledger_entries`, and no query or template looks an entry up by id. The
-  one visible effect is ordering — the transaction-detail page sorts a
-  transaction's entries by `(created_at, id)`, all of a transaction's
-  entries share `created_at`, so their order within the debit and credit
-  columns is decided by the random id and can change across a rebuild.
-  (It was already arbitrary rather than submission order.)
+  `ledger_entries`, and no query or template looks an entry up by id.
+  Ordering no longer depends on it either.
 
 ---
 
@@ -1029,6 +1055,8 @@ primary key into it, so no database ever had two constraints: it had one
 primary key named `uq_idempotency_key`. `schema.py` now declares only the
 primary key, and the migration renames the constraint (and its index) to
 `idempotency_keys_pkey`, the name `create_all` gives it.
+`c2e8f4a61b07_ledger_entries_position.py` adds the nullable
+`ledger_entries.position` column (§3.3). Existing rows stay `NULL`.
 
 The interesting part is `alembic/env.py`:
 
