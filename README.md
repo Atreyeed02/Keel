@@ -16,11 +16,11 @@ FastAPI · PostgreSQL 16 · SQLAlchemy 2.0 Core · Alembic · Docker Compose
 | Every entry carries its account's currency, and an account's currency never changes | `assert_accounts_valid` in Python *and* two Postgres triggers | `tests/test_ledger_pages.py`, `tests/test_ledger_invariants.py` |
 | The event log is never rewritten | a Postgres trigger refusing UPDATE / DELETE / TRUNCATE on `events` | `tests/test_ledger_invariants.py` |
 | A posting lands completely or not at all: rows *and* event | one database transaction per posting | `tests/test_ledger_invariants.py` |
-| One idempotency key → one committed ledger effect, even under concurrent retries | claim-first `INSERT … ON CONFLICT DO NOTHING` | `tests/test_idempotency.py` |
+| One idempotency key → one committed ledger effect, even under concurrent retries | claim-first `INSERT … ON CONFLICT DO NOTHING`, for the form and the JSON API alike | `tests/test_idempotency.py`, `tests/test_api.py` |
 | The read model can be thrown away and rebuilt from the log | `rebuild_read_model()` | `tests/test_rebuild.py` |
 
 Enforcing the ledger rules in the database as well as in Python is
-deliberate. The Python checks produce readable form errors. The triggers
+deliberate. The Python checks produce readable errors for the forms and the API. The triggers
 make the rules hold for anything that writes around the app: a migration,
 a `psql` session, a future importer.
 
@@ -229,7 +229,7 @@ pytest -v
 ruff check .
 ```
 
-75 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+119 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -237,8 +237,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 57 database-backed tests are **skipped,
-not failed**. A green run of the remaining 18 is partial coverage:
+Without `TEST_DATABASE_URL`, the 71 database-backed tests are **skipped,
+not failed**. A green run of the remaining 48 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -254,6 +254,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_observability.py` | request ids, JSON log format, ledger identifiers on log lines |
 | `test_health.py` | `/health` always answers |
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
+| `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
 
 CI (`.github/workflows/ci.yml`) runs ruff and the full suite against a
 PostgreSQL service container. A separate `docker-smoke` job builds the
@@ -262,9 +263,36 @@ creation → posting → overview over HTTP.
 
 ## API
 
-The service is **server-rendered HTML with form posts**. There is no JSON
-API yet (see Limitations). FastAPI's generated docs at `/docs` list every
-route.
+Two interfaces over the same domain layer: a **JSON API** under `/api/`
+and the **server-rendered HTML pages**. FastAPI's generated docs at
+`/docs` list every route.
+
+### JSON
+
+| Method | Path | Answers |
+|---|---|---|
+| `POST` | `/api/accounts` | `201` with the account; `422` |
+| `GET` | `/api/accounts` | `200`: every account with `debits`, `credits` and a `balance` signed by its normal side |
+| `POST` | `/api/transactions` | `201` first post, `200` replay; `400` without a valid `Idempotency-Key`; `409` key reused for a different request; `422` |
+| `GET` | `/api/transactions/{id}` | `200` with the entries; `404` |
+
+```bash
+curl -i -X POST http://localhost:8000/api/transactions \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: invoice-1001' \
+  -d '{"description": "Invoice 1001", "entries": [
+        {"account_id": "'$CASH'",    "entry_type": "debit",  "amount": "250.00", "currency": "USD"},
+        {"account_id": "'$REVENUE'", "entry_type": "credit", "amount": "250.00", "currency": "USD"}]}'
+```
+
+A retry with the same key answers `200` with the same transaction and
+`Idempotent-Replayed: true`. Retries are matched by meaning, not bytes:
+`"100"` and `"100.00"`, key order, currency case and entry order do not
+make a retry a different request. Amounts are strings in both
+directions, never JSON numbers. Every error is
+`{"error": {"code": ..., "message": ...}}`. Details:
+[docs/ARCHITECTURE.md §5.16](docs/ARCHITECTURE.md#516-appapi--the-json-api).
+
+### HTML
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -310,12 +338,13 @@ are no metrics and no tracing.
 
 ```
 app/
-├── api/health.py         /health
+├── api/                  JSON API: accounts.py, transactions.py, errors.py, serialize.py; health.py
 ├── domain/               business rules; nothing here commits
 │   ├── ledger.py         double-entry validation and posting
 │   ├── idempotency.py    claim-first idempotent posting
 │   ├── accounts.py       account validation and creation
 │   ├── rebuild.py        replay events into the read model
+│   ├── reads.py          balances and transaction lookups shared by pages and API
 │   └── account_types.py, errors.py
 ├── db/                   SQLAlchemy Core tables, triggers, engine
 ├── observability.py      JSON logging, request-id middleware
@@ -324,7 +353,7 @@ app/
 alembic/versions/         8 migrations
 scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py,
                           prune_idempotency_keys.py
-tests/                    75 tests; see above
+tests/                    119 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
@@ -333,8 +362,8 @@ docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build s
 What this does **not** do today. The full, maintained list is
 [docs/ARCHITECTURE.md §8](docs/ARCHITECTURE.md#8-what-still-needs-doing).
 
-- **No JSON API.** Writes are HTML form posts. A JSON endpoint with an
-  `Idempotency-Key` header would reuse `post_transaction_once` as is.
+- **The JSON API is minimal.** No single-account read, no transaction
+  listing, no pagination, no event-log endpoint.
 - **No authentication or authorisation.** Every route is public, which
   is also why rebuild is a CLI and not a route.
 - **Rebuild is all-or-nothing and in memory.** No snapshots, no

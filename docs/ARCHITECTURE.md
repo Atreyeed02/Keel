@@ -4,7 +4,7 @@ A complete walkthrough of what this service is, the accounting and
 event-sourcing ideas it is built on, what every file does, and what is
 still missing.
 
-Last brought up to date on 2026-09-24.
+Last brought up to date on 2026-09-27.
 
 ---
 
@@ -502,8 +502,34 @@ window, and the function refuses anything under a day. A claim not yet
 committed is invisible to the DELETE, so an in-flight posting never loses
 its key.
 
-**Scope note:** idempotency applies only to `POST /post-transaction`. It
-deliberately does *not* apply to account creation — it exists to protect
+**The JSON API fingerprints meaning, not bytes.** `POST /api/transactions`
+(§5.16) uses the same `post_transaction_once` and the same table, but a
+different fingerprint, `entries_fingerprint()`. The form's raw-string hash
+suits a browser, which resends a form byte for byte. A JSON client
+re-serialises its request on every retry, and nothing obliges it to
+produce the same bytes: another key order, `"100"` for `"100.00"`, `usd`
+for `USD`, the entries in another order. Hashing the raw body would turn
+such a genuine retry into a 409, which is exactly what idempotency exists
+to prevent. So the hash is taken over the *validated* request in
+canonical form:
+
+- each amount at exactly two decimal places (amounts are validated to
+  have at most two), currency upper-cased, account id as a canonical UUID;
+- entries sorted, because the ledger does not keep their order;
+- the description exactly as sent, except that an empty one counts as
+  none, which is how both are stored.
+
+The rule is that two requests share a fingerprint exactly when they would
+post the same transaction. Anything that changes what would be stored
+changes the hash, and a key reused for it is a 409. The canonical form
+also carries a `"format": "json-v1"` marker, which keeps API hashes
+disjoint from form hashes: a key first used by the form and then sent to
+the API is a conflict, never a replay of a request made through the other
+door. The form fingerprint is unchanged, so every stored key stays valid.
+
+**Scope note:** idempotency applies to `POST /post-transaction` and
+`POST /api/transactions`. It deliberately does *not* apply to account
+creation — it exists to protect
 the double-entry invariant against double-posting, and creating a
 duplicate account is neither a money movement nor a conservation
 violation.
@@ -742,12 +768,17 @@ rolls back if an exception escapes.
 class EntryInput(BaseModel):
     account_id: uuid.UUID
     entry_type: str        # "debit" | "credit"
-    amount: Decimal
+    amount: Decimal = Field(max_digits=18, decimal_places=2)
     currency: str
 ```
 
 with `@field_validator`s rejecting `entry_type` outside
-`("debit", "credit")` and any `amount <= 0`. Pydantic also coerces types:
+`("debit", "credit")` and any `amount <= 0`. The `Field` constraint
+matches the column, `Numeric(18, 2)`. Without it Postgres rounds rather
+than refuses: `100.005` used to be posted and stored as `100.01`, a
+different amount from the one submitted, and `0.001` rounded to `0.00`
+and failed the `amount > 0` CHECK as a 500. `100.000` is still accepted,
+since it is exactly `100.00`. Pydantic also coerces types:
 a form string `"100.00"` becomes a `Decimal`, and a UUID string becomes a
 `uuid.UUID`, failing loudly if it cannot.
 
@@ -759,7 +790,9 @@ code that cares can catch this specific case.
 
 **`post_transaction(conn, entries, description)`** — the write path:
 
-1. Reject fewer than two entries.
+1. Reject fewer than two entries, and a description longer than the
+   512 characters `transactions.description` holds (`validate_description`;
+   an overlong one used to fail in Postgres as a 500).
 2. `assert_balanced(entries)`.
 3. Generate `txn_id = uuid.uuid4()` server-side.
 4. Insert the `transactions` row.
@@ -842,8 +875,9 @@ database. See §5.13.
 ### 5.7 `app/main.py` — wiring and routes
 
 **Setup.** Configures the JSON logger and registers the request-id
-middleware (§5.15), creates the FastAPI app, mounts `/static`, points
-Jinja2 at `templates/`, and registers a custom filter:
+middleware (§5.15), creates the FastAPI app, includes the JSON API's
+routers and error handlers (§5.16), mounts `/static`, points Jinja2 at
+`templates/`, and registers a custom filter:
 
 ```python
 def _money(value: Decimal | None) -> str:
@@ -855,9 +889,10 @@ templates.env.filters["money"] = _money
 `{{ total_debits|money }}` in a template renders `61,056.50`. Centralising
 formatting means every page shows money identically.
 
-**`GET /` — the overview.** The most interesting query. It computes
-per-account debits, credits and balance in **one** SQL statement using
-conditional aggregation:
+**`GET /` — the overview.** The most interesting query, now in
+`app/domain/reads.py` (§5.17) as `account_balances`, which
+`GET /api/accounts` shares. It computes per-account debits, credits and
+balance in **one** SQL statement using conditional aggregation:
 
 ```python
 debit = func.coalesce(
@@ -872,8 +907,8 @@ It uses an **`outerjoin`** from `accounts` to `ledger_entries`, so
 accounts with no activity still appear with a zero balance — an inner
 join would hide them.
 
-Then Python groups rows by `account_type` into a `defaultdict(list)` and
-applies the normal-side sign flip from §2.2.
+`account_balances` applies the normal-side sign flip from §2.2, and the
+route groups the rows by `account_type` into a `defaultdict(list)`.
 
 **`GET /event-log`** — paginated, 25 per page, newest first, with a total
 count for the pager.
@@ -909,10 +944,12 @@ rather than silently truncating. Then validation, then
 `post_transaction_once` (§4) inside `engine.begin()`. The handler maps
 its outcomes to HTTP: `EntryAccountError` becomes the 422 form,
 `IdempotencyConflictError` a 409, and success a 302. After the commit it
-logs `transaction.posted` or `transaction.replayed`.
+logs `transaction.posted` or `transaction.replayed` through the shared
+helpers (§5.15).
 
-**`GET /transaction-detail/{id}`** — loads the transaction, joins entries
-to account names, splits them into debit and credit lists, totals each
+**`GET /transaction-detail/{id}`** — loads the transaction and its
+entries with their account names through `transaction_with_entries`
+(§5.17), splits them into debit and credit lists, totals each
 side, and finds the linked event. A `404` if the transaction is missing.
 
 ### 5.8 `app/templates/` — Jinja2 inheritance
@@ -1042,7 +1079,7 @@ backfill it does nothing.
 
 | File | Needs a DB | Covers |
 |---|---|---|
-| `test_ledger_domain.py` | no | the balance invariant, per-currency independence, amount/type validation |
+| `test_ledger_domain.py` | no | the balance invariant, per-currency independence, amount/type validation, amounts and descriptions the columns cannot store |
 | `test_health.py` | no | health endpoint always answers |
 | `test_ledger_pages.py` | **yes** | idempotent retry, inline errors, account creation and its event, overview, transaction list filters (UTC day boundaries under any session time zone) and pagination, `sequence` ordering, the trigram index behind the search |
 | `test_idempotency.py` | mostly | retries, 409 on key reuse, key release after a rejected attempt, concurrent duplicates and conflicting payloads, key retention and its CLI (§4) |
@@ -1050,6 +1087,7 @@ backfill it does nothing.
 | `test_rebuild.py` | **yes** | rebuild reproduces the read model, repairs a corrupted one, is repeatable, is safe alongside a concurrent posting; unknown event types and event-less accounts fail the replay; the backfill makes a legacy ledger rebuildable; both CLIs |
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
+| `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
 
 The Postgres-backed tests skip unless `TEST_DATABASE_URL` is set, then
 create and drop the whole schema around each test for isolation. They do
@@ -1126,7 +1164,9 @@ returned **HTTP 200** with `{"status":"degraded","db":"down"}`.
 §4, plus `IdempotencyConflictError`. The code used to live inline in the
 route handler. It moved out when the claim-first rewrite made it worth
 testing on its own, and so that a future JSON endpoint can reuse it
-rather than copy it. It takes the same "caller owns the transaction"
+rather than copy it, which `POST /api/transactions` now does, with
+`entries_fingerprint()` in place of `request_fingerprint()` (§4). It
+takes the same "caller owns the transaction"
 contract as `post_transaction`, and for the same reason: the claim only
 protects anything if it commits atomically with the posting it guards.
 
@@ -1151,7 +1191,10 @@ no metrics, no tracing.
   handlers. Level comes from `LOG_LEVEL` (default `INFO`).
 
 What gets logged, always after the commit, so a line never describes a
-write that rolled back:
+write that rolled back. The ledger events go through `log_account_created`,
+`log_transaction`, `log_transaction_rejected` and
+`log_idempotency_conflict`, which the form routes and the JSON API both
+call, so each event has one definition of its fields:
 
 | Event | Fields |
 |---|---|
@@ -1164,6 +1207,97 @@ write that rolled back:
 The event's own id is not logged: `post_transaction` does not return it.
 `transaction_id` is the event's `aggregate_id`, which is enough to find
 it.
+
+### 5.16 `app/api/` — the JSON API
+
+Four endpoints, alongside the HTML pages and on the same domain layer.
+Nothing in `app/api/` validates an entry, checks a balance, claims a key or
+writes a row itself; it calls the functions the form routes call.
+
+| Endpoint | Domain calls | Answers |
+|---|---|---|
+| `POST /api/accounts` | `validate_account`, `create_account_record` | `201` with the account; `422` |
+| `GET /api/accounts` | `account_balances` (§5.17) | `200` with every account |
+| `POST /api/transactions` | `EntryInput`, `assert_balanced`, `validate_description`, `post_transaction_once` | `201` first post; `200` replay; `400`; `409`; `422` |
+| `GET /api/transactions/{id}` | `transaction_with_entries` (§5.17) | `200`; `404` |
+
+**Posting.** `POST /api/transactions` takes
+
+```json
+{"description": "Invoice 1001",
+ "entries": [{"account_id": "…", "entry_type": "debit",  "amount": "250.00", "currency": "USD"},
+             {"account_id": "…", "entry_type": "credit", "amount": "250.00", "currency": "USD"}]}
+```
+
+with an `Idempotency-Key` header. The checks run cheapest first, so a
+request that can be refused without the database never opens a
+connection: the header (`400`), then the body's shape and the entry
+validators (`422`), then the balance, entry count and description length
+(`422`). Only then does it open a transaction and call
+`post_transaction_once`, exactly as the form route does (§4). A first
+post answers `201`; a genuine retry answers `200` with the same
+transaction. Both carry `Location: /api/transactions/{id}` and
+`Idempotent-Replayed: false` or `true`, so a client can tell them apart
+without comparing bodies. The key reused for a different request is a
+`409`. Entries naming a missing account or the wrong currency are a `422`
+with both problems in one message, and roll the claim back, so the same
+key can be sent again once the request is fixed.
+
+The key must be 1–255 visible ASCII characters with no spaces: the
+column holds 255, and anything else is more likely a client bug than an
+identifier. A UUID is the obvious choice.
+
+**Errors.** Everything under `/api/` that fails answers
+
+```json
+{"error": {"code": "idempotency_conflict", "message": "Idempotency-Key was already used for a different request"}}
+```
+
+| Status | `code` |
+|---|---|
+| 400 | `missing_idempotency_key`, `invalid_idempotency_key` |
+| 404 | `not_found` (also an unknown `/api/` path) |
+| 405 | `method_not_allowed` |
+| 409 | `idempotency_conflict` |
+| 422 | `validation_error`, `unbalanced_transaction`, `invalid_accounts` |
+
+`app/api/errors.py` installs the handlers, including for the framework's
+own 404 and 405, and scopes them to `/api/`. The HTML routes keep
+FastAPI's default errors, which is what they have always returned. The
+routes read and parse their own bodies rather than letting FastAPI
+validate a body model, so every validation message comes from
+`describe_validation_error` and the domain's validators and reads exactly
+as it does on the forms, for example `entries.0.amount decimal input
+should have no more than 2 decimal places`.
+
+**Money is a string.** Amounts go out as strings with exactly two decimal
+places and must come in as strings. Most JSON parsers turn a number into
+a binary float, which cannot represent 0.10; a number arriving here has
+probably been through one already. `ApiEntryInput` adds that rule, plus
+upper-casing the currency as the form route does, to `EntryInput` and
+nothing else. Unknown fields are refused rather than ignored: in a money
+API, a misspelled field silently dropped is worse than an error.
+
+**Responses.** An account carries `normal_side`, `debits`, `credits` and
+a `balance` signed exactly as the overview page signs it. A transaction
+carries its entries with account names, but not entry ids: a rebuild
+mints new ones (§3.3).
+
+**Logging.** The same events as the form routes, after the commit,
+through the shared helpers in `app/observability.py` (§5.15), so the
+names and fields cannot drift apart. The request id ties a line back to
+the path it came from.
+
+What it does not do yet is listed in §8.
+
+### 5.17 `app/domain/reads.py` — shared queries
+
+The read-side queries that both a page and an API endpoint need:
+`account_balances` (the overview's per-account totals, with the
+normal-side sign), `currency_totals` (the overview's trial balance) and
+`transaction_with_entries` (the detail page's lookup). They moved here
+from `main.py` when the API needed them. The pages were rendered from a
+seeded ledger before and after the move and are byte-identical.
 
 ---
 
@@ -1236,6 +1370,12 @@ pagination, the filterable paginated transaction list, transaction posting
 form with live client-side totals, transaction detail with debit/credit
 columns, and account creation.
 
+**JSON API** — `POST`/`GET /api/accounts`, `POST /api/transactions` with a
+required `Idempotency-Key` (201 first post, 200 replay marked
+`Idempotent-Replayed`, 409 on reuse) and `GET /api/transactions/{id}`, on
+the same domain functions as the pages, with one error shape and string
+amounts (§5.16). Its fingerprint compares requests by meaning (§4).
+
 **Database-enforced invariants** — `events` refuses UPDATE, DELETE and
 TRUNCATE; a deferred constraint trigger refuses to commit any
 transaction whose entries do not balance per currency; an entry must
@@ -1263,10 +1403,11 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 75 tests (§5.11). 18 run with no database at all: the
+**Testing** — 119 tests (§5.11). 48 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
-the idempotency fingerprint and retention floor, request ids and the JSON
-formatter, and the health endpoint. The other 57 are Postgres-backed.
+the idempotency fingerprints and retention floor, request ids and the JSON
+formatter, the health endpoint, and every JSON API rejection that happens
+before the database is touched. The other 71 are Postgres-backed.
 They cover the pages, filters and pagination; idempotency, including
 concurrent duplicates and key retention; the database triggers against
 writes that bypass the app; atomic rollback; agreement between the log
@@ -1275,7 +1416,7 @@ projection, a posting made mid-rebuild and a backfilled legacy ledger.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"18 passed, 57 skipped" and is not a passing build. See the README for
+"48 passed, 71 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1322,10 +1463,13 @@ both.
 
 ### Missing interfaces
 
-**7. No JSON API.** Every write is a form post that answers with HTML or
-a redirect. `post_transaction_once` and `create_account_record` are
-already free of HTTP concerns, so a JSON `POST /api/transactions` taking
-an `Idempotency-Key` header is mostly wiring.
+**7. The JSON API is minimal.** It has what a client needs to create
+accounts, post transactions safely and read one back (§5.16). It has no
+single-account read, no transaction listing, and no pagination:
+`GET /api/accounts` returns every account at once. There is no event-log
+endpoint and no API version in the path; `entries_fingerprint`'s
+`json-v1` marker is the only place a version exists so far. Like every
+route, it is unauthenticated (item 2).
 
 ### Roadmap items not started
 
