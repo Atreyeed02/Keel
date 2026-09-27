@@ -19,6 +19,11 @@ without being passed around, and it is echoed back in the response's
 Fields are attached with the standard `extra=` argument:
 
     log.info("transaction.posted", extra={"transaction_id": str(txn_id)})
+
+The ledger's own events go through the `log_*` helpers at the bottom
+instead, so the HTML forms and the JSON API log them with the same names
+and fields. Call them only after the commit, so a line never describes a
+write that rolled back.
 """
 
 import json
@@ -113,3 +118,34 @@ async def request_context_middleware(request: Request, call_next):
         return response
     finally:
         request_id_var.reset(token)
+
+
+# --- ledger events, shared by the HTML forms and the JSON API ---------------
+
+
+def log_account_created(account_id, account_type: str, currency: str) -> None:
+    log.info(
+        "account.created",
+        extra={"account_id": str(account_id), "account_type": account_type, "currency": currency},
+    )
+
+
+def log_transaction(transaction_id, idempotency_key: str, entries, *, replayed: bool) -> None:
+    """`transaction.posted`, or `transaction.replayed` when the key had already been used."""
+    log.info(
+        "transaction.replayed" if replayed else "transaction.posted",
+        extra={
+            "transaction_id": str(transaction_id),
+            "idempotency_key": idempotency_key,
+            "entry_count": len(entries),
+            "account_ids": sorted({str(e.account_id) for e in entries}),
+        },
+    )
+
+
+def log_transaction_rejected(idempotency_key: str, reason: str) -> None:
+    log.info("transaction.rejected", extra={"idempotency_key": idempotency_key, "reason": reason})
+
+
+def log_idempotency_conflict(idempotency_key: str) -> None:
+    log.warning("idempotency.conflict", extra={"idempotency_key": idempotency_key})
