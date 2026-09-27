@@ -189,3 +189,36 @@ def test_no_migrate_skips_the_migration(monkeypatch):
     monkeypatch.setattr(serve.uvicorn, "run", lambda *a, **k: calls.append("serve"))
     serve.main(["--no-migrate"])
     assert calls == ["serve"]
+
+
+# --- live reload: dev only -----------------------------------------------------------
+
+
+def test_reload_is_on_only_when_asked_for(monkeypatch):
+    runs = []
+    monkeypatch.setattr(serve.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(serve.uvicorn, "run", lambda app, **kw: runs.append(kw))
+    serve.main(["--reload"])
+    serve.main([])
+    dev, production = runs
+    assert dev["reload"] is True and dev["reload_dirs"] == ["app"]
+    assert "reload" not in production and "reload_dirs" not in production
+
+
+def test_the_image_never_reloads_and_the_dev_override_does():
+    """The Dockerfile's CMD is what production runs; the override is dev-only."""
+    import json
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    (cmd,) = re.findall(r"^CMD (.+)$", (root / "Dockerfile").read_text(), re.M)
+    assert json.loads(cmd) == ["python", "-m", "app.serve"]
+    base = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["app"]
+    assert "command" not in base  # so CI and production run the image's CMD
+    dev = yaml.safe_load((root / "docker-compose.override.yml").read_text())["services"]["app"]
+    assert dev["command"] == ["python", "-m", "app.serve", "--reload"]
+    # bind mounts from Windows/macOS hosts deliver no change events: poll
+    assert dev["environment"]["WATCHFILES_FORCE_POLLING"] == "true"

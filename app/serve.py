@@ -12,6 +12,10 @@ would both run the migrations; Alembic takes no lock to stop that, so a
 host that scales out, or starts a new instance before stopping the old one,
 should run `alembic upgrade head` as a separate release step instead and
 start instances with `python -m app.serve --no-migrate`.
+
+`--reload` restarts the server when a file under `app/` changes. Only the
+dev override (docker-compose.override.yml) passes it; the image's own start
+command never does.
 """
 
 import subprocess
@@ -28,7 +32,10 @@ def migrate() -> None:
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
 
 
-def serve() -> None:
+def serve(reload: bool = False) -> None:
+    # Only what is asked for: passing reload=False would still be a setting
+    # a reader has to check, so production gets no reload argument at all.
+    development = {"reload": True, "reload_dirs": ["app"]} if reload else {}
     uvicorn.run(
         "app.main:app",
         host=settings.host,
@@ -38,13 +45,14 @@ def serve() -> None:
         # proxies FORWARDED_ALLOW_IPS names (app/config.py).
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
+        **development,
     )
 
 
 def main(argv: list[str]) -> None:
     if "--no-migrate" not in argv:
         migrate()
-    serve()
+    serve(reload="--reload" in argv)
 
 
 if __name__ == "__main__":

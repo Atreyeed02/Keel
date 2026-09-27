@@ -205,7 +205,7 @@ or http://localhost:8000/health.
 
 | Command | Files used | What runs |
 |---|---|---|
-| `docker compose up --build` | base + override | the host's `./app`, bind-mounted over the image — edits appear without a rebuild |
+| `docker compose up --build` | base + override | the host's `./app`, bind-mounted over the image, with the server reloading itself when a file changes |
 | `docker compose -f docker-compose.yml up --build` | base only | exactly what the image contains |
 
 Compose merges `docker-compose.override.yml` automatically whenever it is

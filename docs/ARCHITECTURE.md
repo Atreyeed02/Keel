@@ -1235,7 +1235,17 @@ rather than raising. It is written in Python because `python:3.12-slim`
 ships neither curl nor wget.
 
 `docker-compose.override.yml` — local dev only: bind-mounts `./app` over
-the image for live reload. Compose merges it automatically when present,
+the image and starts the server with `python -m app.serve --reload`, so an
+edit under `app/` restarts it within a couple of seconds. This used to be
+described as live reload without being one: the image's server never
+reloaded, so an edit needed `docker compose restart app`. It now polls for
+changes (`WATCHFILES_FORCE_POLLING=true`), because a bind mount from a
+Windows or macOS host usually delivers no file-change events into Docker's
+Linux VM and an event-based watcher would never fire. Checked on Windows in
+an isolated copy of the dev stack: an edit to `app/api/health.py` was being
+served about two seconds later, and so was its revert. Only the override
+passes `--reload`; the image's own `CMD`, which CI and production run,
+never does, and a test pins both. Compose merges it automatically when present,
 so `docker compose up` is dev mode by default. The consequence is that a
 plain `docker compose up` is *not* running the shipped artifact, so
 anything proving the image is self-contained must bypass it — the
