@@ -111,6 +111,10 @@ async def request_context_middleware(request: Request, call_next):
                 "method": request.method,
                 "path": request.url.path,
                 "status": response.status_code,
+                # The real client and scheme when a trusted proxy said so
+                # (FORWARDED_ALLOW_IPS), otherwise the socket peer.
+                "client": request.client.host if request.client else None,
+                "scheme": request.url.scheme,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
             },
         )

@@ -1302,7 +1302,22 @@ call, so each event has one definition of its fields:
 | `transaction.posted` / `transaction.replayed` | `transaction_id`, `idempotency_key`, `entry_count`, `account_ids` |
 | `transaction.rejected` | `idempotency_key`, `reason` |
 | `idempotency.conflict` (warning) | `idempotency_key` |
-| `request.completed` / `request.failed` | `method`, `path`, `status`, `duration_ms` |
+| `request.completed` | `method`, `path`, `status`, `client`, `scheme`, `duration_ms` |
+| `request.failed` | `method`, `path`, `duration_ms` |
+
+**Behind a host's proxy**, the socket peer is the proxy, not the client,
+and the connection to the container is plain HTTP even when the visitor used
+HTTPS. `python -m app.serve` starts uvicorn with `proxy_headers=True` and
+`forwarded_allow_ips` from `FORWARDED_ALLOW_IPS`, so for proxies it trusts,
+`X-Forwarded-For` and `X-Forwarded-Proto` become `request.client` and
+`request.url.scheme`: the `client` and `scheme` in the log line, and the
+scheme in any absolute URL the app builds, such as FastAPI's trailing-slash
+redirect. The default, `127.0.0.1`, trusts only a proxy on the same machine.
+On Render, Railway or Fly, where the container is reachable only through the
+platform's router, set `FORWARDED_ALLOW_IPS=*`; nowhere the port is reachable
+directly, since any client could then claim any address.
+`tests/test_proxy_headers.py` runs the app behind uvicorn's own middleware
+to check both cases.
 
 The event's own id is not logged: `post_transaction` does not return it.
 `transaction_id` is the event's `aggregate_id`, which is enough to find

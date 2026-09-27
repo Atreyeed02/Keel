@@ -29,7 +29,16 @@ def migrate() -> None:
 
 
 def serve() -> None:
-    uvicorn.run("app.main:app", host=settings.host, port=settings.port)
+    uvicorn.run(
+        "app.main:app",
+        host=settings.host,
+        port=settings.port,
+        # Behind a host's proxy the socket peer is the proxy. These make
+        # request.client and request.url.scheme the real ones, but only for
+        # proxies FORWARDED_ALLOW_IPS names (app/config.py).
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
+    )
 
 
 def main(argv: list[str]) -> None:

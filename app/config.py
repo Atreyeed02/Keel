@@ -92,6 +92,15 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = Field(8000, ge=1, le=65535)
 
+    # Which proxies uvicorn believes about X-Forwarded-For and
+    # X-Forwarded-Proto: a comma-separated list of addresses, or "*". The
+    # default trusts only a proxy on the same machine. On a host where the
+    # container is reachable only through the host's own proxy (Render,
+    # Railway, Fly), set "*" so logs and redirects see the real client and
+    # scheme. Never "*" where the port is reachable directly: any client
+    # could then claim any address.
+    forwarded_allow_ips: str = "127.0.0.1"
+
     # Level for the `keel` JSON logger (app/observability.py)
     log_level: str = "INFO"
 
