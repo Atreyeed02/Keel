@@ -1009,7 +1009,10 @@ so `docker compose up` is dev mode by default. The consequence is that a
 plain `docker compose up` is *not* running the shipped artifact, so
 anything proving the image is self-contained must bypass it — the
 `docker-smoke` job pins `COMPOSE_FILE: docker-compose.yml` for exactly
-that reason.
+that reason. The mount uses the long syntax with `create_host_path:
+false`: the short form would create a missing `./app` as an empty
+directory and mount it over the image's code, where this form refuses to
+start.
 
 ### 5.13 `.github/workflows/ci.yml`
 
