@@ -16,32 +16,32 @@ older prose in `ARCHITECTURE.md`.
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **31 tests** |
-| `pytest` (no database available) | 8 passed, 23 skipped |
-| `pytest` (compose Postgres) | 31 passed |
-| Docker daemon | not running on this machine at time of writing |
+| `pytest` collection | **62 tests** |
+| `pytest` (no database available) | 17 passed, 45 skipped |
+| `pytest` (local Postgres 16) | 62 passed |
+| `alembic upgrade head` → `downgrade base` → `upgrade head` | clean, on a scratch database |
+| App booted with uvicorn on a migrated database | health, posting, retry, 409 and rebuild CLI all verified over HTTP |
+| `docker compose config` (base, and base + override) | valid |
+| Docker image build | **not run**: the Docker daemon was not running on this machine |
 
-The 23 skips are not failures. Every page-level test is Postgres-backed
-and skips itself unless `TEST_DATABASE_URL` is set — so **a green local
-run of 8 tests means roughly a third of the suite actually executed.**
-Do not read it as a passing build. See §5 for the command that runs the
-real thing.
+The 45 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 17 tests
+means barely a quarter of the suite actually executed.** Do not read it
+as a passing build. See §5 for the command that runs the real thing.
 
-> **Drift, now corrected:** `ARCHITECTURE.md` §7 previously said "12
-> tests" — the suite had grown to 27 without the count following it (the
-> transaction-list, filtering, pagination and sequence-ordering tests
-> came later). §7 now records 27 and spells out the skip behaviour. The
-> README's claim that the read model is "always rebuildable" was
-> likewise softened to match §3.3; see §3 below.
+> **Drift, now corrected:** `ARCHITECTURE.md` §7 said the "409 on key
+> reuse" was covered by a test. No such test existed.
+> `tests/test_idempotency.py::test_same_key_with_a_different_payload_is_a_409`
+> now covers it.
 
 ---
 
 ## 2. What exists
 
-### Schema — complete, 4 migrations
+### Schema — complete, 5 migrations
 
 Five tables in `app/db/schema.py`, with `alembic/versions/` at head
-`fca143a4d6d9`:
+`7d2e4b9c1a58`:
 
 - `events` — append-only log. `sequence` is `BigInteger Identity(always=True)`,
   so the log has a real database-generated total order that the
@@ -56,9 +56,16 @@ Five tables in `app/db/schema.py`, with `alembic/versions/` at head
 - `ledger_entries` — `Numeric(18,2)`, `CHECK`s on side and positivity.
 - `idempotency_keys` — key, request hash, stored response.
 
-Indexes are declared in both the migration *and* `schema.py`, so
-`metadata.create_all` (used by the tests) and `alembic upgrade head`
-produce the same schema.
+Two triggers enforce the ledger's rules in Postgres itself: `events`
+refuses UPDATE, DELETE and TRUNCATE, and a deferred constraint trigger
+refuses to commit a transaction whose entries do not balance per
+currency. Both hold for writes that bypass the app.
+
+Indexes and triggers are declared in both the migration *and*
+`schema.py`, so `metadata.create_all` (used by the tests) and
+`alembic upgrade head` produce the same schema. For the triggers this was
+checked directly: the function bodies and trigger definitions are
+byte-identical.
 
 ### Domain — the invariants live here
 
@@ -85,11 +92,24 @@ event log, filterable + paginated transaction list, posting form,
 transaction detail with debit/credit columns, account creation. Plus
 `/health`, which reports `degraded` rather than raising.
 
-### Idempotency — wired, including the hard case
+### Idempotency — correct under concurrency
 
 Every posting carries a `submission_key`. A replay with the same key
 returns the original transaction id; a *different* body under the same
 key is a **409**, not a silent overwrite.
+
+`app/domain/idempotency.py` claims the key with `INSERT … ON CONFLICT DO
+NOTHING` *before* posting. The earlier SELECT-then-INSERT version never
+double-posted, but concurrent duplicates got a 500 instead of the
+original result: reproduced as `[500, 302, 500, 500, 500]` for five at
+once. Now all five get the same 302. A rejected attempt releases the
+key.
+
+### Observability — structured logs
+
+JSON lines on the `keel` logger, each tagged with a request id that is
+echoed as `X-Request-ID`. Posting lines carry `transaction_id`,
+`idempotency_key` and `account_ids`. No metrics, no tracing.
 
 ### CI — two jobs
 
@@ -116,6 +136,12 @@ and the two known limits — entry ids are not reproduced, and databases
 with accounts created before the event existed cannot be rebuilt until
 those accounts are backfilled into the log.
 
+Since then: `python -m scripts.rebuild_read_model --yes` runs it from the
+command line and reports any balance it corrected. Tests now also show
+that a rebuild repairs a deliberately corrupted read model, is
+repeatable, and is safe alongside a concurrent posting, which waits on
+the rebuild's lock and is not lost.
+
 ---
 
 ## 4. Where to start building
@@ -128,19 +154,18 @@ Replay now exists (§3). Any database with accounts created before
 key. A one-off migration or script that appends an `account.created`
 event for each account lacking one closes that.
 
-**2. Balance enforcement in the database**
-The per-transaction balance rule is enforced only in application code.
-A deferred constraint trigger checking `sum(debits) = sum(credits)` per
-`transaction_id` at commit makes a half-written transaction impossible
-even from outside the app — a migration, a manual `INSERT`, a future
-importer. The schema comments already flag this as the intended v2 step.
-
-**3. An HTTP API alongside the pages**
+**2. An HTTP API alongside the pages**
 Everything today is form-posted HTML. The domain layer is already clean
-enough to expose directly — `post_transaction` takes `EntryInput` and a
-connection, nothing more. A JSON `POST /api/transactions` reusing the
-same idempotency wrapper is mostly wiring, and it is what makes the
-service consumable by anything other than a browser.
+enough to expose directly: `post_transaction_once` takes a connection, a
+key, a fingerprint and `EntryInput`s, nothing HTTP-shaped. A JSON
+`POST /api/transactions` taking an `Idempotency-Key` header is mostly
+wiring, and it is what makes the service consumable by anything other
+than a browser.
+
+**3. Account-currency rule in the database**
+The balance rule now has a database backstop; the rule that an entry
+carries its account's currency does not. A trigger comparing
+`ledger_entries.currency` with `accounts.currency` closes it.
 
 **4. Idempotency key retention**
 `idempotency_keys` grows without bound. No TTL, no cleanup job.
@@ -148,10 +173,14 @@ service consumable by anything other than a browser.
 **5. Authentication**
 Every route is public. Fine for a demo, disqualifying otherwise.
 
+**Done since the previous version of this list:** balance enforcement in
+the database (deferred constraint trigger, migration `7d2e4b9c1a58`) and
+structured logging.
+
 **Not started at all:** FX handling (needs a clearing-account pattern
 plus an FX gain/loss account — see `ARCHITECTURE.md` §2.4 for why the
 current model *cannot* express conversion), webhook ingestion, the
-outbox pattern, reconciliation, structured logging and metrics.
+outbox pattern, reconciliation, metrics and tracing.
 
 ---
 
@@ -167,7 +196,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 8 of 31 tests:
+you are running 17 of 62 tests:
 
 ```bash
 docker compose up -d db
@@ -178,10 +207,21 @@ pytest -v
 The fixture **drops and recreates every table**, so point it only at a
 database you do not mind losing.
 
-A note on ports: use the compose database on **5432**. A separate
-Postgres exists on 5433 on this machine with no usable password — it is
-referenced in some older `.claude/settings.json` permission entries and
-is a dead end.
+A note on ports: the compose database is on **5432**. This machine also
+has a native PostgreSQL 16 on **5433**. An earlier version of this note
+called it unusable; that was wrong. It accepts `postgres`/`postgres`,
+and its `keel_test` database is what the 2026-09-24 test runs used,
+since Docker was not running:
+
+```bash
+export TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5433/keel_test
+```
+
+Rebuild the read model from the log (without `--yes` it only reports):
+
+```bash
+docker compose exec app python -m scripts.rebuild_read_model --yes
+```
 
 ---
 
