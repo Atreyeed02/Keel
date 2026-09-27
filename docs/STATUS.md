@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-09-27, JSON API added.** A snapshot of what is actually built, what is
+**As of 2026-09-27: everything is on `main`.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,8 +10,18 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Everything below was checked against the working tree, not read off the
-older prose in `ARCHITECTURE.md`.
+Both feature branches are merged, with regular merge commits, and deleted:
+
+| PR | Branch | Merge commit on `main` |
+|---|---|---|
+| [#1](https://github.com/Atreyeed02/Keel/pull/1) | `feat/event-sourced-accounts-and-rebuild` (18 commits) | `104f6a1` |
+| [#2](https://github.com/Atreyeed02/Keel/pull/2) | `feat/json-api` (4 commits) | `bd9db76` |
+
+CI passed both jobs on each PR and on `main` after each merge. No
+feature branches remain.
+
+Everything below was checked against `main` at `bd9db76`, not read off
+the older prose in `ARCHITECTURE.md`.
 
 | Check | Result |
 |---|---|
@@ -25,7 +35,8 @@ older prose in `ARCHITECTURE.md`.
 | Migrated schema vs. `metadata.create_all` | identical functions, triggers and indexes (only alembic's own table differs) |
 | App booted with uvicorn on a migrated database | health, account creation, posting, retry, 409, the transaction filter and all three maintenance CLIs verified; the JSON API's 201, 200 replay (`Idempotent-Replayed`), 400, 409, balances and `/docs` verified over real HTTP |
 | `docker compose config` (base, and base + override) | valid |
-| Docker image build | **not run**: the Docker daemon was not running on this machine |
+| Docker image build | built and smoke-tested by CI's `docker-smoke` on both PRs and on `main` at `bd9db76`: healthy `/health`, migrated to `5e8d2a1f9c63`, a real posting through the container. Not run locally, where Docker was not running. |
+| CI on `main` at `bd9db76` | `lint-and-test` (119 passed, 0 skipped) and `docker-smoke` both pass |
 
 The 71 skips are not failures. Every database-backed test skips itself
 unless `TEST_DATABASE_URL` is set, so **a green local run of 48 tests
