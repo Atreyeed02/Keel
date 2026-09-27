@@ -218,6 +218,68 @@ Both give the `app` service a healthcheck against `/health` that asserts
 the exact body `{"status":"ok","db":"up"}`, so a container whose
 migrations failed never reports healthy.
 
+## Deploying
+
+Keel is one Docker image plus a Postgres database, so it runs on any host
+that runs an image and provides Postgres: Render, Railway, Fly.io and the
+like. Nothing here is specific to one of them.
+
+**Build** from the `Dockerfile`. The compose files are for running locally
+and are not part of a deployment.
+
+**Start command:** the image's own, `python -m app.serve`. It runs
+`alembic upgrade head`, and only if that succeeds starts uvicorn on `$PORT`
+(most hosts set `PORT`; the default is 8000). The container runs as an
+unprivileged user and never with `--reload`.
+
+> **Migrating on start assumes one instance.** Two instances starting at
+> once would both migrate. Before running more than one, or on a host that
+> starts the new instance before stopping the old one, run
+> `alembic upgrade head` as a release step and start instances with
+> `python -m app.serve --no-migrate`.
+
+**Health check:** path `/health`. It answers **200 even when the database
+is down**, with `{"status":"degraded","db":"down"}`, so a check that looks
+only at the status code stays green on a broken deployment. Configure the
+host to require the body `{"status":"ok","db":"up"}`. If your host can only
+check the status code, know that it will not notice a lost database.
+
+### Environment variables
+
+| Variable | Required | What it does |
+|---|---|---|
+| `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. |
+| `ENVIRONMENT` | **yes**, set to `production` | Refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default. |
+| `PORT` | set by most hosts | Where the server listens. Default 8000. |
+| `FORWARDED_ALLOW_IPS` | recommended | Proxies whose `X-Forwarded-For` / `-Proto` are believed. On a host where the container is reachable only through the platform's router, set `*` so logs and redirects show the real client and `https`. Never `*` if the port is reachable directly. Default `127.0.0.1`. |
+| `DATABASE_SSL` | if the database needs TLS | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. Overrides an `sslmode` in the URL. Unset: whatever the URL says, else the driver default. |
+| `MAX_REQUEST_BODY_BYTES` | no | Largest request body accepted; larger is a 413. Default 65536. |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | no | Connections per instance, default 5 + 10. Keep the total under your database plan's connection limit. |
+| `LOG_LEVEL` | no | Level of the JSON log lines on stdout. Default `INFO`. |
+
+### Scheduled and one-off jobs
+
+Run these with the same image and environment as the app, from the host's
+cron or scheduled-job feature, or its one-off shell:
+
+| Command | When |
+|---|---|
+| `python -m scripts.prune_idempotency_keys --yes` | **daily.** Deletes idempotency keys older than 30 days; without it the table grows forever. |
+| `python -m scripts.seed_demo_data` | once, on an empty database, if you want the demo data. It refuses to touch a ledger that already has accounts. |
+| `python -m scripts.rebuild_read_model --yes` | only to repair the read model from the event log. Safe while serving; postings wait for it. |
+
+### Pre-deploy checklist
+
+- [ ] `ENVIRONMENT=production` and `DATABASE_URL` set on the host.
+- [ ] `DATABASE_SSL` set if the database requires TLS (most managed ones do).
+- [ ] `FORWARDED_ALLOW_IPS=*` if the container is reachable only through the host's router.
+- [ ] Health check on `/health`, checking the body, not just the status.
+- [ ] One instance, or migrations moved to a release step and `--no-migrate` on the start command.
+- [ ] A daily job for `python -m scripts.prune_idempotency_keys --yes`.
+- [ ] `DB_POOL_SIZE + DB_MAX_OVERFLOW` times the number of instances is under the database's connection limit.
+- [ ] CI is green on the commit being deployed: tests, `alembic check`, `pip-audit`, and the image smoke test.
+- [ ] After the first deploy: `/health` returns `{"status":"ok","db":"up"}`, and the response headers include `Content-Security-Policy`.
+
 ## Running tests
 
 ```bash
