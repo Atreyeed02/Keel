@@ -13,7 +13,10 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
+from app.api.accounts import router as accounts_api_router
+from app.api.errors import register_api_error_handlers
 from app.api.health import router as health_router
+from app.api.transactions import router as transactions_api_router
 from app.config import settings
 from app.db.engine import engine
 from app.db.schema import accounts, events, ledger_entries, transactions
@@ -55,6 +58,11 @@ app = FastAPI(
 )
 app.middleware("http")(request_context_middleware)
 app.include_router(health_router)
+# The JSON API (app/api/): same domain layer as the pages below, with its own
+# error shape under /api/.
+app.include_router(accounts_api_router)
+app.include_router(transactions_api_router)
+register_api_error_handlers(app)
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))

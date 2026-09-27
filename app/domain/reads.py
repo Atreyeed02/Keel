@@ -41,10 +41,13 @@ def _credits():
     )
 
 
-async def account_balances(conn: AsyncConnection) -> list[dict[str, Any]]:
+async def account_balances(
+    conn: AsyncConnection, account_id: uuid.UUID | None = None
+) -> list[dict[str, Any]]:
     """
     Every account with its debit and credit totals and its balance, ordered
-    by account type and then name.
+    by account type and then name. With `account_id`, just that one (an
+    empty list if it does not exist).
 
     `raw_balance` is debits minus credits. `balance` is signed by the
     account's normal side, so a revenue account that has taken 100 in
@@ -59,33 +62,30 @@ async def account_balances(conn: AsyncConnection) -> list[dict[str, Any]]:
         ),
         0,
     )
-    rows = (
-        (
-            await conn.execute(
-                select(
-                    accounts.c.id,
-                    accounts.c.name,
-                    accounts.c.account_type,
-                    accounts.c.currency,
-                    accounts.c.created_at,
-                    _debits().label("debits"),
-                    _credits().label("credits"),
-                    raw_balance.label("raw_balance"),
-                )
-                .outerjoin(ledger_entries, ledger_entries.c.account_id == accounts.c.id)
-                .group_by(
-                    accounts.c.id,
-                    accounts.c.name,
-                    accounts.c.account_type,
-                    accounts.c.currency,
-                    accounts.c.created_at,
-                )
-                .order_by(accounts.c.account_type, accounts.c.name)
-            )
+    query = (
+        select(
+            accounts.c.id,
+            accounts.c.name,
+            accounts.c.account_type,
+            accounts.c.currency,
+            accounts.c.created_at,
+            _debits().label("debits"),
+            _credits().label("credits"),
+            raw_balance.label("raw_balance"),
         )
-        .mappings()
-        .all()
+        .outerjoin(ledger_entries, ledger_entries.c.account_id == accounts.c.id)
+        .group_by(
+            accounts.c.id,
+            accounts.c.name,
+            accounts.c.account_type,
+            accounts.c.currency,
+            accounts.c.created_at,
+        )
+        .order_by(accounts.c.account_type, accounts.c.name)
     )
+    if account_id is not None:
+        query = query.where(accounts.c.id == account_id)
+    rows = (await conn.execute(query)).mappings().all()
     result = []
     for row in rows:
         data = dict(row)

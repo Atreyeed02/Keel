@@ -58,17 +58,61 @@ class IdempotencyConflictError(ValueError):
 
 def request_fingerprint(description: str, raw_entries: list[dict[str, str]]) -> str:
     """
-    SHA-256 over the request as submitted. `sort_keys=True` makes the
-    serialisation deterministic, so the same logical request always
+    SHA-256 over a form submission as submitted. `sort_keys=True` makes
+    the serialisation deterministic, so the same logical request always
     hashes the same.
 
     Hashes the raw form values, not the parsed ones, so "100" and "100.00"
-    are different requests. That is deliberately strict: a client reusing a
-    key should be resending the same bytes.
+    are different requests. That is deliberately strict: a browser resending
+    a form resends the same bytes. The JSON API uses `entries_fingerprint`
+    instead; ARCHITECTURE.md §4 explains why the two differ.
     """
     return hashlib.sha256(
         json.dumps({"description": description, "entries": raw_entries}, sort_keys=True).encode()
     ).hexdigest()
+
+
+def entries_fingerprint(description: str | None, entries: list[EntryInput]) -> str:
+    """
+    SHA-256 over what a JSON request would write, not over its bytes.
+
+    A JSON client re-serialises its request on a retry, and nothing obliges
+    it to produce the same bytes: key order, whitespace, `"100"` against
+    `"100.00"`, a lower-case currency or UUID. Hashing the raw body would
+    answer such a genuine retry with a 409. So the hash is over the
+    validated request in canonical form:
+
+    - amounts at exactly two decimal places (they have been validated to
+      have at most two), currencies upper-cased, account ids as canonical
+      UUID strings;
+    - entries sorted, because the ledger does not keep their order;
+    - the description exactly as sent, after an empty one has become None,
+      which is how it is stored.
+
+    Two requests hash the same exactly when they would post the same
+    transaction. Anything that would change what is stored changes the
+    hash, and a key reused for it is a 409.
+
+    The `format` marker keeps these hashes apart from `request_fingerprint`
+    ones, so a key first used by the HTML form and then sent to the API is
+    a conflict, never a replay of a request made through the other door.
+    """
+    canonical_entries = sorted(
+        (
+            {
+                "account_id": str(e.account_id),
+                "entry_type": e.entry_type,
+                "amount": f"{e.amount:.2f}",
+                "currency": e.currency.upper(),
+            }
+            for e in entries
+        ),
+        key=lambda entry: (
+            entry["account_id"], entry["entry_type"], entry["currency"], entry["amount"]
+        ),
+    )
+    canonical = {"format": "json-v1", "description": description, "entries": canonical_entries}
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
 
 
 async def post_transaction_once(
