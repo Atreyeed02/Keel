@@ -8,12 +8,13 @@ its accounts directly, with no account.created events, and a log missing
 the accounts its entries point at is exactly what a rebuild must refuse.
 """
 
+import asyncio
 import os
 import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import case, func, insert, select
+from sqlalchemy import case, delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -21,6 +22,7 @@ from app.db.schema import accounts, events, ledger_entries, metadata, transactio
 from app.domain.accounts import create_account_record, validate_account
 from app.domain.rebuild import UnknownEventError, rebuild_read_model
 from app.main import app
+from scripts import rebuild_read_model as rebuild_script
 from scripts.seed_demo_data import DEMO_ACCOUNTS, DEMO_TRANSACTIONS, seed
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -294,3 +296,177 @@ async def test_rebuild_refuses_a_log_missing_its_account_events(ledger):
     async with ledger.connect() as conn:
         assert await conn.scalar(select(func.count()).select_from(accounts)) == 2
         assert await conn.scalar(select(func.count()).select_from(transactions)) == 1
+
+
+def _client():
+    return AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+    )
+
+
+async def _corrupt_read_model(engine) -> None:
+    """
+    Damage the projection the ways a bad manual fix or a buggy importer
+    would, all around the app: a whole transaction's rows lost, an account
+    renamed, and an account row that no event ever created. (Deleting a
+    single entry is not on the list: the balance trigger refuses it.)
+    """
+    async with engine.begin() as conn:
+        lost = await conn.scalar(
+            select(transactions.c.id).where(transactions.c.description == "February office rent")
+        )
+        await conn.execute(delete(ledger_entries).where(ledger_entries.c.transaction_id == lost))
+        await conn.execute(delete(transactions).where(transactions.c.id == lost))
+        await conn.execute(
+            update(accounts).where(accounts.c.name == "Cash").values(name="Cash (edited by hand)")
+        )
+        await conn.execute(
+            insert(accounts).values(
+                id=uuid.uuid4(), name="Phantom", account_type="asset", currency="USD"
+            )
+        )
+
+
+def _posting(ids, key, description="After the rebuild"):
+    return {
+        "description": description,
+        "submission_key": key,
+        "account_id": [str(ids["Cash"]), str(ids["Consulting revenue"])],
+        "entry_type": ["debit", "credit"],
+        "amount": ["12.34", "12.34"],
+        "currency": ["USD", "USD"],
+    }
+
+
+async def test_rebuild_repairs_a_corrupted_read_model(ledger):
+    """Recovery: the log is the source of truth, so replaying it undoes damage to the projection."""
+    async with _client() as client:
+        await _build_realistic_ledger(ledger, client)
+        original = await _snapshot(ledger, client)
+
+        await _corrupt_read_model(ledger)
+        damaged = await _snapshot(ledger, client)
+
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+        repaired = await _snapshot(ledger, client)
+
+    # guard against a vacuous pass: the corruption really changed what people see
+    for key in ("accounts", "transactions", "balances", "pages"):
+        assert damaged[key] != original[key], f"corruption did not affect {key}"
+    assert repaired == original
+
+
+async def test_rebuild_is_repeatable_and_posting_continues_after_it(ledger):
+    async with _client() as client:
+        await _build_realistic_ledger(ledger, client)
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+        once = await _snapshot(ledger, client)
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+        twice = await _snapshot(ledger, client)
+        assert twice == once, "a second rebuild changed the read model"
+
+        # RESTART IDENTITY renumbered transactions.sequence from 1, so a new
+        # posting must continue that numbering, not collide with it or
+        # sort behind the replayed rows
+        ids = await _account_ids(ledger)
+        response = await client.post("/post-transaction", data=_posting(ids, "after-rebuild"))
+        assert response.status_code == 302
+        listing = await client.get("/transactions")
+
+    async with ledger.connect() as conn:
+        count = await conn.scalar(select(func.count()).select_from(transactions))
+        newest = await conn.scalar(
+            select(transactions.c.description).order_by(transactions.c.sequence.desc()).limit(1)
+        )
+        top_sequence = await conn.scalar(select(func.max(transactions.c.sequence)))
+    assert newest == "After the rebuild"
+    assert top_sequence == count
+    # and the listing shows it first, ahead of every replayed transaction
+    first_row = listing.text.index("/transaction-detail/")
+    assert listing.text.find("After the rebuild", first_row) < listing.text.find(
+        "Mixed settlement", first_row
+    )
+
+
+async def test_a_posting_during_a_rebuild_waits_for_it_and_is_not_lost(ledger):
+    """
+    The replay's TRUNCATE holds an ACCESS EXCLUSIVE lock on the read model
+    until the rebuild commits, so a posting that arrives mid-rebuild blocks
+    rather than writing into a half-built projection. The test observes the
+    wait in pg_stat_activity rather than sleeping and hoping.
+    """
+    async with _client() as client:
+        await _build_realistic_ledger(ledger, client)
+        ids = await _account_ids(ledger)
+
+        async with ledger.connect() as rebuild_conn:
+            rebuild = await rebuild_conn.begin()
+            await rebuild_read_model(rebuild_conn)  # done, but not committed
+
+            posting = asyncio.create_task(
+                client.post(
+                    "/post-transaction", data=_posting(ids, "mid-rebuild", "Posted mid-rebuild")
+                )
+            )
+            async with ledger.connect() as observer:
+                waiting = 0
+                for _ in range(200):
+                    waiting = await observer.scalar(
+                        text(
+                            "SELECT count(*) FROM pg_stat_activity "
+                            "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                        )
+                    )
+                    if waiting:
+                        break
+                    # Postgres caches pg_stat_activity for the rest of a
+                    # transaction on first read, so each poll has to end
+                    # the observer's transaction or it keeps seeing the
+                    # moment before the posting blocked.
+                    await observer.rollback()
+                    await asyncio.sleep(0.025)
+            assert waiting == 1, "the posting never blocked on the rebuild's lock"
+            assert not posting.done()
+
+            await rebuild.commit()
+
+        response = await asyncio.wait_for(posting, timeout=10)
+        assert response.status_code == 302
+
+        # it landed on the rebuilt tables and in the log, so a further
+        # rebuild keeps it
+        before = await _snapshot(ledger, client)
+        async with ledger.begin() as conn:
+            await rebuild_read_model(conn)
+        after = await _snapshot(ledger, client)
+
+    assert "Posted mid-rebuild" in {row.description for row in before["transactions"]}
+    assert after == before
+
+
+async def test_rebuild_script_refuses_without_confirmation_then_repairs(
+    ledger, monkeypatch, capsys
+):
+    monkeypatch.setattr("scripts.rebuild_read_model.engine", ledger)
+    async with _client() as client:
+        await _build_realistic_ledger(ledger, client)
+        original = await _snapshot(ledger, client)
+
+        assert await rebuild_script.main(confirmed=False) == 1
+        assert "Nothing changed" in capsys.readouterr().out
+        assert await _snapshot(ledger, client) == original
+
+        await _corrupt_read_model(ledger)
+        assert await rebuild_script.main(confirmed=True) == 0
+        report = capsys.readouterr().out
+        assert "drifted from the log" in report
+        assert "Cash (USD)" in report
+        assert "Phantom: not in the log, removed" in report
+        assert await _snapshot(ledger, client) == original
+
+        # a healthy ledger: nothing to correct
+        assert await rebuild_script.main(confirmed=True) == 0
+        assert "Every account balance is unchanged" in capsys.readouterr().out
