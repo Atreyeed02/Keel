@@ -974,6 +974,16 @@ the two triggers described in §5.2, and
 account-currency triggers. Their SQL is spelled out literally rather than
 imported from `schema.py`, because a migration must keep producing the
 DDL it produced the day it was written.
+`9b1f6e2c8a47_index_idempotency_keys_created_at.py` backs the retention
+cleanup (§4).
+`5e8d2a1f9c63_trigram_index_on_transaction_descriptions.py` installs
+`pg_trgm` and adds a GIN trigram index on `transactions.description`. The
+`/transactions` search is `ILIKE '%term%'`, and a leading wildcard rules
+out any btree index, so before this every search read the whole table.
+On 100,000 rows the planner now uses the index unprompted: a bitmap
+index scan, about 1.4 ms. `pg_trgm` is a trusted extension from
+PostgreSQL 13 on, so the database owner can install it without superuser
+rights. Downgrade drops the index and leaves the extension installed.
 
 The interesting part is `alembic/env.py`:
 

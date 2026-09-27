@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import main as main_module
@@ -593,3 +593,22 @@ async def test_description_filter_treats_wildcards_literally(database):
     assert "1 transaction matching" in percent_term.text
     assert "50% off winter sale" in percent_term.text
     assert "5000 units shipped" not in percent_term.text
+
+
+async def test_description_search_can_use_the_trigram_index(database):
+    """
+    The planner would pick a sequential scan on a table this small anyway,
+    so seq scans are switched off for the check: what matters is that the
+    index can serve the page's exact predicate, ILIKE with ESCAPE and a
+    leading wildcard, which no btree index could.
+    """
+    search = select(transactions.c.id).where(
+        transactions.c.description.ilike(
+            main_module._like_contains("50% off"), escape=main_module._LIKE_ESCAPE
+        )
+    )
+    async with main_module.engine.begin() as conn:
+        await conn.execute(text("SET LOCAL enable_seqscan = off"))
+        compiled = search.compile(conn.sync_engine, compile_kwargs={"literal_binds": True})
+        plan = "\n".join((await conn.scalars(text(f"EXPLAIN {compiled}"))).all())
+    assert "ix_transactions_description_trgm" in plan, plan

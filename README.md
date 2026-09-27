@@ -157,9 +157,10 @@ SQLAlchemy Core  app/db/   explicit statements, no ORM session / flush magic
   ▼
 PostgreSQL
   ├── events              append-only source of truth       (trigger: no UPDATE/DELETE/TRUNCATE)
-  ├── accounts            ┐
-  ├── transactions        ├ projection, rebuildable from events
-  ├── ledger_entries      ┘                                 (trigger: balanced per currency at commit)
+  ├── accounts            ┐                                 (trigger: currency never changes)
+  ├── transactions        ├ projection, rebuildable         (trigram index behind the search)
+  ├── ledger_entries      ┘   from events                   (triggers: balanced per currency at
+  │                                                          commit; account's own currency)
   └── idempotency_keys    key → request hash + stored result
 ```
 

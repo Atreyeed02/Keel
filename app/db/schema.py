@@ -293,6 +293,18 @@ Index("ix_ledger_entries_transaction_id", ledger_entries.c.transaction_id)
 # Kept even though nothing orders by created_at any more: it backs the
 # /transactions date-range filter.
 Index("ix_transactions_created_at", transactions.c.created_at.desc())
+# The /transactions search is `description ILIKE '%term%'`. A leading
+# wildcard rules out a btree index, so without this the search reads every
+# row. A trigram GIN index answers substring matches, ILIKE and ESCAPE
+# included. It needs pg_trgm, which `create_all` installs here and
+# migration 5e8d2a1f9c63 installs for `alembic upgrade head`.
+event.listen(transactions, "before_create", DDL("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+Index(
+    "ix_transactions_description_trgm",
+    transactions.c.description,
+    postgresql_using="gin",
+    postgresql_ops={"description": "gin_trgm_ops"},
+)
 
 # --- Idempotency layer ---------------------------------------------------
 
