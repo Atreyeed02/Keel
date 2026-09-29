@@ -144,6 +144,18 @@ def test_production_refuses_the_default_url_even_when_set_explicitly(clean_env, 
         _settings(environment="production", database_url=url)
 
 
+def test_the_public_demo_is_guarded_like_production(clean_env):
+    """The demo is hosted too, so it must not come up on the local default either."""
+    with pytest.raises(ValidationError, match="ENVIRONMENT=demo but DATABASE_URL is not set"):
+        _settings(environment="demo")
+    with pytest.raises(ValidationError, match="is the local development default"):
+        _settings(environment="Demo", database_url=DEFAULT_DATABASE_URL)
+    demo = _settings(environment="Demo", database_url="postgres://u:p@h/keel")
+    assert demo.is_demo
+    assert not _settings(environment="production", database_url="postgres://u:p@h/keel").is_demo
+    assert not _settings().is_demo
+
+
 # --- PORT and the start command ------------------------------------------------------
 
 

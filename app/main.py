@@ -150,6 +150,9 @@ def _transaction_rows():
 
 
 templates.env.filters["money"] = _money
+# A function, not a value, so the notice follows the setting at render time. The
+# pages get this one flag, never the settings object with its database URL.
+templates.env.globals["is_demo"] = lambda: settings.is_demo
 
 
 async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str, Any]:

@@ -8,6 +8,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # `Settings.refuse_default_database_in_production`.
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://ledger:ledger@db:5432/ledger"
 
+# Environments that run on a host, not a laptop: each refuses to start on the
+# local development database (`Settings.refuse_default_database_in_production`).
+# "demo" is the public demo: it also shows the demo notice on every page and is
+# the only environment scripts/reset_demo_data.py will wipe.
+HOSTED_ENVIRONMENTS = ("production", "demo")
+
 # libpq's sslmode values. asyncpg accepts the same strings for its `ssl`
 # argument, and psycopg takes them as `sslmode` in the URL.
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
@@ -74,7 +80,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "ledger-service"
-    # "production" turns on the checks in `refuse_default_database_in_production`.
+    # "development" (the default), "production", or "demo" for the public demo.
+    # Either hosted one turns on `refuse_default_database_in_production`.
     environment: str = "development"
 
     # Any Postgres URL: postgres://, postgresql:// or postgresql+asyncpg://.
@@ -134,19 +141,25 @@ class Settings(BaseSettings):
         # Parsing here, not lazily, so a malformed URL or SSL mode stops the
         # process at start rather than at the first query.
         target = database_target(self.database_url, self.database_ssl)
-        if self.environment.lower() == "production":
+        environment = self.environment.lower()
+        if environment in HOSTED_ENVIRONMENTS:
             if "database_url" not in self.model_fields_set:
                 raise ValueError(
-                    "ENVIRONMENT=production but DATABASE_URL is not set. Refusing to start "
+                    f"ENVIRONMENT={environment} but DATABASE_URL is not set. Refusing to start "
                     "with the local development default (ledger:ledger@db)."
                 )
             # Set, but to the default itself, in any spelling: just as unsafe.
             if target.async_url == database_target(DEFAULT_DATABASE_URL).async_url:
                 raise ValueError(
-                    "ENVIRONMENT=production but DATABASE_URL is the local development "
+                    f"ENVIRONMENT={environment} but DATABASE_URL is the local development "
                     "default (ledger:ledger@db). Refusing to start."
                 )
         return self
+
+    @property
+    def is_demo(self) -> bool:
+        """The public demo: shows the demo notice, and may be reset."""
+        return self.environment.lower() == "demo"
 
     @property
     def database(self) -> DatabaseTarget:

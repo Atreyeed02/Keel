@@ -658,7 +658,9 @@ password would otherwise break every migration.
 **Production refuses the development default.** With
 `ENVIRONMENT=production`, `Settings` raises at import, so the process never
 starts, if `DATABASE_URL` was not set or is the `ledger:ledger@db` default
-in any spelling.
+in any spelling. `ENVIRONMENT=demo`, the public demo, is hosted too and gets
+the same guard. It also turns on the demo notice (§5.8) and is the only
+environment the reset script (§5.10) runs in.
 
 **`PORT`** (default 8000) and `HOST` (default `0.0.0.0`) are where
 `python -m app.serve` listens (§5.12).
@@ -1078,6 +1080,14 @@ show it. The block is what keeps them attached.
 **`{% for %}…{% else %}`** — Jinja's `else` on a loop runs when the
 sequence was empty. Used for "No accounts yet." fallbacks.
 
+**The demo notice.** With `ENVIRONMENT=demo`, `base.html` puts one line
+above the navigation on every page, a re-rendered form included: this is a
+public demo, anyone can write to it, and it resets periodically. The
+template calls `is_demo()`, a global `main.py` registers, rather than
+reading a value fixed at import, so the page follows the setting. It is
+given that one flag rather than the settings object, which holds the
+database URL and its password.
+
 ### 5.9 `alembic/` — migrations
 
 Migrations version the schema so it can be recreated deterministically.
@@ -1170,6 +1180,28 @@ otherwise. Without `--yes` it only counts them.
 accounts that predate the event (§3.3). Without `--yes` it lists them;
 with `--yes` it appends their events. On a database with nothing to
 backfill it does nothing.
+
+**`scripts/reset_demo_data.py`** puts the public demo back as a fresh seed
+leaves it. It deletes every account, transaction, entry, event and
+idempotency key, restarts the identity sequences, and calls the seed
+script's `seed()`. Two guards stand between it and a real ledger. It
+refuses unless `ENVIRONMENT=demo`, checked before it connects to anything,
+so neither a production ledger (`production`) nor a laptop's
+(`development`, the default) can be wiped by a command run in the wrong
+shell. Without `--yes` it
+only counts what it would delete.
+
+It is the one sanctioned exception to the append-only log. The
+`events_append_only` trigger refuses TRUNCATE, so the script disables it,
+truncates, and enables it again, all in the same transaction as the reseed.
+Postgres DDL is transactional, so no other session ever sees the log
+unguarded, and a failure anywhere, reseeding included, rolls the ledger back
+to what it was, trigger on. `ALTER TABLE ... DISABLE TRIGGER` needs the
+table's owner, which is the role that ran the migrations. The tables are
+locked first, in the order a posting takes them, so a reset waits for
+postings in flight rather than deadlocking with them. A page read can still
+deadlock with it. Postgres then aborts one of the two, and a reset that
+loses rolls back whole and can be run again. Nothing schedules it yet.
 
 ### 5.11 `tests/`
 

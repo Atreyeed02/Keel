@@ -253,7 +253,7 @@ check the status code, know that it will not notice a lost database.
 | Variable | Required | What it does |
 |---|---|---|
 | `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. |
-| `ENVIRONMENT` | **yes**, set to `production` | Refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default. |
+| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
 | `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. |
 | `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
@@ -320,11 +320,12 @@ cron or scheduled-job feature, or its one-off shell:
 |---|---|
 | `python -m scripts.prune_idempotency_keys --yes` | **daily.** Deletes idempotency keys older than 30 days; without it the table grows forever. |
 | `python -m scripts.seed_demo_data` | once, on an empty database, if you want the demo data. It refuses to touch a ledger that already has accounts. |
+| `python -m scripts.reset_demo_data --yes` | **public demo only**, periodically. Deletes everything visitors wrote and restores the demo data, in one transaction. Refuses unless `ENVIRONMENT=demo`, and only counts without `--yes`. Not scheduled yet. |
 | `python -m scripts.rebuild_read_model --yes` | only to repair the read model from the event log. Safe while serving; postings wait for it. |
 
 ### Pre-deploy checklist
 
-- [ ] `ENVIRONMENT=production` and `DATABASE_URL` set on the host.
+- [ ] `ENVIRONMENT=production` (or `demo` for the public demo) and `DATABASE_URL` set on the host.
 - [ ] `DATABASE_SSL` set if the database requires TLS (most managed ones do).
 - [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above), never `*`.
 - [ ] Health check on `/health`, checking the body, not just the status.
@@ -475,8 +476,8 @@ app/
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
 alembic/versions/         10 migrations
-scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py,
-                          prune_idempotency_keys.py
+scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
+                          backfill_account_events.py, prune_idempotency_keys.py
 tests/                    134 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
