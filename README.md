@@ -237,6 +237,10 @@ unprivileged user and never with `--reload`.
 > starts the new instance before stopping the old one, run
 > `alembic upgrade head` as a release step and start instances with
 > `python -m app.serve --no-migrate`.
+>
+> **So does the write rate limit.** Its counts live in the process's memory,
+> so each instance allows the full rate, and a restart forgets them. Running
+> more than one instance needs a shared store (Redis, say) instead.
 
 **Health check:** path `/health`. It answers **200 even when the database
 is down**, with `{"status":"degraded","db":"down"}`, so a check that looks
@@ -251,11 +255,48 @@ check the status code, know that it will not notice a lost database.
 | `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. |
 | `ENVIRONMENT` | **yes**, set to `production` | Refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
-| `FORWARDED_ALLOW_IPS` | recommended | Proxies whose `X-Forwarded-For` / `-Proto` are believed. On a host where the container is reachable only through the platform's router, set `*` so logs and redirects show the real client and `https`. Never `*` if the port is reachable directly. Default `127.0.0.1`. |
+| `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. |
+| `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
 | `DATABASE_SSL` | if the database needs TLS | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. Overrides an `sslmode` in the URL. Unset: whatever the URL says, else the driver default. |
 | `MAX_REQUEST_BODY_BYTES` | no | Largest request body accepted; larger is a 413. Default 65536. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | no | Connections per instance, default 5 + 10. Keep the total under your database plan's connection limit. |
 | `LOG_LEVEL` | no | Level of the JSON log lines on stdout. Default `INFO`. |
+
+### Behind Render's proxy: `FORWARDED_ALLOW_IPS`
+
+On Render, every request reaches the container from Render's router, so
+without help every client has the router's address and they all share one
+write allowance. Set
+
+```
+FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+The router connects from a private address, which no internet client can
+have. uvicorn then reads `X-Forwarded-For` from the right and takes the
+first address that is not private: the one Render's router wrote for the
+connection it received.
+
+**Not `*`.** With `*`, uvicorn takes the header's *leftmost* address. Render
+has said its router appends to an incoming `X-Forwarded-For` rather than
+replacing it, and documents no promise to strip one, so the leftmost
+address can be whatever the client sent. Any client could then name a new
+address with every request and never be rate limited. Reading from the
+right holds up whether the router appends or replaces, as long as it adds
+its entry at the end, which is what every proxy following the
+`X-Forwarded-For` convention does.
+`tests/test_proxy_headers.py` shows both: separate limits for two forwarded
+clients, and a forged header that buys no fresh allowance.
+
+**Check it after the first deploy.** This setting follows from how Render
+says its router behaves and from uvicorn's code. It has not been checked
+against a live Render service. Send a write with a forged header,
+`curl -X POST -H 'X-Forwarded-For: 192.0.2.1' https://<service>/api/transactions`,
+and look at that request's `request.completed` line in Render's logs. Its
+`client` must be your own public address. If it is `192.0.2.1`, the setting
+is not in effect. If it is some other address that is not yours, such as a
+Cloudflare one, there is another proxy in the chain; add its published
+ranges to the list.
 
 ### Scheduled and one-off jobs
 
@@ -272,13 +313,14 @@ cron or scheduled-job feature, or its one-off shell:
 
 - [ ] `ENVIRONMENT=production` and `DATABASE_URL` set on the host.
 - [ ] `DATABASE_SSL` set if the database requires TLS (most managed ones do).
-- [ ] `FORWARDED_ALLOW_IPS=*` if the container is reachable only through the host's router.
+- [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above), never `*`.
 - [ ] Health check on `/health`, checking the body, not just the status.
 - [ ] One instance, or migrations moved to a release step and `--no-migrate` on the start command.
 - [ ] A daily job for `python -m scripts.prune_idempotency_keys --yes`.
 - [ ] `DB_POOL_SIZE + DB_MAX_OVERFLOW` times the number of instances is under the database's connection limit.
 - [ ] CI is green on the commit being deployed: tests, `alembic check`, `pip-audit`, and the image smoke test.
 - [ ] After the first deploy: `/health` returns `{"status":"ok","db":"up"}`, and the response headers include `Content-Security-Policy`.
+- [ ] After the first deploy: a write with a forged `X-Forwarded-For` is logged with your own address as `client` (above).
 
 ## Running tests
 
@@ -352,7 +394,9 @@ A retry with the same key answers `200` with the same transaction and
 not make a retry a different request. Entry order does, since it is
 stored. Amounts are strings in both
 directions, never JSON numbers. Every error is
-`{"error": {"code": ..., "message": ...}}`. Details:
+`{"error": {"code": ..., "message": ...}}`. Any write, here or through the
+forms, can also be a `429` (`rate_limited`) with `Retry-After` once a client
+passes `WRITE_RATE_LIMIT`. Details:
 [docs/ARCHITECTURE.md §5.16](docs/ARCHITECTURE.md#516-appapi--the-json-api).
 
 ### HTML
@@ -411,6 +455,8 @@ app/
 │   └── account_types.py, errors.py
 ├── db/                   SQLAlchemy Core tables, triggers, engine
 ├── observability.py      JSON logging, request-id middleware
+├── security.py           body size limit, security headers
+├── ratelimit.py          per-client write rate limit
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
 alembic/versions/         10 migrations

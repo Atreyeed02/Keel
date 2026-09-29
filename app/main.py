@@ -48,6 +48,7 @@ from app.observability import (
     log_transaction_rejected,
     request_context_middleware,
 )
+from app.ratelimit import RateLimiter, WriteRateLimitMiddleware
 from app.security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 
 configure_logging(settings.log_level)
@@ -57,10 +58,15 @@ app = FastAPI(
     description="Event-sourced, double-entry ledger service.",
     version="0.1.0",
 )
-# Starlette runs the middleware added last first. The body limit sits inside
-# the request log, so a 413 is logged like any other response; the security
-# headers sit outside everything, so every response gets them, a 413 included.
+# One per process: the counts are in memory (app/ratelimit.py).
+write_limiter = RateLimiter(settings.write_rate_limit, settings.write_rate_window_seconds)
+# Starlette runs the middleware added last first. The rate limit and the body
+# limit sit inside the request log, so a 429 or a 413 is logged like any other
+# response; the rate limit comes first, so a client over it is refused before
+# its body is looked at. The security headers sit outside everything, so every
+# response gets them, a 413 or a 429 included.
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
+app.add_middleware(WriteRateLimitMiddleware, limiter=write_limiter)
 app.middleware("http")(request_context_middleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(health_router)

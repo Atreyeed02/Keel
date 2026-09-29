@@ -11,7 +11,9 @@ Migrating on start assumes one instance. Two instances starting together
 would both run the migrations; Alembic takes no lock to stop that, so a
 host that scales out, or starts a new instance before stopping the old one,
 should run `alembic upgrade head` as a separate release step instead and
-start instances with `python -m app.serve --no-migrate`.
+start instances with `python -m app.serve --no-migrate`. The write rate
+limit assumes one instance too: its counts are in this process's memory
+(app/ratelimit.py), so each instance would allow the full rate.
 
 `--reload` restarts the server when a file under `app/` changes. Only the
 dev override (docker-compose.override.yml) passes it; the image's own start

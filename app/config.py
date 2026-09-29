@@ -93,17 +93,29 @@ class Settings(BaseSettings):
     port: int = Field(8000, ge=1, le=65535)
 
     # Which proxies uvicorn believes about X-Forwarded-For and
-    # X-Forwarded-Proto: a comma-separated list of addresses, or "*". The
-    # default trusts only a proxy on the same machine. On a host where the
-    # container is reachable only through the host's own proxy (Render,
-    # Railway, Fly), set "*" so logs and redirects see the real client and
-    # scheme. Never "*" where the port is reachable directly: any client
-    # could then claim any address.
+    # X-Forwarded-Proto: a comma-separated list of addresses and networks, or
+    # "*". The default trusts only a proxy on the same machine. uvicorn reads
+    # X-Forwarded-For from the right and takes the first address that is not
+    # trusted: the one the nearest untrusted hop connected from. The client
+    # it finds is the one the log shows and the write rate limit counts.
+    #
+    # On a host whose router connects from a private address (Render), set
+    # "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16". Not "*": with "*" uvicorn
+    # takes the header's leftmost address, which a client writes itself when
+    # the router appends to the header rather than replacing it, as Render
+    # has said its router does. Any client could then claim a fresh address,
+    # and a fresh write allowance, with every request.
     forwarded_allow_ips: str = "127.0.0.1"
 
     # Largest request body accepted, in bytes (app/security.py). A posting with
     # dozens of lines is a few kilobytes.
     max_request_body_bytes: int = Field(65536, ge=1024)
+
+    # How many writes (any method but GET, HEAD and OPTIONS) one client may make
+    # in any WRITE_RATE_WINDOW_SECONDS; past that, a 429 (app/ratelimit.py).
+    # Counted in memory, so per instance. 0 turns the limit off.
+    write_rate_limit: int = Field(30, ge=0)
+    write_rate_window_seconds: int = Field(60, ge=1)
 
     # Level for the `keel` JSON logger (app/observability.py)
     log_level: str = "INFO"

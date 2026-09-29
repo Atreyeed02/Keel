@@ -1342,12 +1342,26 @@ HTTPS. `python -m app.serve` starts uvicorn with `proxy_headers=True` and
 `X-Forwarded-For` and `X-Forwarded-Proto` become `request.client` and
 `request.url.scheme`: the `client` and `scheme` in the log line, and the
 scheme in any absolute URL the app builds, such as FastAPI's trailing-slash
-redirect. The default, `127.0.0.1`, trusts only a proxy on the same machine.
-On Render, Railway or Fly, where the container is reachable only through the
-platform's router, set `FORWARDED_ALLOW_IPS=*`; nowhere the port is reachable
-directly, since any client could then claim any address.
-`tests/test_proxy_headers.py` runs the app behind uvicorn's own middleware
-to check both cases.
+redirect, and the client the write rate limit counts (§5.19). The default,
+`127.0.0.1`, trusts only a proxy on the same machine.
+
+On Render, set `FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
+Given a list, uvicorn reads `X-Forwarded-For` from the right, skips every
+trusted address and takes the first one that is not: here, the first public
+address, which is the one Render's router wrote for the connection it
+received. The router connects from a private address; no internet client
+can. This used to say `*`, which is wrong once a rate limit depends on the
+answer. With `*`, uvicorn takes the header's *leftmost* address. Render has
+said its router appends to an incoming `X-Forwarded-For` rather than
+replacing it, so the leftmost entry can be anything the client sent, and a
+client could claim a new address, and a fresh allowance, with every request.
+This reasoning comes from uvicorn 0.31's source and Render's own statements,
+not from a live Render service, so the README's pre-deploy checklist has a
+step that checks it after the first deploy.
+`tests/test_proxy_headers.py` runs the app behind uvicorn's own middleware,
+configured that way, and checks the trusted and untrusted cases, separate
+limits for two forwarded clients, and that a forged header buys no new
+allowance.
 
 The event's own id is not logged: `post_transaction` does not return it.
 `transaction_id` is the event's `aggregate_id`, which is enough to find
@@ -1489,6 +1503,52 @@ The Tailwind Play CDN is meant for development, not production: it ships
 the whole compiler to every visitor and is the reason styles need
 `'unsafe-inline'`. Building the CSS at image build time would remove both
 (§8).
+
+### 5.19 `app/ratelimit.py` — the write rate limit
+
+Once the demo is public, anyone can write to it. The rate limit caps how
+fast one client can write. The caps in §5.20 cap how much everyone can
+write in total, which is what actually protects the database.
+
+**What counts.** Every request whose method is not `GET`, `HEAD` or
+`OPTIONS`: the forms and the JSON API share one allowance per client. A
+write the app rejects with a 400 or 422 still counts, because it still
+costs a request. The default is 30 writes in any 60 seconds
+(`WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS`). A person using the forms
+never gets near that; a script posting in a loop does. `WRITE_RATE_LIMIT=0`
+turns it off. Reads are not limited. They write nothing, and the database's
+connection pool already bounds how many run at once.
+
+**The window slides.** Each client keeps the times of its last
+`WRITE_RATE_LIMIT` writes. A write is allowed if fewer than that many fall in
+the last window. That avoids the burst a fixed window lets through at its
+boundary, where a client could make the full allowance just before a minute
+turns and again just after. A refused write is not recorded, so a client that
+waits out `Retry-After` is let in. Memory is bounded by the clients active in
+one window: once a window, any client idle for a whole window is forgotten.
+
+**The answer.** `429 Too Many Requests` with `Retry-After`: the whole
+seconds, rounded up, until the oldest write in the window leaves it, which
+is exactly when a write is next allowed. Under `/api/` the body is
+`{"error": {"code": "rate_limited", ...}}`; for the forms it is one line of
+plain text, like the 413. The middleware answers before the app runs, so a
+refused write never reads its body or opens a connection. It sits inside the
+request log, so the 429 is logged as an ordinary `request.completed` with the
+`client` it applied to, and inside the security headers, so the 429 has them.
+
+**Who the client is.** `scope["client"]`, after uvicorn's proxy-header
+handling (§5.15), the same address the log shows. IPv6 addresses are
+counted per /64, the block one subscriber is normally given, so cycling
+through the addresses of one connection earns no extra allowance. An
+IPv4-mapped IPv6 address counts as its IPv4 address.
+
+**One instance.** The counts are in process memory, like the migrate-on-start
+assumption in §5.12. Two instances would each allow the full rate, and a
+restart or deploy forgets every count. Scaling out needs a shared store
+(Redis, or a table in Postgres) instead.
+
+`tests/test_rate_limit.py` drives the real app on a fake clock, with every
+database connection replaced by one that fails the test if used.
 
 ---
 
