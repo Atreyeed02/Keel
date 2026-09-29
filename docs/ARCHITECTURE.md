@@ -4,7 +4,7 @@ A complete walkthrough of what this service is, the accounting and
 event-sourcing ideas it is built on, what every file does, and what is
 still missing.
 
-Last brought up to date on 2026-09-27.
+Last brought up to date on 2026-09-29.
 
 ---
 
@@ -1216,6 +1216,15 @@ loses rolls back whole and can be run again. Nothing schedules it yet.
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
+| `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
+| `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the posting form's CSP nonce (§5.18) |
+| `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; separate write limits for two forwarded clients; a forged `X-Forwarded-For` buys no fresh allowance (§5.15) |
+| `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
+| `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |
+| `test_demo.py` | partly | the notice on every page only with `ENVIRONMENT=demo`; the reset script refusing outside the demo before connecting and without `--yes`, restoring exactly a fresh seed, re-enabling the append-only trigger, and rolling back whole on failure (§5.8, §5.10) |
+
+`tests/conftest.py` clears the write rate limit's counts around every test,
+so each test starts with a client's full allowance under the real default.
 
 The Postgres-backed tests skip unless `TEST_DATABASE_URL` is set, then
 create and drop the whole schema around each test for isolation. They do
@@ -1733,6 +1742,23 @@ deletes keys past a retention window, 30 days by default (§4).
 **Structured logging** — JSON lines on the `keel` logger with a
 per-request id, echoed as `X-Request-ID` (§5.15).
 
+**Deploy readiness** — `DATABASE_URL` in whatever form a host hands out,
+TLS to a managed Postgres, `PORT`, and a refusal to start a hosted
+environment on the development database (§5.1); `python -m app.serve`,
+which migrates then serves, in an image that runs as an unprivileged user
+(§5.12); forwarded headers believed only from `FORWARDED_ALLOW_IPS`
+(§5.15); a request body limit and security headers with a nonce CSP
+(§5.18); `pip-audit` in CI (§5.13); and a Deploying section in the README.
+
+**Public writes, bounded** — a per-client write rate limit with `429` and
+`Retry-After`, keyed on the forwarded client address (§5.19), and hard caps
+on total accounts and transactions sized from measured bytes per write
+(§5.20).
+
+**The public demo** — `ENVIRONMENT=demo`, a notice on every page that the
+demo is public and resets (§5.8), and `python -m scripts.reset_demo_data`,
+which restores the demo data and refuses to run anywhere else (§5.10).
+
 **Templates** — shared `base.html`; the four original pages were
 refactored onto it with rendered output verified byte-identical, and
 every page added since was built on it directly.
@@ -1740,20 +1766,25 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 134 tests (§5.11). 48 run with no database at all: the
+**Testing** — 214 tests (§5.11). 113 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
-formatter, the health endpoint, and every JSON API rejection that happens
-before the database is touched. The other 86 are Postgres-backed.
-They cover the pages, filters and pagination; idempotency, including
-concurrent duplicates and key retention; the database triggers against
-writes that bypass the app; atomic rollback; agreement between the log
-and the read model; and the rebuild, including recovery from a corrupted
-projection, a posting made mid-rebuild and a backfilled legacy ledger.
+formatter, the health endpoint, every JSON API rejection that happens
+before the database is touched, the deployment configuration, the body
+limit and security headers, the proxy headers, the write rate limit, the
+demo notice's absence and the reset script's refusals. The other 101 are
+Postgres-backed. They cover the pages, filters and pagination; idempotency,
+including concurrent duplicates and key retention; the database triggers
+against writes that bypass the app; atomic rollback; agreement between the
+log and the read model; the rebuild, including recovery from a corrupted
+projection, a posting made mid-rebuild and a backfilled legacy ledger; the
+caps; and the demo reset. Each test added for the rate limit, the caps,
+the notice and the reset was checked to fail with the behaviour it covers
+broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"48 passed, 86 skipped" and is not a passing build. See the README for
+"113 passed, 101 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1774,23 +1805,40 @@ FX gain/loss account.
 ### Robustness
 
 **2. No authentication or authorisation anywhere.** Every route is public.
-Acceptable for a demo, disqualifying for anything real. It is also why
-`rebuild_read_model()` and the other maintenance tasks are CLIs and not
-routes.
+For the public demo that is the point, and what makes it safe to leave open
+is bounded: a per-client write rate limit (§5.19), caps on what the ledger
+will hold (§5.20), and a reset (§5.10). For anything real it is
+disqualifying. It is also why `rebuild_read_model()` and the other
+maintenance tasks are CLIs and not routes.
 
-**3. Key pruning has no scheduler.** `scripts/prune_idempotency_keys.py`
-does the cleanup (§4), but nothing in the stack runs it. A deployment
-needs a cron job or a scheduled task.
+**3. Nothing is scheduled.** `scripts/prune_idempotency_keys.py` (§4) and,
+for the demo, `scripts/reset_demo_data.py` (§5.10) do their jobs, but
+nothing in the stack runs them. The Render deployment needs a daily prune
+and a periodic reset.
 
-**4. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
+**4. The forwarded client address is unchecked on Render.** Both the log's
+`client` and the rate limit depend on `FORWARDED_ALLOW_IPS` (§5.15). The
+documented value comes from uvicorn's source and Render's statements about
+its router, not from a live service. The first deploy has to check it, with
+the forged-header request in the README's pre-deploy checklist.
+
+**5. One instance only.** Migrating on start (§5.12) and the in-memory
+rate limit (§5.19) both assume a single instance. Scaling out needs
+migrations as a release step and a shared store for the counts.
+
+**6. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
 the whole log at once and replays from `sequence` 1. There are no
 snapshots, and no incremental catch-up of a projection from a known
 position. Fine at this size, and the first thing to change if it grows.
 While a rebuild runs, postings wait on its lock (§3.3).
 
+**7. The pages load Tailwind's Play CDN.** It ships the whole compiler to
+every visitor, is meant for development, and is why the CSP allows inline
+styles (§5.18). Building the CSS when the image is built would remove both.
+
 ### Missing interfaces
 
-**5. The JSON API is minimal.** It has what a client needs to create
+**8. The JSON API is minimal.** It has what a client needs to create
 accounts, post transactions safely and read one back (§5.16). It has no
 single-account read, no transaction listing, and no pagination:
 `GET /api/accounts` returns every account at once. There is no event-log
@@ -1810,4 +1858,5 @@ listed to mark the boundary of this project, not as planned work: webhook
 ingestion, multi-provider payment orchestration, reconciliation, the
 outbox pattern for reliable event publishing, and a deployment pipeline.
 A hosted demo instance is different from a deployment pipeline and is
-still wanted (`STATUS.md` §4).
+still wanted. The app is now ready for one; what remains is the Render +
+Neon setup (`STATUS.md` §4).

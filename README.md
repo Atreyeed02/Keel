@@ -347,7 +347,7 @@ pytest -v
 ruff check .
 ```
 
-134 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+214 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -355,8 +355,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 86 database-backed tests are **skipped,
-not failed**. A green run of the remaining 48 is partial coverage:
+Without `TEST_DATABASE_URL`, the 101 database-backed tests are **skipped,
+not failed**. A green run of the remaining 113 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -373,6 +373,12 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_health.py` | `/health` always answers |
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
 | `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
+| `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command |
+| `test_hardening.py` | the body size limit, security headers, the posting form's CSP nonce |
+| `test_proxy_headers.py` | which forwarded headers are believed; separate write limits for two forwarded clients; a forged `X-Forwarded-For` buys no fresh allowance |
+| `test_rate_limit.py` | the write rate limit: 429 and an exact `Retry-After`, forms and API sharing one allowance, reads unlimited, IPv6 per /64 |
+| `test_capacity.py` | the account and transaction caps through both interfaces, replays at the cap, uncapped scripts |
+| `test_demo.py` | the demo notice on every page, and the reset script's refusals, restore and rollback |
 
 CI (`.github/workflows/ci.yml`) runs ruff and the full suite against a
 PostgreSQL service container. A separate `docker-smoke` job builds the
@@ -478,7 +484,7 @@ app/
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py
-tests/                    134 tests; see above
+tests/                    214 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
@@ -490,11 +496,16 @@ What this does **not** do today. The full, maintained list is
 - **The JSON API is minimal.** No single-account read, no transaction
   listing, no pagination, no event-log endpoint.
 - **No authentication or authorisation.** Every route is public, which
-  is also why rebuild is a CLI and not a route.
+  is also why rebuild is a CLI and not a route. For the public demo, writes
+  are bounded instead: a per-client rate limit, caps on accounts and
+  transactions, and a reset.
 - **Rebuild is all-or-nothing and in memory.** No snapshots, no
   incremental projection catch-up. Postings wait while a rebuild runs.
-- **Key pruning is a script, not a scheduler.** Something has to run
-  `scripts.prune_idempotency_keys` periodically; nothing in the stack does.
+- **Key pruning and the demo reset are scripts, not a scheduler.**
+  Something has to run `scripts.prune_idempotency_keys` and, on the demo,
+  `scripts.reset_demo_data` periodically; nothing in the stack does.
+- **One instance.** Migrating on start and the in-memory rate limit both
+  assume it.
 - **Idempotency covers postings only**, not account creation, since a
   duplicate account moves no money.
 - **No FX yet** (deferred future work). A transaction may touch several
