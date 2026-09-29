@@ -258,9 +258,22 @@ check the status code, know that it will not notice a lost database.
 | `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. |
 | `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
 | `DATABASE_SSL` | if the database needs TLS | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. Overrides an `sslmode` in the URL. Unset: whatever the URL says, else the driver default. |
+| `MAX_ACCOUNTS`, `MAX_TRANSACTIONS` | no | The most accounts and transactions the ledger will hold. A write that would add one more is a `409` (`ledger_full`), form or API; replays are still answered. Default 200 and 2000, sized for a 0.5 GB database (below). `0` means no cap, which a real ledger wants. |
 | `MAX_REQUEST_BODY_BYTES` | no | Largest request body accepted; larger is a 413. Default 65536. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | no | Connections per instance, default 5 + 10. Keep the total under your database plan's connection limit. |
 | `LOG_LEVEL` | no | Level of the JSON log lines on stdout. Default `INFO`. |
+
+### Why 200 accounts and 2000 transactions
+
+The caps are there so a public demo cannot fill a free 0.5 GB database,
+however many clients write to it. Measured on Postgres 16, including indexes,
+the event row and the idempotency key: an account takes about 1.1 KB, a
+two-entry transaction about 1.7 KB, and the largest transaction the 64 KiB
+body limit admits (470 entries, a 512-character description) about 91 KB.
+So even if every one of the 2000 were that large, the ledger would stay
+under 200 MB. Concurrent writes can overshoot a cap by the few that were
+already in flight when it was reached. Raising `MAX_REQUEST_BODY_BYTES`
+raises the worst case with it.
 
 ### Behind Render's proxy: `FORWARDED_ALLOW_IPS`
 
@@ -375,9 +388,9 @@ and the **server-rendered HTML pages**. FastAPI's generated docs at
 
 | Method | Path | Answers |
 |---|---|---|
-| `POST` | `/api/accounts` | `201` with the account; `422` |
+| `POST` | `/api/accounts` | `201` with the account; `422`; `409` (`ledger_full`) at `MAX_ACCOUNTS` |
 | `GET` | `/api/accounts` | `200`: every account with `debits`, `credits` and a `balance` signed by its normal side |
-| `POST` | `/api/transactions` | `201` first post, `200` replay; `400` without a valid `Idempotency-Key`; `409` key reused for a different request; `422` |
+| `POST` | `/api/transactions` | `201` first post, `200` replay; `400` without a valid `Idempotency-Key`; `409` key reused for a different request, or (`ledger_full`) at `MAX_TRANSACTIONS`; `422` |
 | `GET` | `/api/transactions/{id}` | `200` with the entries; `404` |
 
 ```bash
@@ -414,7 +427,8 @@ passes `WRITE_RATE_LIMIT`. Details:
 `POST /post-transaction` answers `302` to the transaction's detail page on
 success *and* on an idempotent retry, `422` with the form re-rendered and
 an inline error on invalid input, and `409` when a `submission_key` is
-reused with a different request.
+reused with a different request. Both forms re-render with an inline error
+and a `409` when the ledger is at `MAX_ACCOUNTS` or `MAX_TRANSACTIONS`.
 
 For example:
 
@@ -438,7 +452,7 @@ from `LOG_LEVEL`). Every request gets an id, taken from a well-formed
 ```
 
 Also logged: `transaction.replayed`, `transaction.rejected`,
-`idempotency.conflict`, `account.created`, `request.completed`. There
+`idempotency.conflict`, `ledger.full`, `account.created`, `request.completed`. There
 are no metrics and no tracing.
 
 ## Project layout
@@ -452,6 +466,7 @@ app/
 │   ├── accounts.py       account validation and creation
 │   ├── rebuild.py        replay events into the read model
 │   ├── reads.py          balances and transaction lookups shared by pages and API
+│   ├── capacity.py       the caps on total accounts and transactions
 │   └── account_types.py, errors.py
 ├── db/                   SQLAlchemy Core tables, triggers, engine
 ├── observability.py      JSON logging, request-id middleware

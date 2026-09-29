@@ -1322,9 +1322,9 @@ no metrics, no tracing.
 
 What gets logged, always after the commit, so a line never describes a
 write that rolled back. The ledger events go through `log_account_created`,
-`log_transaction`, `log_transaction_rejected` and
-`log_idempotency_conflict`, which the form routes and the JSON API both
-call, so each event has one definition of its fields:
+`log_transaction`, `log_transaction_rejected`, `log_idempotency_conflict`
+and `log_ledger_full`, which the form routes and the JSON API both call,
+so each event has one definition of its fields:
 
 | Event | Fields |
 |---|---|
@@ -1332,6 +1332,7 @@ call, so each event has one definition of its fields:
 | `transaction.posted` / `transaction.replayed` | `transaction_id`, `idempotency_key`, `entry_count`, `account_ids` |
 | `transaction.rejected` | `idempotency_key`, `reason` |
 | `idempotency.conflict` (warning) | `idempotency_key` |
+| `ledger.full` (warning) | `reason`: which cap refused the write (§5.20) |
 | `request.completed` | `method`, `path`, `status`, `client`, `scheme`, `duration_ms` |
 | `request.failed` | `method`, `path`, `duration_ms` |
 
@@ -1549,6 +1550,51 @@ restart or deploy forgets every count. Scaling out needs a shared store
 
 `tests/test_rate_limit.py` drives the real app on a fake clock, with every
 database connection replaced by one that fails the test if used.
+
+### 5.20 `app/domain/capacity.py` — caps on accounts and transactions
+
+The rate limit slows one client down; it does nothing about many clients,
+or one with many addresses. On a free 0.5 GB database that leaves the disk
+to fill. `MAX_ACCOUNTS` (default 200) and `MAX_TRANSACTIONS` (default 2000)
+are a ceiling that holds however the writes arrive.
+
+**Sized from measurements.** On Postgres 16, counting every table and index
+a write touches, including the event row and the idempotency key, an
+account took about 1.1 KB and a two-entry transaction about 1.7 KB. The
+largest transaction the 64 KiB body limit admits, 470 entries under a
+512-character description, took about 91 KB. That worst case is what the
+cap has to be sized for. 2000 of them come to under 200 MB, less than half
+the database. A demo that is used normally will hold a few megabytes when
+it reaches the cap.
+
+**Where it is checked.** In the domain, inside the caller's transaction:
+`create_account_record(..., max_accounts=)` counts accounts before
+inserting, and `post_transaction_once(..., max_transactions=)` counts
+transactions after claiming the key and before posting. Either raises
+`LedgerFullError`, and the rollback takes the idempotency claim with it,
+so a refused key can be used again once there is room. Because the count
+comes after the claim, a replay of a posting that got in is still answered
+at the cap. It adds nothing, and a client retrying a posting that
+succeeded should hear that it succeeded. The routes pass the settings. The
+scripts pass nothing, so seeding, backfilling and rebuilding are never
+capped. `0` means no cap, which is what a real ledger wants.
+
+**The answer.** A `409` with code `ledger_full` from the API, and the form
+re-rendered with an inline error and a `409` from the pages, both saying
+which maximum was reached, plus a `ledger.full` warning in the log, which is
+the signal that the demo wants resetting. 409 rather than 507 Insufficient
+Storage because nothing is wrong with the server: the ledger is in a state
+that refuses the write, and retrying will not help until that state changes.
+
+**Not a lock.** The count takes no lock, so writes that run at the same
+moment can all see room and all commit, overshooting by at most the number
+of connections writing at once (15 with the default pool). Serialising
+every write to make a size limit exact would cost more than the few extra
+rows are worth.
+
+`tests/test_capacity.py` covers each cap through both interfaces, that a
+refused write leaves nothing behind, replays at the cap, a refused key
+posting once there is room, `0`, and the uncapped scripts.
 
 ---
 

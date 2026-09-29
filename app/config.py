@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     write_rate_limit: int = Field(30, ge=0)
     write_rate_window_seconds: int = Field(60, ge=1)
 
+    # The most accounts and transactions the ledger will hold; a write that
+    # would add one more is refused (app/domain/capacity.py). Sized for a free
+    # 0.5 GB database: the largest transaction the body limit admits measured
+    # about 91 KB on disk with its entries, event and key, so 2000 of them are
+    # under 200 MB, and a typical two-entry one is under 2 KB. An account is
+    # about 1 KB. 0 means no cap, which a real ledger wants.
+    max_accounts: int = Field(200, ge=0)
+    max_transactions: int = Field(2000, ge=0)
+
     # Level for the `keel` JSON logger (app/observability.py)
     log_level: str = "INFO"
 

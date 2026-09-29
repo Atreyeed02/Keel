@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.schema import accounts, events
 from app.domain.account_types import ACCOUNT_TYPES  # re-exported for the account form
+from app.domain.capacity import assert_room
 from app.domain.errors import describe_validation_error
 from app.domain.event_versions import CURRENT_VERSION
 
@@ -66,7 +67,9 @@ def validate_account(data: dict[str, str]) -> AccountInput:
         raise InvalidAccountError(describe_validation_error(exc)) from exc
 
 
-async def create_account_record(conn: AsyncConnection, account: AccountInput) -> uuid.UUID:
+async def create_account_record(
+    conn: AsyncConnection, account: AccountInput, *, max_accounts: int = 0
+) -> uuid.UUID:
     """
     Write a validated account and its `account.created` event.
 
@@ -77,7 +80,12 @@ async def create_account_record(conn: AsyncConnection, account: AccountInput) ->
     The event's `aggregate_id` is the account's id, which is what lets a
     rebuild recreate the account under the same id — every ledger entry
     that names it keeps pointing at the right row.
+
+    Raises `LedgerFullError` if the ledger already holds `max_accounts`
+    accounts. The routes pass `MAX_ACCOUNTS`; the scripts pass nothing, so
+    seeding and backfilling are never capped.
     """
+    await assert_room(conn, accounts, max_accounts, "account")
     account_id = uuid.uuid4()
 
     await conn.execute(

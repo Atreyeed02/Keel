@@ -26,6 +26,7 @@ from app.domain.accounts import (
     create_account_record,
     validate_account,
 )
+from app.domain.capacity import LedgerFullError
 from app.domain.errors import describe_validation_error
 from app.domain.idempotency import (
     IdempotencyConflictError,
@@ -44,6 +45,7 @@ from app.observability import (
     configure_logging,
     log_account_created,
     log_idempotency_conflict,
+    log_ledger_full,
     log_transaction,
     log_transaction_rejected,
     request_context_middleware,
@@ -319,21 +321,27 @@ async def create_account(
     currency: str = Form(""),
 ):
     raw_account = {"name": name, "account_type": account_type, "currency": currency}
-    try:
-        account = validate_account(raw_account)
-    except InvalidAccountError as exc:
+
+    def refused(message: str, status_code: int):
         return templates.TemplateResponse(
             request=request,
             name="account_new.html",
-            context={
-                "account": raw_account,
-                "account_types": ACCOUNT_TYPES,
-                "error": str(exc),
-            },
-            status_code=422,
+            context={"account": raw_account, "account_types": ACCOUNT_TYPES, "error": message},
+            status_code=status_code,
         )
-    async with engine.begin() as conn:
-        account_id = await create_account_record(conn, account)
+
+    try:
+        account = validate_account(raw_account)
+    except InvalidAccountError as exc:
+        return refused(str(exc), 422)
+    try:
+        async with engine.begin() as conn:
+            account_id = await create_account_record(
+                conn, account, max_accounts=settings.max_accounts
+            )
+    except LedgerFullError as exc:
+        log_ledger_full(str(exc))
+        return refused(str(exc), 409)
     # after the commit, so the line only ever describes an account that exists
     log_account_created(account_id, account.account_type, account.currency)
     return RedirectResponse(url="/", status_code=302)
@@ -364,13 +372,13 @@ async def submit_post_transaction(
     ]
     submission_key = submission_key or str(uuid.uuid4())
 
-    async def invalid(message: str):
+    async def invalid(message: str, status_code: int = 422):
         context = await _form_context(raw_entries)
         context.update(
             {"error": message, "description": description, "submission_key": submission_key}
         )
         return templates.TemplateResponse(
-            request=request, name="post_transaction.html", context=context, status_code=422
+            request=request, name="post_transaction.html", context=context, status_code=status_code
         )
 
     try:
@@ -395,8 +403,16 @@ async def submit_post_transaction(
     try:
         async with engine.begin() as conn:
             transaction_id, replayed = await post_transaction_once(
-                conn, submission_key, fingerprint, entries, description or None
+                conn,
+                submission_key,
+                fingerprint,
+                entries,
+                description or None,
+                max_transactions=settings.max_transactions,
             )
+    except LedgerFullError as exc:
+        log_ledger_full(str(exc))
+        return await invalid(str(exc), 409)
     except EntryAccountError as exc:
         log_transaction_rejected(submission_key, str(exc))
         return await invalid(str(exc))

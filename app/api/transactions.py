@@ -27,7 +27,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from app.api.errors import ApiError, read_json_object
 from app.api.serialize import transaction_json
+from app.config import settings
 from app.db.engine import engine
+from app.domain.capacity import LedgerFullError
 from app.domain.errors import describe_validation_error
 from app.domain.idempotency import (
     IdempotencyConflictError,
@@ -44,6 +46,7 @@ from app.domain.ledger import (
 from app.domain.reads import transaction_with_entries
 from app.observability import (
     log_idempotency_conflict,
+    log_ledger_full,
     log_transaction,
     log_transaction_rejected,
 )
@@ -174,8 +177,16 @@ async def post_transaction_api(
     try:
         async with engine.begin() as conn:
             transaction_id, replayed = await post_transaction_once(
-                conn, key, entries_fingerprint(description, entries), entries, description
+                conn,
+                key,
+                entries_fingerprint(description, entries),
+                entries,
+                description,
+                max_transactions=settings.max_transactions,
             )
+    except LedgerFullError as exc:
+        log_ledger_full(str(exc))
+        raise ApiError(409, "ledger_full", str(exc)) from exc
     except EntryAccountError as exc:
         log_transaction_rejected(key, str(exc))
         raise ApiError(422, "invalid_accounts", str(exc)) from exc

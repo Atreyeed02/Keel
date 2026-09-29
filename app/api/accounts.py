@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.errors import ApiError, read_json_object
 from app.api.serialize import account_json
+from app.config import settings
 from app.db.engine import engine
 from app.domain.accounts import (
     ACCOUNT_TYPES,
@@ -18,8 +19,9 @@ from app.domain.accounts import (
     create_account_record,
     validate_account,
 )
+from app.domain.capacity import LedgerFullError
 from app.domain.reads import account_balances
-from app.observability import log_account_created
+from app.observability import log_account_created, log_ledger_full
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -57,8 +59,14 @@ async def create_account(request: Request):
     except InvalidAccountError as exc:
         raise ApiError(422, "validation_error", str(exc)) from exc
 
-    async with engine.begin() as conn:
-        account_id = await create_account_record(conn, account)
+    try:
+        async with engine.begin() as conn:
+            account_id = await create_account_record(
+                conn, account, max_accounts=settings.max_accounts
+            )
+    except LedgerFullError as exc:
+        log_ledger_full(str(exc))
+        raise ApiError(409, "ledger_full", str(exc)) from exc
     log_account_created(account_id, account.account_type, account.currency)
 
     async with engine.connect() as conn:

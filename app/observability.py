@@ -153,3 +153,8 @@ def log_transaction_rejected(idempotency_key: str, reason: str) -> None:
 
 def log_idempotency_conflict(idempotency_key: str) -> None:
     log.warning("idempotency.conflict", extra={"idempotency_key": idempotency_key})
+
+
+def log_ledger_full(reason: str) -> None:
+    """A write refused by MAX_ACCOUNTS or MAX_TRANSACTIONS: time to reset the demo."""
+    log.warning("ledger.full", extra={"reason": reason})
