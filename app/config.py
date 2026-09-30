@@ -15,8 +15,8 @@ DEFAULT_DATABASE_URL = "postgresql+asyncpg://ledger:ledger@db:5432/ledger"
 # the only environment scripts/reset_demo_data.py will wipe.
 HOSTED_ENVIRONMENTS = ("production", "demo")
 
-# libpq's sslmode values. asyncpg accepts the same strings for its `ssl`
-# argument, and psycopg takes them as `sslmode` in the URL.
+# libpq's sslmode values, weakest first. asyncpg accepts the same strings for
+# its `ssl` argument, and psycopg takes them as `sslmode` in the URL.
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 # The modes that never fall back to plaintext. "allow" and "prefer" do, quietly,
 # when the server does not offer TLS, so a hosted environment refuses them.
@@ -52,8 +52,9 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
     asyncpg and for psycopg.
 
     `postgres://`, `postgresql://` and `postgresql+<driver>://` are all the
-    same database. `sslmode` in the URL is honoured, and `ssl` (the
-    DATABASE_SSL setting) overrides it. Any other query parameter is passed
+    same database. `sslmode` in the URL and `ssl` (the DATABASE_SSL setting)
+    are both honoured: when both are given, the stricter one is used, so
+    neither can quietly weaken the other. Any other query parameter is passed
     through untouched.
     """
     parts = urlsplit(url)
@@ -64,9 +65,11 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
     query = parse_qsl(parts.query, keep_blank_values=True)
     url_mode = next((value for key, value in query if key == "sslmode"), None)
     others = [(key, value) for key, value in query if key != "sslmode"]
-    mode = ssl or url_mode
-    if mode is not None and mode not in SSL_MODES:
-        raise ValueError(f"SSL mode must be one of {', '.join(SSL_MODES)}, not {mode!r}")
+    given = [mode for mode in (ssl, url_mode) if mode is not None]
+    for mode in given:
+        if mode not in SSL_MODES:
+            raise ValueError(f"SSL mode must be one of {', '.join(SSL_MODES)}, not {mode!r}")
+    mode = max(given, key=SSL_MODES.index) if given else None
 
     def spelled(scheme: str, params: list[tuple[str, str]]) -> str:
         return urlunsplit((scheme, parts.netloc, parts.path, urlencode(params), parts.fragment))
@@ -91,8 +94,9 @@ class Settings(BaseSettings):
     # Any Postgres URL: postgres://, postgresql:// or postgresql+asyncpg://.
     # `database` below spells it for each driver.
     database_url: str = DEFAULT_DATABASE_URL
-    # TLS to Postgres, one of SSL_MODES. Overrides an sslmode in the URL; unset
-    # means whatever the URL says, else the driver's default. A hosted
+    # TLS to Postgres, one of SSL_MODES. With an sslmode in the URL too, the
+    # stricter of the two is used; unset means whatever the URL says, else the
+    # driver's default. A hosted
     # environment needs one of ENCRYPTED_SSL_MODES, from here or the URL.
     database_ssl: str | None = None
 

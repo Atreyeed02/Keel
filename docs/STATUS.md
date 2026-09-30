@@ -30,9 +30,9 @@ migration.
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **241 tests** |
-| `pytest` (no database available) | 140 passed, 101 skipped |
-| `pytest` (local Postgres 16) | 241 passed |
+| `pytest` collection | **250 tests** |
+| `pytest` (no database available) | 149 passed, 101 skipped |
+| `pytest` (local Postgres 16) | 250 passed |
 | `alembic upgrade head` → `downgrade base` → `upgrade head`, then `alembic check` | clean, on a scratch database; `alembic check` also runs in CI |
 | New tests fail without their change | each behaviour of the rate limit, the caps, the demo notice and the reset script was broken on purpose, one at a time, and a test failed every time. The startup guard's TLS and `FORWARDED_ALLOW_IPS` checks: all 22 refusal cases fail against the `app/config.py` without them |
 | `scripts.reset_demo_data` on a migrated database | refused with `ENVIRONMENT=production`; only counted without `--yes`; with `--yes` removed a visitor's account, restored 8 accounts and 18 events from sequence 1, and left the append-only trigger enabled |
@@ -40,7 +40,7 @@ migration.
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
 The 101 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 140 tests
+unless `TEST_DATABASE_URL` is set, so **a green local run of 149 tests
 means barely half the suite actually executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -312,7 +312,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 140 of 241 tests:
+you are running 149 of 250 tests:
 
 ```bash
 docker compose up -d db

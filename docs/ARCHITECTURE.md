@@ -649,8 +649,11 @@ spells the URL twice: `postgresql+asyncpg://` for the app and
 because asyncpg refuses it in the URL. It is taken out of the asyncpg URL
 and passed as asyncpg's own `ssl` argument (`app/db/engine.py`), while
 psycopg, which is libpq underneath, keeps it in the URL. `DATABASE_SSL`
-(one of libpq's modes, from `disable` to `verify-full`) overrides whatever
-the URL says. A malformed URL or unknown mode stops the process at start.
+(one of libpq's modes, from `disable` to `verify-full`) and the URL's
+`sslmode` are both honoured: when they differ, the stricter one is used,
+so a leftover setting in one place can never weaken the other. With
+`DATABASE_SSL=require` and `?sslmode=verify-full`, the connection verifies
+the certificate and host name. A malformed URL or unknown mode stops the process at start.
 Alembic stores the URL in an ini-style config where `%` is special, so it
 gets `alembic_url`, the psycopg URL with `%` escaped; a percent-encoded
 password would otherwise break every migration.
@@ -661,9 +664,9 @@ starts, if any of these holds:
 
 - `DATABASE_URL` was not set, or is the `ledger:ledger@db` default in any
   spelling.
-- The database connection is not encrypted: the effective SSL mode
-  (`DATABASE_SSL`, else the URL's `sslmode`) is not `require`, `verify-ca`
-  or `verify-full`. No mode, `disable`, `allow` and `prefer` are all
+- The database connection is not encrypted: the effective SSL mode (the
+  stricter of `DATABASE_SSL` and the URL's `sslmode`) is not `require`,
+  `verify-ca` or `verify-full`. No mode, `disable`, `allow` and `prefer` are all
   refused; the last two fall back to plaintext when the server offers no
   TLS. An `sslmode` in the URL counts, because managed databases put one
   in the URLs they hand out.
@@ -1777,7 +1780,7 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 241 tests (§5.11). 140 run with no database at all: the
+**Testing** — 250 tests (§5.11). 149 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
@@ -1795,7 +1798,7 @@ broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"140 passed, 101 skipped" and is not a passing build. See the README for
+"149 passed, 101 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that

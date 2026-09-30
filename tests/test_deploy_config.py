@@ -72,13 +72,33 @@ def test_sslmode_in_the_url_moves_out_of_asyncpgs_url():
     )
 
 
-def test_the_database_ssl_setting_overrides_the_url(clean_env):
+@pytest.mark.parametrize(
+    ("database_ssl", "url_mode", "used"),
+    [
+        ("verify-full", "disable", "verify-full"),
+        ("require", "disable", "require"),
+        # the other way round: DATABASE_SSL cannot weaken what the URL asks for
+        ("disable", "require", "require"),
+        ("require", "verify-full", "verify-full"),
+        ("verify-ca", "verify-full", "verify-full"),
+        ("allow", "prefer", "prefer"),
+        ("require", "require", "require"),
+    ],
+)
+def test_the_stricter_of_database_ssl_and_the_urls_sslmode_is_used(
+    clean_env, database_ssl, url_mode, used
+):
     settings = _settings(
-        database_url="postgres://u:p@h/keel?sslmode=disable", database_ssl="verify-full"
+        database_url=f"postgres://u:p@h/keel?sslmode={url_mode}", database_ssl=database_ssl
     )
-    assert settings.database.ssl == "verify-full"
-    assert "sslmode=verify-full" in settings.database.sync_url
+    assert settings.database.ssl == used
+    assert settings.database.sync_url == f"postgresql+psycopg://u:p@h/keel?sslmode={used}"
     assert "sslmode" not in settings.database.async_url
+
+
+def test_a_bad_sslmode_in_the_url_stops_startup_even_with_database_ssl_set(clean_env):
+    with pytest.raises(ValidationError, match="SSL mode must be one of"):
+        _settings(database_url="postgres://u:p@h/keel?sslmode=yes", database_ssl="require")
 
 
 @pytest.mark.parametrize(
@@ -188,13 +208,13 @@ def test_the_public_demo_is_guarded_like_production(clean_env):
             {"database_ssl": None, "database_url": "postgres://u:p@h/keel?sslmode=disable"},
             "SSL mode 'disable'",
         ),
-        # DATABASE_SSL overrides the URL, so turning TLS off there wins
+        # neither setting encrypts, so neither can rescue the other
         (
-            {"database_ssl": "disable", "database_url": "postgres://u:p@h/keel?sslmode=require"},
-            "SSL mode 'disable'",
+            {"database_ssl": "prefer", "database_url": "postgres://u:p@h/keel?sslmode=disable"},
+            "SSL mode 'prefer'",
         ),
     ],
-    ids=["unset", "disable", "allow", "prefer", "disable-in-url", "disable-overrides-url"],
+    ids=["unset", "disable", "allow", "prefer", "disable-in-url", "weak-in-both"],
 )
 def test_a_hosted_environment_refuses_to_start_without_tls(clean_env, environment, tls, found):
     with pytest.raises(
@@ -211,8 +231,18 @@ def test_a_hosted_environment_refuses_to_start_without_tls(clean_env, environmen
         {"database_ssl": "verify-full"},
         # a managed database's own URL, with DATABASE_SSL left unset
         {"database_ssl": None, "database_url": "postgres://u:p@h/keel?sslmode=require"},
+        # conflicting: the stricter one is used, so these start encrypted
+        {"database_ssl": "require", "database_url": "postgres://u:p@h/keel?sslmode=disable"},
+        {"database_ssl": "disable", "database_url": "postgres://u:p@h/keel?sslmode=require"},
     ],
-    ids=["require", "verify-ca", "verify-full", "require-in-url"],
+    ids=[
+        "require",
+        "verify-ca",
+        "verify-full",
+        "require-in-url",
+        "require-beats-disable-in-url",
+        "require-in-url-beats-disable",
+    ],
 )
 def test_a_hosted_environment_starts_with_tls_from_either_setting(clean_env, tls):
     assert _settings(environment="production", **{**HOSTED, **tls}).database.ssl in (
