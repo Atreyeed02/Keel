@@ -5,11 +5,12 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The local-development database. Never acceptable in production; see
-# `Settings.refuse_default_database_in_production`.
+# `Settings.refuse_unsafe_hosted_config`.
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://ledger:ledger@db:5432/ledger"
 
 # Environments that run on a host, not a laptop: each refuses to start on the
-# local development database (`Settings.refuse_default_database_in_production`).
+# local development database, without TLS to Postgres, or trusting any
+# proxy's forwarded headers (`Settings.refuse_unsafe_hosted_config`).
 # "demo" is the public demo: it also shows the demo notice on every page and is
 # the only environment scripts/reset_demo_data.py will wipe.
 HOSTED_ENVIRONMENTS = ("production", "demo")
@@ -17,6 +18,9 @@ HOSTED_ENVIRONMENTS = ("production", "demo")
 # libpq's sslmode values. asyncpg accepts the same strings for its `ssl`
 # argument, and psycopg takes them as `sslmode` in the URL.
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
+# The modes that never fall back to plaintext. "allow" and "prefer" do, quietly,
+# when the server does not offer TLS, so a hosted environment refuses them.
+ENCRYPTED_SSL_MODES = ("require", "verify-ca", "verify-full")
 
 
 @dataclass(frozen=True)
@@ -81,14 +85,15 @@ class Settings(BaseSettings):
 
     app_name: str = "ledger-service"
     # "development" (the default), "production", or "demo" for the public demo.
-    # Either hosted one turns on `refuse_default_database_in_production`.
+    # Either hosted one turns on `refuse_unsafe_hosted_config`.
     environment: str = "development"
 
     # Any Postgres URL: postgres://, postgresql:// or postgresql+asyncpg://.
     # `database` below spells it for each driver.
     database_url: str = DEFAULT_DATABASE_URL
     # TLS to Postgres, one of SSL_MODES. Overrides an sslmode in the URL; unset
-    # means whatever the URL says, else the driver's default.
+    # means whatever the URL says, else the driver's default. A hosted
+    # environment needs one of ENCRYPTED_SSL_MODES, from here or the URL.
     database_ssl: str | None = None
 
     # Pool sizing — conservative defaults for a single small container
@@ -111,7 +116,8 @@ class Settings(BaseSettings):
     # takes the header's leftmost address, which a client writes itself when
     # the router appends to the header rather than replacing it, as Render
     # has said its router does. Any client could then claim a fresh address,
-    # and a fresh write allowance, with every request.
+    # and a fresh write allowance, with every request. A hosted environment
+    # refuses to start on "*", or on nothing at all.
     forwarded_allow_ips: str = "127.0.0.1"
 
     # Largest request body accepted, in bytes (app/security.py). A posting with
@@ -137,7 +143,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     @model_validator(mode="after")
-    def refuse_default_database_in_production(self) -> "Settings":
+    def refuse_unsafe_hosted_config(self) -> "Settings":
         # Parsing here, not lazily, so a malformed URL or SSL mode stops the
         # process at start rather than at the first query.
         target = database_target(self.database_url, self.database_ssl)
@@ -153,6 +159,27 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"ENVIRONMENT={environment} but DATABASE_URL is the local development "
                     "default (ledger:ledger@db). Refusing to start."
+                )
+            # The effective mode, so an sslmode in the URL counts as much as
+            # DATABASE_SSL does: the managed databases' own URLs carry one.
+            if target.ssl not in ENCRYPTED_SSL_MODES:
+                found = "no SSL mode" if target.ssl is None else f"SSL mode {target.ssl!r}"
+                raise ValueError(
+                    f"ENVIRONMENT={environment} but the database connection has {found}. "
+                    "Refusing to start without TLS to Postgres: set DATABASE_SSL (or sslmode "
+                    f"in DATABASE_URL) to one of {', '.join(ENCRYPTED_SSL_MODES)}."
+                )
+            trusted = [entry.strip() for entry in self.forwarded_allow_ips.split(",")]
+            if "*" in trusted:
+                raise ValueError(
+                    f"ENVIRONMENT={environment} but FORWARDED_ALLOW_IPS trusts '*'. Refusing to "
+                    "start: any client could then choose its own address, and a fresh write "
+                    "allowance with it. Name the proxy's networks instead."
+                )
+            if not any(trusted):
+                raise ValueError(
+                    f"ENVIRONMENT={environment} but FORWARDED_ALLOW_IPS is empty. Refusing to "
+                    "start: name the proxy's networks, or 127.0.0.1 if there is no proxy."
                 )
         return self
 

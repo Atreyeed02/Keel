@@ -30,17 +30,17 @@ migration.
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **214 tests** |
-| `pytest` (no database available) | 113 passed, 101 skipped |
-| `pytest` (local Postgres 16) | 214 passed |
+| `pytest` collection | **241 tests** |
+| `pytest` (no database available) | 140 passed, 101 skipped |
+| `pytest` (local Postgres 16) | 241 passed |
 | `alembic upgrade head` → `downgrade base` → `upgrade head`, then `alembic check` | clean, on a scratch database; `alembic check` also runs in CI |
-| New tests fail without their change | each behaviour of the rate limit, the caps, the demo notice and the reset script was broken on purpose, one at a time, and a test failed every time |
+| New tests fail without their change | each behaviour of the rate limit, the caps, the demo notice and the reset script was broken on purpose, one at a time, and a test failed every time. The startup guard's TLS and `FORWARDED_ALLOW_IPS` checks: all 22 refusal cases fail against the `app/config.py` without them |
 | `scripts.reset_demo_data` on a migrated database | refused with `ENVIRONMENT=production`; only counted without `--yes`; with `--yes` removed a visitor's account, restored 8 accounts and 18 events from sequence 1, and left the append-only trigger enabled |
 | Storage per write, Postgres 16 | account ≈ 1.1 KB; two-entry transaction ≈ 1.7 KB; largest transaction the body limit admits (470 entries) ≈ 91 KB. The source of the default caps. |
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
 The 101 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 113 tests
+unless `TEST_DATABASE_URL` is set, so **a green local run of 140 tests
 means barely half the suite actually executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -197,10 +197,12 @@ What a public demo on a container host needs, with the README's
 
 - **Configuration a host can supply.** `DATABASE_URL` in any Postgres
   spelling, TLS via `sslmode` or `DATABASE_SSL`, `PORT`. `ENVIRONMENT=production`
-  or `demo` refuses to start on the local development database.
+  or `demo` refuses to start on the local development database, without
+  TLS to Postgres (`require` or stricter), or with `FORWARDED_ALLOW_IPS`
+  set to `*` or nothing.
 - **A start command for hosts.** `python -m app.serve` migrates, then
   serves, in a container running as an unprivileged user. Migrating on
-  start assumes one instance (`--no-migrate` for a release step).
+  start is one reason Keel must run as a single instance.
 - **Behind a proxy.** Uvicorn believes `X-Forwarded-For`/`-Proto` only from
   `FORWARDED_ALLOW_IPS`. On Render that is the private networks,
   `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, **not `*`**: with `*` uvicorn
@@ -310,7 +312,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 113 of 214 tests:
+you are running 140 of 241 tests:
 
 ```bash
 docker compose up -d db

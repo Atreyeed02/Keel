@@ -1,10 +1,12 @@
 """
 Configuration for running on a container host: DATABASE_URL in the forms
-hosts hand out, TLS to a managed Postgres, PORT, the production guard, and
-the migrate-then-serve start command.
+hosts hand out, TLS to a managed Postgres, PORT, the guard on hosted
+environments, and the migrate-then-serve start command.
 
 No database needed.
 """
+
+import re
 
 import pytest
 from pydantic import ValidationError
@@ -17,12 +19,28 @@ from app.config import DEFAULT_DATABASE_URL, Settings, database_target
 @pytest.fixture
 def clean_env(monkeypatch):
     """Settings built from nothing but what a test passes, not this shell's environment."""
-    for name in ("DATABASE_URL", "DATABASE_SSL", "ENVIRONMENT", "PORT", "HOST"):
+    for name in (
+        "DATABASE_URL",
+        "DATABASE_SSL",
+        "ENVIRONMENT",
+        "PORT",
+        "HOST",
+        "FORWARDED_ALLOW_IPS",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
 def _settings(**values) -> Settings:
     return Settings(_env_file=None, **values)
+
+
+# Everything a hosted environment needs to start. Each guard test below takes
+# this and breaks one thing, so the refusal it sees is that thing's.
+HOSTED = {
+    "database_url": "postgres://u:p@h/keel",
+    "database_ssl": "require",
+    "forwarded_allow_ips": "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+}
 
 
 # --- DATABASE_URL, whatever the host calls it ----------------------------------------
@@ -116,7 +134,7 @@ def test_the_engine_passes_tls_as_asyncpgs_ssl_argument(monkeypatch):
         importlib.reload(engine_module)
 
 
-# --- the production guard -----------------------------------------------------------
+# --- the guard on hosted environments (production, demo) ----------------------------
 
 
 def test_production_refuses_to_start_on_the_default_database(clean_env):
@@ -126,11 +144,12 @@ def test_production_refuses_to_start_on_the_default_database(clean_env):
     assert _settings().database_url == DEFAULT_DATABASE_URL
 
 
-def test_production_starts_once_database_url_is_set(clean_env, monkeypatch):
-    assert _settings(environment="Production", database_url="postgres://u:p@h/keel")
+def test_production_starts_once_it_is_configured_for_a_host(clean_env, monkeypatch):
+    assert _settings(environment="Production", **HOSTED)
     # the usual way: from the environment the host provides
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("DATABASE_URL", "postgres://u:p@h/keel")
+    for name, value in HOSTED.items():
+        monkeypatch.setenv(name.upper(), value)
     assert _settings().environment == "production"
 
 
@@ -141,7 +160,7 @@ def test_production_starts_once_database_url_is_set(clean_env, monkeypatch):
 )
 def test_production_refuses_the_default_url_even_when_set_explicitly(clean_env, url):
     with pytest.raises(ValidationError, match="is the local development default"):
-        _settings(environment="production", database_url=url)
+        _settings(environment="production", **{**HOSTED, "database_url": url})
 
 
 def test_the_public_demo_is_guarded_like_production(clean_env):
@@ -149,11 +168,86 @@ def test_the_public_demo_is_guarded_like_production(clean_env):
     with pytest.raises(ValidationError, match="ENVIRONMENT=demo but DATABASE_URL is not set"):
         _settings(environment="demo")
     with pytest.raises(ValidationError, match="is the local development default"):
-        _settings(environment="Demo", database_url=DEFAULT_DATABASE_URL)
-    demo = _settings(environment="Demo", database_url="postgres://u:p@h/keel")
+        _settings(environment="Demo", **{**HOSTED, "database_url": DEFAULT_DATABASE_URL})
+    demo = _settings(environment="Demo", **HOSTED)
     assert demo.is_demo
-    assert not _settings(environment="production", database_url="postgres://u:p@h/keel").is_demo
+    assert not _settings(environment="production", **HOSTED).is_demo
     assert not _settings().is_demo
+
+
+@pytest.mark.parametrize("environment", ["production", "demo"])
+@pytest.mark.parametrize(
+    ("tls", "found"),
+    [
+        ({"database_ssl": None}, "no SSL mode"),
+        ({"database_ssl": "disable"}, "SSL mode 'disable'"),
+        # both fall back to plaintext when the server offers no TLS
+        ({"database_ssl": "allow"}, "SSL mode 'allow'"),
+        ({"database_ssl": "prefer"}, "SSL mode 'prefer'"),
+        (
+            {"database_ssl": None, "database_url": "postgres://u:p@h/keel?sslmode=disable"},
+            "SSL mode 'disable'",
+        ),
+        # DATABASE_SSL overrides the URL, so turning TLS off there wins
+        (
+            {"database_ssl": "disable", "database_url": "postgres://u:p@h/keel?sslmode=require"},
+            "SSL mode 'disable'",
+        ),
+    ],
+    ids=["unset", "disable", "allow", "prefer", "disable-in-url", "disable-overrides-url"],
+)
+def test_a_hosted_environment_refuses_to_start_without_tls(clean_env, environment, tls, found):
+    with pytest.raises(
+        ValidationError, match=re.escape(f"database connection has {found}. Refusing")
+    ):
+        _settings(environment=environment, **{**HOSTED, **tls})
+
+
+@pytest.mark.parametrize(
+    "tls",
+    [
+        {"database_ssl": "require"},
+        {"database_ssl": "verify-ca"},
+        {"database_ssl": "verify-full"},
+        # a managed database's own URL, with DATABASE_SSL left unset
+        {"database_ssl": None, "database_url": "postgres://u:p@h/keel?sslmode=require"},
+    ],
+    ids=["require", "verify-ca", "verify-full", "require-in-url"],
+)
+def test_a_hosted_environment_starts_with_tls_from_either_setting(clean_env, tls):
+    assert _settings(environment="production", **{**HOSTED, **tls}).database.ssl in (
+        "require",
+        "verify-ca",
+        "verify-full",
+    )
+
+
+@pytest.mark.parametrize("environment", ["production", "demo"])
+@pytest.mark.parametrize(
+    ("trusted", "refusal"),
+    [
+        ("*", "trusts '*'"),
+        (" * ", "trusts '*'"),
+        ("10.0.0.0/8,*", "trusts '*'"),
+        ("", "is empty"),
+        (" , ", "is empty"),
+    ],
+    ids=["star", "star-padded", "star-in-a-list", "empty", "only-commas"],
+)
+def test_a_hosted_environment_refuses_to_trust_every_proxy_or_none(
+    clean_env, environment, trusted, refusal
+):
+    with pytest.raises(
+        ValidationError, match=re.escape(f"FORWARDED_ALLOW_IPS {refusal}. Refusing")
+    ):
+        _settings(environment=environment, **{**HOSTED, "forwarded_allow_ips": trusted})
+
+
+def test_the_hosted_guard_leaves_development_alone(clean_env):
+    """A laptop has no managed Postgres and may put anything in FORWARDED_ALLOW_IPS."""
+    development = _settings(database_ssl="disable", forwarded_allow_ips="*")
+    assert development.database.ssl == "disable"
+    assert _settings(forwarded_allow_ips="").forwarded_allow_ips == ""
 
 
 # --- PORT and the start command ------------------------------------------------------

@@ -655,11 +655,22 @@ Alembic stores the URL in an ini-style config where `%` is special, so it
 gets `alembic_url`, the psycopg URL with `%` escaped; a percent-encoded
 password would otherwise break every migration.
 
-**Production refuses the development default.** With
+**Production refuses an unsafe configuration.** With
 `ENVIRONMENT=production`, `Settings` raises at import, so the process never
-starts, if `DATABASE_URL` was not set or is the `ledger:ledger@db` default
-in any spelling. `ENVIRONMENT=demo`, the public demo, is hosted too and gets
-the same guard. It also turns on the demo notice (§5.8) and is the only
+starts, if any of these holds:
+
+- `DATABASE_URL` was not set, or is the `ledger:ledger@db` default in any
+  spelling.
+- The database connection is not encrypted: the effective SSL mode
+  (`DATABASE_SSL`, else the URL's `sslmode`) is not `require`, `verify-ca`
+  or `verify-full`. No mode, `disable`, `allow` and `prefer` are all
+  refused; the last two fall back to plaintext when the server offers no
+  TLS. An `sslmode` in the URL counts, because managed databases put one
+  in the URLs they hand out.
+- `FORWARDED_ALLOW_IPS` contains `*`, alone or in a list, or names nothing.
+  With `*` uvicorn believes a client's own `X-Forwarded-For` (§5.15).
+
+`ENVIRONMENT=demo`, the public demo, is hosted too and gets the same guard. It also turns on the demo notice (§5.8) and is the only
 environment the reset script (§5.10) runs in.
 
 **`PORT`** (default 8000) and `HOST` (default `0.0.0.0`) are where
@@ -1766,7 +1777,7 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 214 tests (§5.11). 113 run with no database at all: the
+**Testing** — 241 tests (§5.11). 140 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
@@ -1784,7 +1795,7 @@ broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"113 passed, 101 skipped" and is not a passing build. See the README for
+"140 passed, 101 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
