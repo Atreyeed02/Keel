@@ -48,7 +48,8 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.db.schema import idempotency_keys
+from app.db.schema import idempotency_keys, transactions
+from app.domain.capacity import assert_room
 from app.domain.ledger import EntryInput, post_transaction
 
 
@@ -122,6 +123,8 @@ async def post_transaction_once(
     fingerprint: str,
     entries: list[EntryInput],
     description: str | None,
+    *,
+    max_transactions: int = 0,
 ) -> tuple[uuid.UUID, bool]:
     """
     Post `entries` under `key` unless that key has already been used.
@@ -130,9 +133,12 @@ async def post_transaction_once(
     was already committed and nothing new was written.
 
     Raises `IdempotencyConflictError` when the key was committed for a
-    request with a different fingerprint. Anything `post_transaction`
-    raises propagates unchanged, and rolling back the caller's transaction
-    releases the claim along with everything else.
+    request with a different fingerprint, and `LedgerFullError` when a new
+    posting would take the ledger past `max_transactions` (0: no cap). A
+    replay adds nothing, so it is answered even when the ledger is full.
+    Anything `post_transaction` raises propagates unchanged, and rolling
+    back the caller's transaction releases the claim along with everything
+    else.
 
     Same contract as `post_transaction`: the caller owns the transaction
     boundary. The claim only protects anything if it commits atomically
@@ -161,6 +167,7 @@ async def post_transaction_once(
             raise IdempotencyConflictError("submission key was used for another request")
         return uuid.UUID(saved["response_body"]["transaction_id"]), True
 
+    await assert_room(conn, transactions, max_transactions, "transaction")
     transaction_id = await post_transaction(conn, entries, description)
     await conn.execute(
         update(idempotency_keys)

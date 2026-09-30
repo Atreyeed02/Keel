@@ -8,12 +8,21 @@
 # that the image is self-contained (the docker-smoke CI job, any deployment)
 # must bypass this file with `docker compose -f docker-compose.yml`.
 #
+# `--reload` makes that live: uvicorn restarts when a file under app/ changes.
+# It polls for changes (WATCHFILES_FORCE_POLLING) because a bind mount from a
+# Windows or macOS host usually delivers no file-change events into Docker's
+# Linux VM, so without polling nothing would ever reload. The image's own
+# start command, which production runs, never passes --reload.
+#
 # Long syntax so `create_host_path` can be turned off. With the short form,
 # Compose creates a missing ./app as an empty directory and mounts that over
 # the image's code, so a checkout without it would start a container with no
 # application in it. Now `docker compose up` refuses instead.
 services:
   app:
+    command: ["python", "-m", "app.serve", "--reload"]
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - type: bind
         source: ./app

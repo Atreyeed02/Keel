@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-09-27.** A snapshot of what is actually built, what is
+**As of 2026-09-29.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,39 +10,39 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Both feature branches are merged, with regular merge commits, and deleted:
+Four PRs are merged into `main`, with regular merge commits, and their
+branches deleted:
 
 | PR | Branch | Merge commit on `main` |
 |---|---|---|
 | [#1](https://github.com/Atreyeed02/Keel/pull/1) | `feat/event-sourced-accounts-and-rebuild` (18 commits) | `104f6a1` |
 | [#2](https://github.com/Atreyeed02/Keel/pull/2) | `feat/json-api` (4 commits) | `bd9db76` |
+| [#3](https://github.com/Atreyeed02/Keel/pull/3) | `docs/status-after-merges` | `250b7e6` |
+| [#4](https://github.com/Atreyeed02/Keel/pull/4) | `chore/small-fixes` | `3f2be79` |
 
-CI passed both jobs on each PR and on `main` after each merge. No
-feature branches remain.
+CI passed on `main` after each merge, most recently at `f795e0b`.
 
-Everything below was checked against the working tree at migration head
-`c2e8f4a61b07`, not read off the older prose in `ARCHITECTURE.md`.
+**In review: `chore/deploy-readiness`**, which makes Keel fit to run as a
+public demo on a container host (§2, "Deploy readiness"). Everything below
+was checked on that branch, at migration head `c2e8f4a61b07`; it adds no
+migration.
 
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **134 tests** |
-| `pytest` (no database available) | 48 passed, 86 skipped |
-| `pytest` (local Postgres 16) | 134 passed |
-| `pytest -W error::DeprecationWarning` on the pinned stack | 134 passed |
-| `pip-audit -r requirements.txt` | no known vulnerabilities |
-| `alembic upgrade head` → `downgrade base` → `upgrade head` | clean (10 migrations each way), on a scratch database |
-| `alembic check` | no differences; also runs in CI's `lint-and-test` job |
-| Migrated schema vs. `metadata.create_all` | identical functions, triggers and indexes (only alembic's own table differs) |
-| App booted with uvicorn on a migrated database | health, account creation, posting, retry, 409, the transaction filter and all three maintenance CLIs verified; the JSON API's 201, 200 replay (`Idempotent-Replayed`), 400, 409, balances and `/docs` verified over real HTTP |
-| `docker compose config` (base, and base + override) | valid |
-| Docker image build | built and smoke-tested by CI's `docker-smoke` on both PRs and on `main` at `bd9db76`: healthy `/health`, migrated to `5e8d2a1f9c63`, a real posting through the container. Not run locally, where Docker was not running. |
-| CI on `main` at `bd9db76` | `lint-and-test` (119 passed, 0 skipped) and `docker-smoke` both pass |
+| `pytest` collection | **250 tests** |
+| `pytest` (no database available) | 149 passed, 101 skipped |
+| `pytest` (local Postgres 16) | 250 passed |
+| `alembic upgrade head` → `downgrade base` → `upgrade head`, then `alembic check` | clean, on a scratch database; `alembic check` also runs in CI |
+| New tests fail without their change | each behaviour of the rate limit, the caps, the demo notice and the reset script was broken on purpose, one at a time, and a test failed every time. The startup guard's TLS and `FORWARDED_ALLOW_IPS` checks: all 22 refusal cases fail against the `app/config.py` without them |
+| `scripts.reset_demo_data` on a migrated database | refused with `ENVIRONMENT=production`; only counted without `--yes`; with `--yes` removed a visitor's account, restored 8 accounts and 18 events from sequence 1, and left the append-only trigger enabled |
+| Storage per write, Postgres 16 | account ≈ 1.1 KB; two-entry transaction ≈ 1.7 KB; largest transaction the body limit admits (470 entries) ≈ 91 KB. The source of the default caps. |
+| `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
-The 86 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 48 tests
-means barely a third of the suite actually executed.** Do not read it
-as a passing build. See §5 for the command that runs the real thing.
+The 101 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 149 tests
+means barely half the suite actually executed.** Do not read it as a
+passing build. See §5 for the command that runs the real thing.
 
 > **`alembic check` passes and runs in CI.** It used to report one
 > difference: `schema.py` declared a unique constraint on
@@ -133,7 +133,7 @@ same domain functions as the pages; the shared read queries moved to
 `app/domain/reads.py`. Errors share `{"error": {"code", "message"}}`
 under `/api/` only, amounts are strings in and out, and the fingerprint
 compares requests by meaning rather than bytes (`ARCHITECTURE.md` §4 and
-§5.16 have the reasoning). `tests/test_api.py` has 33 tests, 22 of them
+§5.16 have the reasoning). `tests/test_api.py` has 34 tests, 22 of them
 database-free, including concurrent duplicate requests; each was checked
 to fail when the code it covers is broken.
 
@@ -186,7 +186,44 @@ account-creation → posting → overview flow through the container. It
 pins `COMPOSE_FILE` so it cannot accidentally pick up the dev bind-mount
 and test host code instead of the image. The dev bind mount itself sets
 `create_host_path: false`, so a checkout without `./app` refuses to start
-instead of mounting an empty directory over the image.
+instead of mounting an empty directory over the image. On the
+deploy-readiness branch `lint-and-test` also runs `pip-audit --strict`, and
+`docker-smoke` fails if the container runs as root.
+
+### Deploy readiness — on `chore/deploy-readiness`, in review
+
+What a public demo on a container host needs, with the README's
+"Deploying" section as the operator's guide:
+
+- **Configuration a host can supply.** `DATABASE_URL` in any Postgres
+  spelling, TLS via `sslmode` or `DATABASE_SSL`, `PORT`. `ENVIRONMENT=production`
+  or `demo` refuses to start on the local development database, without
+  TLS to Postgres (`require` or stricter), or with `FORWARDED_ALLOW_IPS`
+  set to `*` or nothing.
+- **A start command for hosts.** `python -m app.serve` migrates, then
+  serves, in a container running as an unprivileged user. Migrating on
+  start is one reason Keel must run as a single instance.
+- **Behind a proxy.** Uvicorn believes `X-Forwarded-For`/`-Proto` only from
+  `FORWARDED_ALLOW_IPS`. On Render that is the private networks,
+  `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, **not `*`**: with `*` uvicorn
+  takes the leftmost entry, which a client can forge. This follows from
+  uvicorn's code and Render's statements and still has to be checked on the
+  live service; the README says how.
+- **HTTP hardening.** A 64 KiB body limit (413) and security headers,
+  including a CSP whose nonce lets the posting form's one inline script run.
+- **Public writes, bounded.** Every write, form or API, counts against a
+  per-client allowance, 30 a minute by default. Past it the answer is a
+  `429` with an exact `Retry-After`. Reads are not limited. The counts are
+  in memory, which is a second single-instance assumption. Hard caps of
+  200 accounts and 2000 transactions (`409 ledger_full`) keep a free 0.5 GB
+  database from filling however many clients write. The defaults were sized
+  from measured bytes per write.
+- **The demo itself.** With `ENVIRONMENT=demo`, every page says it is a
+  public demo that resets periodically, and
+  `python -m scripts.reset_demo_data --yes` restores the demo data. It
+  refuses in any other environment and counts only without `--yes`. It is
+  the one sanctioned exception to the append-only log, done in a single
+  transaction that re-enables the trigger. Nothing schedules it yet.
 
 ---
 
@@ -215,22 +252,34 @@ the one remaining limit: entry ids are not reproduced.
 
 Ordered so that earlier items unblock or de-risk later ones.
 
-**1. A live deployment**
-Nothing is hosted, so there is no URL to click without cloning the repo.
-This means a hosted demo instance, not a deployment pipeline, which is
-out of scope (below).
-The image-only `docker-compose.yml` is what a deployment would run. This
-needs a hosting decision, and whatever host is chosen also needs to run
-`scripts.prune_idempotency_keys` on a schedule.
+**1. A live deployment: Render + Neon**
+Nothing is hosted yet, so there is no URL to click without cloning the
+repo. This means a hosted demo instance, not a deployment pipeline, which
+is out of scope (below). Once `chore/deploy-readiness` is merged, the app
+side is ready, and the next PR is the Render + Neon one. It needs to:
+
+- run the image with `ENVIRONMENT=demo`, `DATABASE_URL`, `DATABASE_SSL` and
+  `FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`;
+- **check the forwarded client address on the live service** (the README's
+  pre-deploy checklist has the `curl`), adjusting `FORWARDED_ALLOW_IPS` if
+  the log shows anything but the caller's own address;
+- schedule `python -m scripts.prune_idempotency_keys --yes` daily and
+  `python -m scripts.reset_demo_data --yes` periodically;
+- stay on one instance, which both migrate-on-start and the in-memory rate
+  limit assume.
 
 **2. Authentication**
 Every route is public. Fine for a demo, disqualifying otherwise.
 
 **3. Round out the JSON API**
 No single-account read, no transaction listing, no pagination and no
-event-log endpoint yet (`ARCHITECTURE.md` §8 item 5).
+event-log endpoint yet (`ARCHITECTURE.md` §8 item 8).
 
-**Done since the previous version of this list:** stable entry order
+**Done since the previous version of this list:** deploy readiness
+(host-style configuration, a migrate-then-serve start command, a non-root
+image, proxy headers, a body limit and security headers, the write rate
+limit, caps on accounts and transactions, the demo notice and the reset
+script), all on `chore/deploy-readiness`; and, merged, stable entry order
 (each entry's submission position, stored and replayed), payload schema
 versions, `alembic check` in CI with the duplicate idempotency-key
 constraint removed, the JSON API, the
@@ -263,7 +312,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 48 of 134 tests:
+you are running 149 of 250 tests:
 
 ```bash
 docker compose up -d db
@@ -280,8 +329,8 @@ head` would silently do nothing. `tests/support.py` holds the check.
 
 A note on ports: the compose database is on **5432**. This machine also
 has a native PostgreSQL 16 on **5433**, which accepts `postgres`/`postgres`.
-Its `keel_test` database is what the 2026-09-24 and 2026-09-27 test runs
-used, since Docker was not running. That server's session time zone is
+Its `keel_test` database is what the 2026-09-24, 2026-09-27 and
+2026-09-29 test runs used, since Docker was not running. That server's session time zone is
 `Asia/Calcutta`, which is what surfaced the date-filter bug:
 
 ```bash
@@ -294,6 +343,8 @@ Maintenance tasks (each only reports without `--yes`):
 docker compose exec app python -m scripts.rebuild_read_model --yes
 docker compose exec app python -m scripts.backfill_account_events --yes
 docker compose exec app python -m scripts.prune_idempotency_keys --yes
+# the public demo only: refuses unless ENVIRONMENT=demo
+python -m scripts.reset_demo_data --yes
 ```
 
 ---

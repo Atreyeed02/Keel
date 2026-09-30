@@ -9,8 +9,13 @@ from app.config import settings
 # statements over the ledger tables, no session/unit-of-work magic.
 # This keeps the double-entry invariants enforced in code we control,
 # not hidden behind ORM flush semantics.
+#
+# The URL is DATABASE_URL respelled for asyncpg (app/config.py), and TLS goes
+# in as asyncpg's own `ssl` argument, because asyncpg refuses `sslmode` in
+# the URL.
 engine: AsyncEngine = create_async_engine(
-    settings.database_url,
+    settings.database.async_url,
+    connect_args={"ssl": settings.database.ssl} if settings.database.ssl else {},
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,

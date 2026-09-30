@@ -4,7 +4,7 @@ A complete walkthrough of what this service is, the accounting and
 event-sourcing ideas it is built on, what every file does, and what is
 still missing.
 
-Last brought up to date on 2026-09-27.
+Last brought up to date on 2026-09-29.
 
 ---
 
@@ -641,6 +641,44 @@ why running on the host needs `DATABASE_URL` pointed at `localhost`.
 
 `extra="ignore"` means unknown keys in `.env` are not an error.
 
+**Whatever URL a host hands out.** Hosts give `DATABASE_URL` as
+`postgres://…` or `postgresql://…`, often with `?sslmode=require`.
+`database_target()` accepts any of those, or `postgresql+<driver>://`, and
+spells the URL twice: `postgresql+asyncpg://` for the app and
+`postgresql+psycopg://` for Alembic. `sslmode` needs separate handling,
+because asyncpg refuses it in the URL. It is taken out of the asyncpg URL
+and passed as asyncpg's own `ssl` argument (`app/db/engine.py`), while
+psycopg, which is libpq underneath, keeps it in the URL. `DATABASE_SSL`
+(one of libpq's modes, from `disable` to `verify-full`) and the URL's
+`sslmode` are both honoured: when they differ, the stricter one is used,
+so a leftover setting in one place can never weaken the other. With
+`DATABASE_SSL=require` and `?sslmode=verify-full`, the connection verifies
+the certificate and host name. A malformed URL or unknown mode stops the process at start.
+Alembic stores the URL in an ini-style config where `%` is special, so it
+gets `alembic_url`, the psycopg URL with `%` escaped; a percent-encoded
+password would otherwise break every migration.
+
+**Production refuses an unsafe configuration.** With
+`ENVIRONMENT=production`, `Settings` raises at import, so the process never
+starts, if any of these holds:
+
+- `DATABASE_URL` was not set, or is the `ledger:ledger@db` default in any
+  spelling.
+- The database connection is not encrypted: the effective SSL mode (the
+  stricter of `DATABASE_SSL` and the URL's `sslmode`) is not `require`,
+  `verify-ca` or `verify-full`. No mode, `disable`, `allow` and `prefer` are all
+  refused; the last two fall back to plaintext when the server offers no
+  TLS. An `sslmode` in the URL counts, because managed databases put one
+  in the URLs they hand out.
+- `FORWARDED_ALLOW_IPS` contains `*`, alone or in a list, or names nothing.
+  With `*` uvicorn believes a client's own `X-Forwarded-For` (§5.15).
+
+`ENVIRONMENT=demo`, the public demo, is hosted too and gets the same guard. It also turns on the demo notice (§5.8) and is the only
+environment the reset script (§5.10) runs in.
+
+**`PORT`** (default 8000) and `HOST` (default `0.0.0.0`) are where
+`python -m app.serve` listens (§5.12).
+
 ### 5.2 `app/db/schema.py` — the tables
 
 SQLAlchemy **Core**, not the ORM. Tables are described as data
@@ -1056,6 +1094,14 @@ show it. The block is what keeps them attached.
 **`{% for %}…{% else %}`** — Jinja's `else` on a loop runs when the
 sequence was empty. Used for "No accounts yet." fallbacks.
 
+**The demo notice.** With `ENVIRONMENT=demo`, `base.html` puts one line
+above the navigation on every page, a re-rendered form included: this is a
+public demo, anyone can write to it, and it resets periodically. The
+template calls `is_demo()`, a global `main.py` registers, rather than
+reading a value fixed at import, so the page follows the setting. It is
+given that one flag rather than the settings object, which holds the
+database URL and its password.
+
 ### 5.9 `alembic/` — migrations
 
 Migrations version the schema so it can be recreated deterministically.
@@ -1149,6 +1195,28 @@ accounts that predate the event (§3.3). Without `--yes` it lists them;
 with `--yes` it appends their events. On a database with nothing to
 backfill it does nothing.
 
+**`scripts/reset_demo_data.py`** puts the public demo back as a fresh seed
+leaves it. It deletes every account, transaction, entry, event and
+idempotency key, restarts the identity sequences, and calls the seed
+script's `seed()`. Two guards stand between it and a real ledger. It
+refuses unless `ENVIRONMENT=demo`, checked before it connects to anything,
+so neither a production ledger (`production`) nor a laptop's
+(`development`, the default) can be wiped by a command run in the wrong
+shell. Without `--yes` it
+only counts what it would delete.
+
+It is the one sanctioned exception to the append-only log. The
+`events_append_only` trigger refuses TRUNCATE, so the script disables it,
+truncates, and enables it again, all in the same transaction as the reseed.
+Postgres DDL is transactional, so no other session ever sees the log
+unguarded, and a failure anywhere, reseeding included, rolls the ledger back
+to what it was, trigger on. `ALTER TABLE ... DISABLE TRIGGER` needs the
+table's owner, which is the role that ran the migrations. The tables are
+locked first, in the order a posting takes them, so a reset waits for
+postings in flight rather than deadlocking with them. A page read can still
+deadlock with it. Postgres then aborts one of the two, and a reset that
+loses rolls back whole and can be run again. Nothing schedules it yet.
+
 ### 5.11 `tests/`
 
 | File | Needs a DB | Covers |
@@ -1162,6 +1230,15 @@ backfill it does nothing.
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
+| `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
+| `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the posting form's CSP nonce (§5.18) |
+| `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; separate write limits for two forwarded clients; a forged `X-Forwarded-For` buys no fresh allowance (§5.15) |
+| `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
+| `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |
+| `test_demo.py` | partly | the notice on every page only with `ENVIRONMENT=demo`; the reset script refusing outside the demo before connecting and without `--yes`, restoring exactly a fresh seed, re-enabling the append-only trigger, and rolling back whole on failure (§5.8, §5.10) |
+
+`tests/conftest.py` clears the write rate limit's counts around every test,
+so each test starts with a client's full allowance under the real default.
 
 The Postgres-backed tests skip unless `TEST_DATABASE_URL` is set, then
 create and drop the whole schema around each test for isolation. They do
@@ -1178,7 +1255,25 @@ without needing an explicit marker.
 ### 5.12 Docker
 
 `Dockerfile` — `python:3.12-slim`, install requirements, copy `app/`,
-`alembic/`, `alembic.ini` and `scripts/`, migrate-then-serve on start.
+`alembic/`, `alembic.ini` and `scripts/`, then switch to an unprivileged
+user, `keel` (uid 10001). The copied files stay owned by root, so the app can
+read its code but not change it. `PYTHONUNBUFFERED` gets log lines to the
+host as they are written.
+
+The start command is `python -m app.serve` (`app/serve.py`): `alembic
+upgrade head`, then, only if that succeeded, uvicorn on `$PORT` (default
+8000), with the forwarded-header settings from §5.15 and never `--reload`.
+**Migrating on start assumes a single instance.** Alembic takes no lock, so
+two instances starting together would both migrate. A host that scales out,
+or starts the new instance before stopping the old one during a deploy,
+should run `alembic upgrade head` as a release step and start instances with
+`python -m app.serve --no-migrate`.
+
+Checked locally: the image, run with `ENVIRONMENT=production`, `PORT=9090`
+and a `postgres://…?sslmode=disable` URL against a throwaway Postgres,
+migrated to head, served `{"status":"ok","db":"up"}` on 9090, and ran as uid
+10001. Without `DATABASE_URL` it refused to start. CI's `docker-smoke` job
+now also fails if the container runs as root.
 
 `.dockerignore` — keeps the build context to what the Dockerfile copies.
 Note the `**/` prefixes: a bare `__pycache__` would only match one at the
@@ -1195,7 +1290,17 @@ rather than raising. It is written in Python because `python:3.12-slim`
 ships neither curl nor wget.
 
 `docker-compose.override.yml` — local dev only: bind-mounts `./app` over
-the image for live reload. Compose merges it automatically when present,
+the image and starts the server with `python -m app.serve --reload`, so an
+edit under `app/` restarts it within a couple of seconds. This used to be
+described as live reload without being one: the image's server never
+reloaded, so an edit needed `docker compose restart app`. It now polls for
+changes (`WATCHFILES_FORCE_POLLING=true`), because a bind mount from a
+Windows or macOS host usually delivers no file-change events into Docker's
+Linux VM and an event-based watcher would never fire. Checked on Windows in
+an isolated copy of the dev stack: an edit to `app/api/health.py` was being
+served about two seconds later, and so was its revert. Only the override
+passes `--reload`; the image's own `CMD`, which CI and production run,
+never does, and a test pins both. Compose merges it automatically when present,
 so `docker compose up` is dev mode by default. The consequence is that a
 plain `docker compose up` is *not* running the shipped artifact, so
 anything proving the image is self-contained must bypass it — the
@@ -1209,7 +1314,9 @@ start.
 
 Two independent jobs:
 
-**`lint-and-test`** — ruff; then `alembic upgrade head` and `alembic check`
+**`lint-and-test`** — ruff; `pip-audit --strict -r requirements.txt`, which
+fails the build if any pinned dependency has a known vulnerability (or
+cannot be audited); then `alembic upgrade head` and `alembic check`
 on a database of their own, which fails the build if the migrations and
 `app/db/schema.py` have drifted apart in any way autogenerate can see
 (the tests build their schema from `schema.py`, the app from the
@@ -1270,9 +1377,9 @@ no metrics, no tracing.
 
 What gets logged, always after the commit, so a line never describes a
 write that rolled back. The ledger events go through `log_account_created`,
-`log_transaction`, `log_transaction_rejected` and
-`log_idempotency_conflict`, which the form routes and the JSON API both
-call, so each event has one definition of its fields:
+`log_transaction`, `log_transaction_rejected`, `log_idempotency_conflict`
+and `log_ledger_full`, which the form routes and the JSON API both call,
+so each event has one definition of its fields:
 
 | Event | Fields |
 |---|---|
@@ -1280,7 +1387,37 @@ call, so each event has one definition of its fields:
 | `transaction.posted` / `transaction.replayed` | `transaction_id`, `idempotency_key`, `entry_count`, `account_ids` |
 | `transaction.rejected` | `idempotency_key`, `reason` |
 | `idempotency.conflict` (warning) | `idempotency_key` |
-| `request.completed` / `request.failed` | `method`, `path`, `status`, `duration_ms` |
+| `ledger.full` (warning) | `reason`: which cap refused the write (§5.20) |
+| `request.completed` | `method`, `path`, `status`, `client`, `scheme`, `duration_ms` |
+| `request.failed` | `method`, `path`, `duration_ms` |
+
+**Behind a host's proxy**, the socket peer is the proxy, not the client,
+and the connection to the container is plain HTTP even when the visitor used
+HTTPS. `python -m app.serve` starts uvicorn with `proxy_headers=True` and
+`forwarded_allow_ips` from `FORWARDED_ALLOW_IPS`, so for proxies it trusts,
+`X-Forwarded-For` and `X-Forwarded-Proto` become `request.client` and
+`request.url.scheme`: the `client` and `scheme` in the log line, and the
+scheme in any absolute URL the app builds, such as FastAPI's trailing-slash
+redirect, and the client the write rate limit counts (§5.19). The default,
+`127.0.0.1`, trusts only a proxy on the same machine.
+
+On Render, set `FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
+Given a list, uvicorn reads `X-Forwarded-For` from the right, skips every
+trusted address and takes the first one that is not: here, the first public
+address, which is the one Render's router wrote for the connection it
+received. The router connects from a private address; no internet client
+can. This used to say `*`, which is wrong once a rate limit depends on the
+answer. With `*`, uvicorn takes the header's *leftmost* address. Render has
+said its router appends to an incoming `X-Forwarded-For` rather than
+replacing it, so the leftmost entry can be anything the client sent, and a
+client could claim a new address, and a fresh allowance, with every request.
+This reasoning comes from uvicorn 0.31's source and Render's own statements,
+not from a live Render service, so the README's pre-deploy checklist has a
+step that checks it after the first deploy.
+`tests/test_proxy_headers.py` runs the app behind uvicorn's own middleware,
+configured that way, and checks the trusted and untrusted cases, separate
+limits for two forwarded clients, and that a forged header buys no new
+allowance.
 
 The event's own id is not logged: `post_transaction` does not return it.
 `transaction_id` is the event's `aggregate_id`, which is enough to find
@@ -1376,6 +1513,143 @@ normal-side sign), `currency_totals` (the overview's trial balance) and
 `transaction_with_entries` (the detail page's lookup). They moved here
 from `main.py` when the API needed them. The pages were rendered from a
 seeded ledger before and after the move and are byte-identical.
+
+### 5.18 `app/security.py` — body size limit and security headers
+
+Two ASGI middlewares, neither of them about the ledger.
+
+**Body size limit** (`MAX_REQUEST_BODY_BYTES`, default 64 KiB). A request
+whose `Content-Length` is over the limit is answered `413` before the app
+runs, which is the only protection for a route that never reads its body.
+A chunked request, which declares no length, is counted as it arrives and
+cut off with a `413` once it passes the limit. Under `/api/` the 413 uses the
+API's error shape. The middleware sits *inside* the request log, so a 413 is
+logged as an ordinary `request.completed`, not a `request.failed` with a
+traceback.
+
+**Security headers**, on every response, a 413 included (this middleware
+is outermost):
+
+| Header | Value | Why |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | a browser never guesses a content type |
+| `X-Frame-Options` | `DENY` | no framing, so no clickjacking; CSP `frame-ancestors 'none'` says the same to newer browsers |
+| `Referrer-Policy` | `same-origin` | other sites never see which Keel URL a visitor came from |
+| `Content-Security-Policy` | below | limits what a page may load and run |
+
+The page policy allows scripts from Keel itself, from
+`https://cdn.tailwindcss.com`, and inline only with this response's nonce.
+A fresh nonce is made per request, stored in `request.state.csp_nonce`, and
+put on the posting form's one inline script. Styles need `'unsafe-inline'`,
+because the Tailwind Play CDN builds its CSS in the browser and injects it
+as `<style>` elements; without it the pages lose their styling. FastAPI's
+`/docs` (Swagger UI) and `/redoc` load their UI from jsDelivr and bootstrap
+it with an inline script FastAPI writes, so those two paths get a separate
+policy that allows that CDN and inline scripts.
+
+Checked in headless Chrome, against the branch running on real data, over
+the DevTools protocol: every page (overview, transactions, event log, both
+forms, a transaction's detail, `/docs`, `/redoc`) loaded with no CSP
+violation, the Tailwind styles applied, Swagger UI and ReDoc rendered, and
+typing an amount into the posting form updated its live total. As a
+control, removing the nonce from the form's script made Chrome block it and
+the total stay at `0.00`.
+
+The Tailwind Play CDN is meant for development, not production: it ships
+the whole compiler to every visitor and is the reason styles need
+`'unsafe-inline'`. Building the CSS at image build time would remove both
+(§8).
+
+### 5.19 `app/ratelimit.py` — the write rate limit
+
+Once the demo is public, anyone can write to it. The rate limit caps how
+fast one client can write. The caps in §5.20 cap how much everyone can
+write in total, which is what actually protects the database.
+
+**What counts.** Every request whose method is not `GET`, `HEAD` or
+`OPTIONS`: the forms and the JSON API share one allowance per client. A
+write the app rejects with a 400 or 422 still counts, because it still
+costs a request. The default is 30 writes in any 60 seconds
+(`WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS`). A person using the forms
+never gets near that; a script posting in a loop does. `WRITE_RATE_LIMIT=0`
+turns it off. Reads are not limited. They write nothing, and the database's
+connection pool already bounds how many run at once.
+
+**The window slides.** Each client keeps the times of its last
+`WRITE_RATE_LIMIT` writes. A write is allowed if fewer than that many fall in
+the last window. That avoids the burst a fixed window lets through at its
+boundary, where a client could make the full allowance just before a minute
+turns and again just after. A refused write is not recorded, so a client that
+waits out `Retry-After` is let in. Memory is bounded by the clients active in
+one window: once a window, any client idle for a whole window is forgotten.
+
+**The answer.** `429 Too Many Requests` with `Retry-After`: the whole
+seconds, rounded up, until the oldest write in the window leaves it, which
+is exactly when a write is next allowed. Under `/api/` the body is
+`{"error": {"code": "rate_limited", ...}}`; for the forms it is one line of
+plain text, like the 413. The middleware answers before the app runs, so a
+refused write never reads its body or opens a connection. It sits inside the
+request log, so the 429 is logged as an ordinary `request.completed` with the
+`client` it applied to, and inside the security headers, so the 429 has them.
+
+**Who the client is.** `scope["client"]`, after uvicorn's proxy-header
+handling (§5.15), the same address the log shows. IPv6 addresses are
+counted per /64, the block one subscriber is normally given, so cycling
+through the addresses of one connection earns no extra allowance. An
+IPv4-mapped IPv6 address counts as its IPv4 address.
+
+**One instance.** The counts are in process memory, like the migrate-on-start
+assumption in §5.12. Two instances would each allow the full rate, and a
+restart or deploy forgets every count. Scaling out needs a shared store
+(Redis, or a table in Postgres) instead.
+
+`tests/test_rate_limit.py` drives the real app on a fake clock, with every
+database connection replaced by one that fails the test if used.
+
+### 5.20 `app/domain/capacity.py` — caps on accounts and transactions
+
+The rate limit slows one client down; it does nothing about many clients,
+or one with many addresses. On a free 0.5 GB database that leaves the disk
+to fill. `MAX_ACCOUNTS` (default 200) and `MAX_TRANSACTIONS` (default 2000)
+are a ceiling that holds however the writes arrive.
+
+**Sized from measurements.** On Postgres 16, counting every table and index
+a write touches, including the event row and the idempotency key, an
+account took about 1.1 KB and a two-entry transaction about 1.7 KB. The
+largest transaction the 64 KiB body limit admits, 470 entries under a
+512-character description, took about 91 KB. That worst case is what the
+cap has to be sized for. 2000 of them come to under 200 MB, less than half
+the database. A demo that is used normally will hold a few megabytes when
+it reaches the cap.
+
+**Where it is checked.** In the domain, inside the caller's transaction:
+`create_account_record(..., max_accounts=)` counts accounts before
+inserting, and `post_transaction_once(..., max_transactions=)` counts
+transactions after claiming the key and before posting. Either raises
+`LedgerFullError`, and the rollback takes the idempotency claim with it,
+so a refused key can be used again once there is room. Because the count
+comes after the claim, a replay of a posting that got in is still answered
+at the cap. It adds nothing, and a client retrying a posting that
+succeeded should hear that it succeeded. The routes pass the settings. The
+scripts pass nothing, so seeding, backfilling and rebuilding are never
+capped. `0` means no cap, which is what a real ledger wants.
+
+**The answer.** A `409` with code `ledger_full` from the API, and the form
+re-rendered with an inline error and a `409` from the pages, both saying
+which maximum was reached, plus a `ledger.full` warning in the log, which is
+the signal that the demo wants resetting. 409 rather than 507 Insufficient
+Storage because nothing is wrong with the server: the ledger is in a state
+that refuses the write, and retrying will not help until that state changes.
+
+**Not a lock.** The count takes no lock, so writes that run at the same
+moment can all see room and all commit, overshooting by at most the number
+of connections writing at once (15 with the default pool). Serialising
+every write to make a size limit exact would cost more than the few extra
+rows are worth.
+
+`tests/test_capacity.py` covers each cap through both interfaces, that a
+refused write leaves nothing behind, replays at the cap, a refused key
+posting once there is room, `0`, and the uncapped scripts.
 
 ---
 
@@ -1482,6 +1756,23 @@ deletes keys past a retention window, 30 days by default (§4).
 **Structured logging** — JSON lines on the `keel` logger with a
 per-request id, echoed as `X-Request-ID` (§5.15).
 
+**Deploy readiness** — `DATABASE_URL` in whatever form a host hands out,
+TLS to a managed Postgres, `PORT`, and a refusal to start a hosted
+environment on the development database (§5.1); `python -m app.serve`,
+which migrates then serves, in an image that runs as an unprivileged user
+(§5.12); forwarded headers believed only from `FORWARDED_ALLOW_IPS`
+(§5.15); a request body limit and security headers with a nonce CSP
+(§5.18); `pip-audit` in CI (§5.13); and a Deploying section in the README.
+
+**Public writes, bounded** — a per-client write rate limit with `429` and
+`Retry-After`, keyed on the forwarded client address (§5.19), and hard caps
+on total accounts and transactions sized from measured bytes per write
+(§5.20).
+
+**The public demo** — `ENVIRONMENT=demo`, a notice on every page that the
+demo is public and resets (§5.8), and `python -m scripts.reset_demo_data`,
+which restores the demo data and refuses to run anywhere else (§5.10).
+
 **Templates** — shared `base.html`; the four original pages were
 refactored onto it with rendered output verified byte-identical, and
 every page added since was built on it directly.
@@ -1489,20 +1780,25 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 134 tests (§5.11). 48 run with no database at all: the
+**Testing** — 250 tests (§5.11). 149 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
-formatter, the health endpoint, and every JSON API rejection that happens
-before the database is touched. The other 86 are Postgres-backed.
-They cover the pages, filters and pagination; idempotency, including
-concurrent duplicates and key retention; the database triggers against
-writes that bypass the app; atomic rollback; agreement between the log
-and the read model; and the rebuild, including recovery from a corrupted
-projection, a posting made mid-rebuild and a backfilled legacy ledger.
+formatter, the health endpoint, every JSON API rejection that happens
+before the database is touched, the deployment configuration, the body
+limit and security headers, the proxy headers, the write rate limit, the
+demo notice's absence and the reset script's refusals. The other 101 are
+Postgres-backed. They cover the pages, filters and pagination; idempotency,
+including concurrent duplicates and key retention; the database triggers
+against writes that bypass the app; atomic rollback; agreement between the
+log and the read model; the rebuild, including recovery from a corrupted
+projection, a posting made mid-rebuild and a backfilled legacy ledger; the
+caps; and the demo reset. Each test added for the rate limit, the caps,
+the notice and the reset was checked to fail with the behaviour it covers
+broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"48 passed, 86 skipped" and is not a passing build. See the README for
+"149 passed, 101 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1523,23 +1819,40 @@ FX gain/loss account.
 ### Robustness
 
 **2. No authentication or authorisation anywhere.** Every route is public.
-Acceptable for a demo, disqualifying for anything real. It is also why
-`rebuild_read_model()` and the other maintenance tasks are CLIs and not
-routes.
+For the public demo that is the point, and what makes it safe to leave open
+is bounded: a per-client write rate limit (§5.19), caps on what the ledger
+will hold (§5.20), and a reset (§5.10). For anything real it is
+disqualifying. It is also why `rebuild_read_model()` and the other
+maintenance tasks are CLIs and not routes.
 
-**3. Key pruning has no scheduler.** `scripts/prune_idempotency_keys.py`
-does the cleanup (§4), but nothing in the stack runs it. A deployment
-needs a cron job or a scheduled task.
+**3. Nothing is scheduled.** `scripts/prune_idempotency_keys.py` (§4) and,
+for the demo, `scripts/reset_demo_data.py` (§5.10) do their jobs, but
+nothing in the stack runs them. The Render deployment needs a daily prune
+and a periodic reset.
 
-**4. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
+**4. The forwarded client address is unchecked on Render.** Both the log's
+`client` and the rate limit depend on `FORWARDED_ALLOW_IPS` (§5.15). The
+documented value comes from uvicorn's source and Render's statements about
+its router, not from a live service. The first deploy has to check it, with
+the forged-header request in the README's pre-deploy checklist.
+
+**5. One instance only.** Migrating on start (§5.12) and the in-memory
+rate limit (§5.19) both assume a single instance. Scaling out needs
+migrations as a release step and a shared store for the counts.
+
+**6. Replay is all-or-nothing and in memory.** `rebuild_read_model` loads
 the whole log at once and replays from `sequence` 1. There are no
 snapshots, and no incremental catch-up of a projection from a known
 position. Fine at this size, and the first thing to change if it grows.
 While a rebuild runs, postings wait on its lock (§3.3).
 
+**7. The pages load Tailwind's Play CDN.** It ships the whole compiler to
+every visitor, is meant for development, and is why the CSP allows inline
+styles (§5.18). Building the CSS when the image is built would remove both.
+
 ### Missing interfaces
 
-**5. The JSON API is minimal.** It has what a client needs to create
+**8. The JSON API is minimal.** It has what a client needs to create
 accounts, post transactions safely and read one back (§5.16). It has no
 single-account read, no transaction listing, and no pagination:
 `GET /api/accounts` returns every account at once. There is no event-log
@@ -1559,4 +1872,5 @@ listed to mark the boundary of this project, not as planned work: webhook
 ingestion, multi-provider payment orchestration, reconciliation, the
 outbox pattern for reliable event publishing, and a deployment pipeline.
 A hosted demo instance is different from a deployment pipeline and is
-still wanted (`STATUS.md` §4).
+still wanted. The app is now ready for one; what remains is the Render +
+Neon setup (`STATUS.md` §4).

@@ -205,7 +205,7 @@ or http://localhost:8000/health.
 
 | Command | Files used | What runs |
 |---|---|---|
-| `docker compose up --build` | base + override | the host's `./app`, bind-mounted over the image — edits appear without a rebuild |
+| `docker compose up --build` | base + override | the host's `./app`, bind-mounted over the image, with the server reloading itself when a file changes |
 | `docker compose -f docker-compose.yml up --build` | base only | exactly what the image contains |
 
 Compose merges `docker-compose.override.yml` automatically whenever it is
@@ -218,6 +218,155 @@ Both give the `app` service a healthcheck against `/health` that asserts
 the exact body `{"status":"ok","db":"up"}`, so a container whose
 migrations failed never reports healthy.
 
+## Deploying
+
+Keel is one Docker image plus a Postgres database, so it runs on any host
+that runs an image and provides Postgres: Render, Railway, Fly.io and the
+like. Nothing here is specific to one of them.
+
+**Build** from the `Dockerfile`. The compose files are for running locally
+and are not part of a deployment.
+
+**Start command:** the image's own, `python -m app.serve`. It runs
+`alembic upgrade head`, and only if that succeeds starts uvicorn on `$PORT`
+(most hosts set `PORT`; the default is 8000). The container runs as an
+unprivileged user and never with `--reload`.
+
+> **Keel must run as a single instance.** Two things depend on it:
+>
+> - **Migrations run on startup.** Two instances starting at once would both
+>   run `alembic upgrade head`, and Alembic takes no lock to stop them.
+> - **The write rate limit is in memory.** Each instance keeps its own
+>   counts, so every instance allows the full rate, and a restart forgets
+>   them.
+>
+> Set the host's instance count to 1 and turn off autoscaling. Running more
+> than one needs both fixed first: migrations as a release step
+> (`alembic upgrade head`, then start instances with
+> `python -m app.serve --no-migrate`), and the rate limit's counts in a
+> shared store such as Redis, which Keel does not support yet. A host that
+> starts the new instance before stopping the old one briefly runs two
+> during a deploy. Only the new one migrates, but the old one keeps serving
+> on the schema the new one is changing.
+
+**Health check:** path `/health`. It answers **200 even when the database
+is down**, with `{"status":"degraded","db":"down"}`, so a check that looks
+only at the status code stays green on a broken deployment. Configure the
+host to require the body `{"status":"ok","db":"up"}`. If your host can only
+check the status code, know that it will not notice a lost database.
+
+### Environment variables
+
+| Variable | Required | What it does |
+|---|---|---|
+| `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. |
+| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
+| `PORT` | set by most hosts | Where the server listens. Default 8000. |
+| `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
+| `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
+| `DATABASE_SSL` | **yes** in `production` and `demo`, unless the URL has `sslmode` | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. If the URL has an `sslmode` too, the stricter of the two is used, so neither can weaken the other. Unset: whatever the URL says, else the driver default. `production` and `demo` refuse to start unless the result is `require`, `verify-ca` or `verify-full`: with no mode, or `disable`, `allow` or `prefer`, the connection can be plaintext. |
+| `MAX_ACCOUNTS`, `MAX_TRANSACTIONS` | no | The most accounts and transactions the ledger will hold. A write that would add one more is a `409` (`ledger_full`), form or API; replays are still answered. Default 200 and 2000, sized for a 0.5 GB database (below). `0` means no cap, which a real ledger wants. |
+| `MAX_REQUEST_BODY_BYTES` | no | Largest request body accepted; larger is a 413. Default 65536. |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | no | Connections per instance, default 5 + 10. Keep the total under your database plan's connection limit. |
+| `LOG_LEVEL` | no | Level of the JSON log lines on stdout. Default `INFO`. |
+
+### Why 200 accounts and 2000 transactions
+
+The caps are there so a public demo cannot fill a free 0.5 GB database,
+however many clients write to it. Measured on Postgres 16, including indexes,
+the event row and the idempotency key: an account takes about 1.1 KB, a
+two-entry transaction about 1.7 KB, and the largest transaction the 64 KiB
+body limit admits (470 entries, a 512-character description) about 91 KB.
+So even if every one of the 2000 were that large, the ledger would stay
+under 200 MB. Concurrent writes can overshoot a cap by the few that were
+already in flight when it was reached. Raising `MAX_REQUEST_BODY_BYTES`
+raises the worst case with it.
+
+### Behind Render's proxy: `FORWARDED_ALLOW_IPS`
+
+On Render, every request reaches the container from Render's router, so
+without help every client has the router's address and they all share one
+write allowance. Set
+
+```
+FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+The router connects from a private address, which no internet client can
+have. uvicorn then reads `X-Forwarded-For` from the right and takes the
+first address that is not private: the one Render's router wrote for the
+connection it received.
+
+**Not `*`.** With `*`, uvicorn takes the header's *leftmost* address. Render
+has said its router appends to an incoming `X-Forwarded-For` rather than
+replacing it, and documents no promise to strip one, so the leftmost
+address can be whatever the client sent. Any client could then name a new
+address with every request and never be rate limited. Reading from the
+right holds up whether the router appends or replaces, as long as it adds
+its entry at the end, which is what every proxy following the
+`X-Forwarded-For` convention does.
+`tests/test_proxy_headers.py` shows both: separate limits for two forwarded
+clients, and a forged header that buys no fresh allowance.
+
+**Check it after the first deploy.** This setting follows from how Render
+says its router behaves and from uvicorn's code. It has not been checked
+against a live Render service. First find your own public address, then
+send a write with a forged header:
+
+```bash
+curl -s https://api.ipify.org; echo        # your public address
+curl -s -X POST -H 'X-Forwarded-For: 192.0.2.1' https://<service>/api/transactions
+```
+
+The write is refused with a 400 (`missing_idempotency_key`),
+which is fine: it is still logged, and still counted by the rate limit.
+Find that request's `request.completed` line in Render's logs and look at
+`client`:
+
+| `client` is | Means | Do |
+|---|---|---|
+| your own public address | **Pass.** uvicorn skipped the forged entry and took the one Render's router wrote. | Nothing. |
+| `192.0.2.1` | **Fail: the forged address was believed.** Any client can pick its own address and a fresh write allowance, so the rate limit protects nothing (the caps still bound the database). | The router is not adding its entry at the end of the header, and no value of this setting fixes that. Keel needs a code change before the demo stays up. |
+| a private address (`10.x`, `172.16-31.x`, `192.168.x`), with `"scheme": "http"` | **Fail: the setting is not in effect.** Every client shares the router's address and one write allowance. | Check `FORWARDED_ALLOW_IPS` is set on the service, and redeploy. |
+| some other address that is not yours, such as a Cloudflare one | **Fail: another proxy is in the chain.** Every client behind it shares its address. | Add that proxy's published ranges to `FORWARDED_ALLOW_IPS`. |
+
+The lines look like this (from Keel behind uvicorn's proxy handling, with
+the router's peer at `10.1.2.3` and the caller at `203.0.113.50`):
+
+```jsonc
+// pass: FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "203.0.113.50", "scheme": "https", "duration_ms": 4.1}
+// fail: the forged address believed
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "192.0.2.1", "scheme": "https", "duration_ms": 0.4}
+// fail: FORWARDED_ALLOW_IPS not in effect (the default, 127.0.0.1)
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "10.1.2.3", "scheme": "http", "duration_ms": 0.6}
+```
+
+### Scheduled and one-off jobs
+
+Run these with the same image and environment as the app, from the host's
+cron or scheduled-job feature, or its one-off shell:
+
+| Command | When |
+|---|---|
+| `python -m scripts.prune_idempotency_keys --yes` | **daily.** Deletes idempotency keys older than 30 days; without it the table grows forever. |
+| `python -m scripts.seed_demo_data` | once, on an empty database, if you want the demo data. It refuses to touch a ledger that already has accounts. |
+| `python -m scripts.reset_demo_data --yes` | **public demo only**, periodically. Deletes everything visitors wrote and restores the demo data, in one transaction. Refuses unless `ENVIRONMENT=demo`, and only counts without `--yes`. Not scheduled yet. |
+| `python -m scripts.rebuild_read_model --yes` | only to repair the read model from the event log. Safe while serving; postings wait for it. |
+
+### Pre-deploy checklist
+
+- [ ] `ENVIRONMENT=production` (or `demo` for the public demo) and `DATABASE_URL` set on the host.
+- [ ] `DATABASE_SSL=require` (or stricter), or `sslmode=require` in `DATABASE_URL`. The app refuses to start without one.
+- [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above). The app refuses to start on `*` or an empty value.
+- [ ] Health check on `/health`, checking the body, not just the status.
+- [ ] Exactly one instance, with autoscaling off (above: migrations on startup, and the in-memory rate limit).
+- [ ] A daily job for `python -m scripts.prune_idempotency_keys --yes`.
+- [ ] `DB_POOL_SIZE + DB_MAX_OVERFLOW` times the number of instances is under the database's connection limit.
+- [ ] CI is green on the commit being deployed: tests, `alembic check`, `pip-audit`, and the image smoke test.
+- [ ] After the first deploy: `/health` returns `{"status":"ok","db":"up"}`, and the response headers include `Content-Security-Policy`.
+- [ ] After the first deploy: a write with a forged `X-Forwarded-For` is logged with your own address as `client` (above).
+
 ## Running tests
 
 ```bash
@@ -229,7 +378,7 @@ pytest -v
 ruff check .
 ```
 
-134 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+250 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -237,8 +386,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 86 database-backed tests are **skipped,
-not failed**. A green run of the remaining 48 is partial coverage:
+Without `TEST_DATABASE_URL`, the 101 database-backed tests are **skipped,
+not failed**. A green run of the remaining 149 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -255,6 +404,12 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_health.py` | `/health` always answers |
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
 | `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
+| `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command |
+| `test_hardening.py` | the body size limit, security headers, the posting form's CSP nonce |
+| `test_proxy_headers.py` | which forwarded headers are believed; separate write limits for two forwarded clients; a forged `X-Forwarded-For` buys no fresh allowance |
+| `test_rate_limit.py` | the write rate limit: 429 and an exact `Retry-After`, forms and API sharing one allowance, reads unlimited, IPv6 per /64 |
+| `test_capacity.py` | the account and transaction caps through both interfaces, replays at the cap, uncapped scripts |
+| `test_demo.py` | the demo notice on every page, and the reset script's refusals, restore and rollback |
 
 CI (`.github/workflows/ci.yml`) runs ruff and the full suite against a
 PostgreSQL service container. A separate `docker-smoke` job builds the
@@ -271,9 +426,9 @@ and the **server-rendered HTML pages**. FastAPI's generated docs at
 
 | Method | Path | Answers |
 |---|---|---|
-| `POST` | `/api/accounts` | `201` with the account; `422` |
+| `POST` | `/api/accounts` | `201` with the account; `422`; `409` (`ledger_full`) at `MAX_ACCOUNTS` |
 | `GET` | `/api/accounts` | `200`: every account with `debits`, `credits` and a `balance` signed by its normal side |
-| `POST` | `/api/transactions` | `201` first post, `200` replay; `400` without a valid `Idempotency-Key`; `409` key reused for a different request; `422` |
+| `POST` | `/api/transactions` | `201` first post, `200` replay; `400` without a valid `Idempotency-Key`; `409` key reused for a different request, or (`ledger_full`) at `MAX_TRANSACTIONS`; `422` |
 | `GET` | `/api/transactions/{id}` | `200` with the entries; `404` |
 
 ```bash
@@ -290,7 +445,9 @@ A retry with the same key answers `200` with the same transaction and
 not make a retry a different request. Entry order does, since it is
 stored. Amounts are strings in both
 directions, never JSON numbers. Every error is
-`{"error": {"code": ..., "message": ...}}`. Details:
+`{"error": {"code": ..., "message": ...}}`. Any write, here or through the
+forms, can also be a `429` (`rate_limited`) with `Retry-After` once a client
+passes `WRITE_RATE_LIMIT`. Details:
 [docs/ARCHITECTURE.md §5.16](docs/ARCHITECTURE.md#516-appapi--the-json-api).
 
 ### HTML
@@ -308,7 +465,8 @@ directions, never JSON numbers. Every error is
 `POST /post-transaction` answers `302` to the transaction's detail page on
 success *and* on an idempotent retry, `422` with the form re-rendered and
 an inline error on invalid input, and `409` when a `submission_key` is
-reused with a different request.
+reused with a different request. Both forms re-render with an inline error
+and a `409` when the ledger is at `MAX_ACCOUNTS` or `MAX_TRANSACTIONS`.
 
 For example:
 
@@ -332,7 +490,7 @@ from `LOG_LEVEL`). Every request gets an id, taken from a well-formed
 ```
 
 Also logged: `transaction.replayed`, `transaction.rejected`,
-`idempotency.conflict`, `account.created`, `request.completed`. There
+`idempotency.conflict`, `ledger.full`, `account.created`, `request.completed`. There
 are no metrics and no tracing.
 
 ## Project layout
@@ -346,15 +504,18 @@ app/
 │   ├── accounts.py       account validation and creation
 │   ├── rebuild.py        replay events into the read model
 │   ├── reads.py          balances and transaction lookups shared by pages and API
+│   ├── capacity.py       the caps on total accounts and transactions
 │   └── account_types.py, errors.py
 ├── db/                   SQLAlchemy Core tables, triggers, engine
 ├── observability.py      JSON logging, request-id middleware
+├── security.py           body size limit, security headers
+├── ratelimit.py          per-client write rate limit
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
 alembic/versions/         10 migrations
-scripts/                  seed_demo_data.py, rebuild_read_model.py, backfill_account_events.py,
-                          prune_idempotency_keys.py
-tests/                    134 tests; see above
+scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
+                          backfill_account_events.py, prune_idempotency_keys.py
+tests/                    250 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
@@ -366,11 +527,16 @@ What this does **not** do today. The full, maintained list is
 - **The JSON API is minimal.** No single-account read, no transaction
   listing, no pagination, no event-log endpoint.
 - **No authentication or authorisation.** Every route is public, which
-  is also why rebuild is a CLI and not a route.
+  is also why rebuild is a CLI and not a route. For the public demo, writes
+  are bounded instead: a per-client rate limit, caps on accounts and
+  transactions, and a reset.
 - **Rebuild is all-or-nothing and in memory.** No snapshots, no
   incremental projection catch-up. Postings wait while a rebuild runs.
-- **Key pruning is a script, not a scheduler.** Something has to run
-  `scripts.prune_idempotency_keys` periodically; nothing in the stack does.
+- **Key pruning and the demo reset are scripts, not a scheduler.**
+  Something has to run `scripts.prune_idempotency_keys` and, on the demo,
+  `scripts.reset_demo_data` periodically; nothing in the stack does.
+- **One instance.** Migrating on start and the in-memory rate limit both
+  assume it.
 - **Idempotency covers postings only**, not account creation, since a
   duplicate account moves no money.
 - **No FX yet** (deferred future work). A transaction may touch several

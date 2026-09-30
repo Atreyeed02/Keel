@@ -26,6 +26,7 @@ from app.domain.accounts import (
     create_account_record,
     validate_account,
 )
+from app.domain.capacity import LedgerFullError
 from app.domain.errors import describe_validation_error
 from app.domain.idempotency import (
     IdempotencyConflictError,
@@ -44,10 +45,13 @@ from app.observability import (
     configure_logging,
     log_account_created,
     log_idempotency_conflict,
+    log_ledger_full,
     log_transaction,
     log_transaction_rejected,
     request_context_middleware,
 )
+from app.ratelimit import RateLimiter, WriteRateLimitMiddleware
+from app.security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 
 configure_logging(settings.log_level)
 
@@ -56,7 +60,17 @@ app = FastAPI(
     description="Event-sourced, double-entry ledger service.",
     version="0.1.0",
 )
+# One per process: the counts are in memory (app/ratelimit.py).
+write_limiter = RateLimiter(settings.write_rate_limit, settings.write_rate_window_seconds)
+# Starlette runs the middleware added last first. The rate limit and the body
+# limit sit inside the request log, so a 429 or a 413 is logged like any other
+# response; the rate limit comes first, so a client over it is refused before
+# its body is looked at. The security headers sit outside everything, so every
+# response gets them, a 413 or a 429 included.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
+app.add_middleware(WriteRateLimitMiddleware, limiter=write_limiter)
 app.middleware("http")(request_context_middleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(health_router)
 # The JSON API (app/api/): same domain layer as the pages below, with its own
 # error shape under /api/.
@@ -136,6 +150,9 @@ def _transaction_rows():
 
 
 templates.env.filters["money"] = _money
+# A function, not a value, so the notice follows the setting at render time. The
+# pages get this one flag, never the settings object with its database URL.
+templates.env.globals["is_demo"] = lambda: settings.is_demo
 
 
 async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str, Any]:
@@ -307,21 +324,27 @@ async def create_account(
     currency: str = Form(""),
 ):
     raw_account = {"name": name, "account_type": account_type, "currency": currency}
-    try:
-        account = validate_account(raw_account)
-    except InvalidAccountError as exc:
+
+    def refused(message: str, status_code: int):
         return templates.TemplateResponse(
             request=request,
             name="account_new.html",
-            context={
-                "account": raw_account,
-                "account_types": ACCOUNT_TYPES,
-                "error": str(exc),
-            },
-            status_code=422,
+            context={"account": raw_account, "account_types": ACCOUNT_TYPES, "error": message},
+            status_code=status_code,
         )
-    async with engine.begin() as conn:
-        account_id = await create_account_record(conn, account)
+
+    try:
+        account = validate_account(raw_account)
+    except InvalidAccountError as exc:
+        return refused(str(exc), 422)
+    try:
+        async with engine.begin() as conn:
+            account_id = await create_account_record(
+                conn, account, max_accounts=settings.max_accounts
+            )
+    except LedgerFullError as exc:
+        log_ledger_full(str(exc))
+        return refused(str(exc), 409)
     # after the commit, so the line only ever describes an account that exists
     log_account_created(account_id, account.account_type, account.currency)
     return RedirectResponse(url="/", status_code=302)
@@ -352,13 +375,13 @@ async def submit_post_transaction(
     ]
     submission_key = submission_key or str(uuid.uuid4())
 
-    async def invalid(message: str):
+    async def invalid(message: str, status_code: int = 422):
         context = await _form_context(raw_entries)
         context.update(
             {"error": message, "description": description, "submission_key": submission_key}
         )
         return templates.TemplateResponse(
-            request=request, name="post_transaction.html", context=context, status_code=422
+            request=request, name="post_transaction.html", context=context, status_code=status_code
         )
 
     try:
@@ -383,8 +406,16 @@ async def submit_post_transaction(
     try:
         async with engine.begin() as conn:
             transaction_id, replayed = await post_transaction_once(
-                conn, submission_key, fingerprint, entries, description or None
+                conn,
+                submission_key,
+                fingerprint,
+                entries,
+                description or None,
+                max_transactions=settings.max_transactions,
             )
+    except LedgerFullError as exc:
+        log_ledger_full(str(exc))
+        return await invalid(str(exc), 409)
     except EntryAccountError as exc:
         log_transaction_rejected(submission_key, str(exc))
         return await invalid(str(exc))

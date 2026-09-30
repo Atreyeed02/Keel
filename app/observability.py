@@ -111,6 +111,10 @@ async def request_context_middleware(request: Request, call_next):
                 "method": request.method,
                 "path": request.url.path,
                 "status": response.status_code,
+                # The real client and scheme when a trusted proxy said so
+                # (FORWARDED_ALLOW_IPS), otherwise the socket peer.
+                "client": request.client.host if request.client else None,
+                "scheme": request.url.scheme,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
             },
         )
@@ -149,3 +153,8 @@ def log_transaction_rejected(idempotency_key: str, reason: str) -> None:
 
 def log_idempotency_conflict(idempotency_key: str) -> None:
     log.warning("idempotency.conflict", extra={"idempotency_key": idempotency_key})
+
+
+def log_ledger_full(reason: str) -> None:
+    """A write refused by MAX_ACCOUNTS or MAX_TRANSACTIONS: time to reset the demo."""
+    log.warning("ledger.full", extra={"reason": reason})
