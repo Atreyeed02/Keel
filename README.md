@@ -232,15 +232,22 @@ and are not part of a deployment.
 (most hosts set `PORT`; the default is 8000). The container runs as an
 unprivileged user and never with `--reload`.
 
-> **Migrating on start assumes one instance.** Two instances starting at
-> once would both migrate. Before running more than one, or on a host that
-> starts the new instance before stopping the old one, run
-> `alembic upgrade head` as a release step and start instances with
-> `python -m app.serve --no-migrate`.
+> **Keel must run as a single instance.** Two things depend on it:
 >
-> **So does the write rate limit.** Its counts live in the process's memory,
-> so each instance allows the full rate, and a restart forgets them. Running
-> more than one instance needs a shared store (Redis, say) instead.
+> - **Migrations run on startup.** Two instances starting at once would both
+>   run `alembic upgrade head`, and Alembic takes no lock to stop them.
+> - **The write rate limit is in memory.** Each instance keeps its own
+>   counts, so every instance allows the full rate, and a restart forgets
+>   them.
+>
+> Set the host's instance count to 1 and turn off autoscaling. Running more
+> than one needs both fixed first: migrations as a release step
+> (`alembic upgrade head`, then start instances with
+> `python -m app.serve --no-migrate`), and the rate limit's counts in a
+> shared store such as Redis, which Keel does not support yet. A host that
+> starts the new instance before stopping the old one briefly runs two
+> during a deploy. Only the new one migrates, but the old one keeps serving
+> on the schema the new one is changing.
 
 **Health check:** path `/health`. It answers **200 even when the database
 is down**, with `{"status":"degraded","db":"down"}`, so a check that looks
@@ -253,11 +260,11 @@ check the status code, know that it will not notice a lost database.
 | Variable | Required | What it does |
 |---|---|---|
 | `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. |
-| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
+| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
-| `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. |
+| `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
 | `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
-| `DATABASE_SSL` | if the database needs TLS | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. Overrides an `sslmode` in the URL. Unset: whatever the URL says, else the driver default. |
+| `DATABASE_SSL` | **yes** in `production` and `demo`, unless the URL has `sslmode` | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. Overrides an `sslmode` in the URL. Unset: whatever the URL says, else the driver default. `production` and `demo` refuse to start unless the result is `require`, `verify-ca` or `verify-full`: with no mode, or `disable`, `allow` or `prefer`, the connection can be plaintext. |
 | `MAX_ACCOUNTS`, `MAX_TRANSACTIONS` | no | The most accounts and transactions the ledger will hold. A write that would add one more is a `409` (`ledger_full`), form or API; replays are still answered. Default 200 and 2000, sized for a 0.5 GB database (below). `0` means no cap, which a real ledger wants. |
 | `MAX_REQUEST_BODY_BYTES` | no | Largest request body accepted; larger is a 413. Default 65536. |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | no | Connections per instance, default 5 + 10. Keep the total under your database plan's connection limit. |
@@ -303,13 +310,37 @@ clients, and a forged header that buys no fresh allowance.
 
 **Check it after the first deploy.** This setting follows from how Render
 says its router behaves and from uvicorn's code. It has not been checked
-against a live Render service. Send a write with a forged header,
-`curl -X POST -H 'X-Forwarded-For: 192.0.2.1' https://<service>/api/transactions`,
-and look at that request's `request.completed` line in Render's logs. Its
-`client` must be your own public address. If it is `192.0.2.1`, the setting
-is not in effect. If it is some other address that is not yours, such as a
-Cloudflare one, there is another proxy in the chain; add its published
-ranges to the list.
+against a live Render service. First find your own public address, then
+send a write with a forged header:
+
+```bash
+curl -s https://api.ipify.org; echo        # your public address
+curl -s -X POST -H 'X-Forwarded-For: 192.0.2.1' https://<service>/api/transactions
+```
+
+The write is refused with a 400 (`missing_idempotency_key`),
+which is fine: it is still logged, and still counted by the rate limit.
+Find that request's `request.completed` line in Render's logs and look at
+`client`:
+
+| `client` is | Means | Do |
+|---|---|---|
+| your own public address | **Pass.** uvicorn skipped the forged entry and took the one Render's router wrote. | Nothing. |
+| `192.0.2.1` | **Fail: the forged address was believed.** Any client can pick its own address and a fresh write allowance, so the rate limit protects nothing (the caps still bound the database). | The router is not adding its entry at the end of the header, and no value of this setting fixes that. Keel needs a code change before the demo stays up. |
+| a private address (`10.x`, `172.16-31.x`, `192.168.x`), with `"scheme": "http"` | **Fail: the setting is not in effect.** Every client shares the router's address and one write allowance. | Check `FORWARDED_ALLOW_IPS` is set on the service, and redeploy. |
+| some other address that is not yours, such as a Cloudflare one | **Fail: another proxy is in the chain.** Every client behind it shares its address. | Add that proxy's published ranges to `FORWARDED_ALLOW_IPS`. |
+
+The lines look like this (from Keel behind uvicorn's proxy handling, with
+the router's peer at `10.1.2.3` and the caller at `203.0.113.50`):
+
+```jsonc
+// pass: FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "203.0.113.50", "scheme": "https", "duration_ms": 4.1}
+// fail: the forged address believed
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "192.0.2.1", "scheme": "https", "duration_ms": 0.4}
+// fail: FORWARDED_ALLOW_IPS not in effect (the default, 127.0.0.1)
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "10.1.2.3", "scheme": "http", "duration_ms": 0.6}
+```
 
 ### Scheduled and one-off jobs
 
@@ -326,10 +357,10 @@ cron or scheduled-job feature, or its one-off shell:
 ### Pre-deploy checklist
 
 - [ ] `ENVIRONMENT=production` (or `demo` for the public demo) and `DATABASE_URL` set on the host.
-- [ ] `DATABASE_SSL` set if the database requires TLS (most managed ones do).
-- [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above), never `*`.
+- [ ] `DATABASE_SSL=require` (or stricter), or `sslmode=require` in `DATABASE_URL`. The app refuses to start without one.
+- [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above). The app refuses to start on `*` or an empty value.
 - [ ] Health check on `/health`, checking the body, not just the status.
-- [ ] One instance, or migrations moved to a release step and `--no-migrate` on the start command.
+- [ ] Exactly one instance, with autoscaling off (above: migrations on startup, and the in-memory rate limit).
 - [ ] A daily job for `python -m scripts.prune_idempotency_keys --yes`.
 - [ ] `DB_POOL_SIZE + DB_MAX_OVERFLOW` times the number of instances is under the database's connection limit.
 - [ ] CI is green on the commit being deployed: tests, `alembic check`, `pip-audit`, and the image smoke test.
@@ -347,7 +378,7 @@ pytest -v
 ruff check .
 ```
 
-214 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+241 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -356,7 +387,7 @@ stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
 Without `TEST_DATABASE_URL`, the 101 database-backed tests are **skipped,
-not failed**. A green run of the remaining 113 is partial coverage:
+not failed**. A green run of the remaining 140 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -484,7 +515,7 @@ app/
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py
-tests/                    214 tests; see above
+tests/                    241 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
