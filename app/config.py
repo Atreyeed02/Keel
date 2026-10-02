@@ -185,11 +185,6 @@ class Settings(BaseSettings):
     # Level for the `keel` JSON logger (app/observability.py)
     log_level: str = "INFO"
 
-    # Temporary diagnostic: log, per request, the peer that connected and the
-    # IP-shaped values of the forwarding headers it sent
-    # (app/forwarding_log.py). Off unless set.
-    log_forwarding_headers: bool = False
-
     @model_validator(mode="after")
     def refuse_unsafe_hosted_config(self) -> "Settings":
         # Parsing here, not lazily, so a malformed URL or SSL mode stops the
