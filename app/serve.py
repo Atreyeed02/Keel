@@ -39,14 +39,15 @@ def serve(reload: bool = False) -> None:
     # a reader has to check, so production gets no reload argument at all.
     development = {"reload": True, "reload_dirs": ["app"]} if reload else {}
     uvicorn.run(
-        "app.main:app",
+        "app.main:served",
         host=settings.host,
         port=settings.port,
-        # Behind a host's proxy the socket peer is the proxy. These make
-        # request.client and request.url.scheme the real ones, but only for
-        # proxies FORWARDED_ALLOW_IPS names (app/config.py).
-        proxy_headers=True,
-        forwarded_allow_ips=settings.forwarded_allow_ips,
+        # Behind a host's proxy the socket peer is the proxy. `served` turns
+        # the forwarded headers into the real client and scheme, trusting only
+        # the proxies FORWARDED_ALLOW_IPS names (app/client_address.py). It
+        # needs the peer as it connected, so uvicorn's own handling, on by
+        # default, is off: left on, it would rewrite the peer first.
+        proxy_headers=False,
         **development,
     )
 

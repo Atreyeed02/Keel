@@ -368,7 +368,7 @@ def test_the_start_command_migrates_then_serves_on_port(monkeypatch):
     serve.main([])
 
     assert calls[0] == ("migrate", ["-m", "alembic", "upgrade", "head"], True)
-    assert calls[1][0:2] == ("serve", "app.main:app")
+    assert calls[1][0:2] == ("serve", "app.main:served")
     assert calls[1][2]["port"] == 10000 and calls[1][2]["host"] == "0.0.0.0"
 
 
