@@ -605,6 +605,7 @@ violation.
 ```
 app/
 ├── api/health.py      HTTP: liveness + DB connectivity
+├── client_address.py  who the client is, behind proxies and Cloudflare (§5.21)
 ├── db/schema.py       SQLAlchemy Core table definitions
 ├── db/engine.py       async engine, connection helpers
 ├── domain/ledger.py   double-entry invariant + posting
@@ -685,7 +686,8 @@ starts, if any of these holds:
   TLS. An `sslmode` in the URL counts, because managed databases put one
   in the URLs they hand out.
 - `FORWARDED_ALLOW_IPS` contains `*`, alone or in a list, or names nothing.
-  With `*` uvicorn believes a client's own `X-Forwarded-For` (§5.15).
+  With `*` the leftmost `X-Forwarded-For` entry, which a client writes,
+  would be believed (§5.21).
 
 `ENVIRONMENT=demo`, the public demo, is hosted too and gets the same guard. It also turns on the demo notice (§5.8) and is the only
 environment the reset script (§5.10) runs in.
@@ -998,7 +1000,8 @@ database. See §5.13.
 
 **Setup.** Configures the JSON logger and registers the request-id
 middleware (§5.15), creates the FastAPI app, includes the JSON API's
-routers and error handlers (§5.16), mounts `/static`, points Jinja2 at
+routers and error handlers (§5.16), wraps the app as `served` behind
+`ClientAddressMiddleware` (§5.21), mounts `/static`, points Jinja2 at
 `templates/`, and registers a custom filter:
 
 ```python
@@ -1178,10 +1181,11 @@ overwrites it.
 Migrations run automatically on container start, from the Dockerfile:
 
 ```dockerfile
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["python", "-m", "app.serve"]
 ```
 
-`&&` matters: if migrations fail, uvicorn never starts.
+`app/serve.py` runs `alembic upgrade head` with `check=True`: if migrations
+fail, uvicorn never starts (§5.12).
 
 ### 5.10 `scripts/seed_demo_data.py`
 
@@ -1252,7 +1256,7 @@ loses rolls back whole and can be run again. Nothing schedules it yet.
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
 | `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
 | `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the posting form's CSP nonce (§5.18) |
-| `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; separate write limits for two forwarded clients; a forged `X-Forwarded-For` buys no fresh allowance (§5.15) |
+| `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
 | `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |
 | `test_demo.py` | partly | the notice on every page only with `ENVIRONMENT=demo`; the reset script refusing outside the demo before connecting and without `--yes`, restoring exactly a fresh seed, re-enabling the append-only trigger, and rolling back whole on failure (§5.8, §5.10) |
@@ -1282,7 +1286,8 @@ host as they are written.
 
 The start command is `python -m app.serve` (`app/serve.py`): `alembic
 upgrade head`, then, only if that succeeded, uvicorn on `$PORT` (default
-8000), with the forwarded-header settings from §5.15 and never `--reload`.
+8000), serving `app.main:served` with uvicorn's own proxy handling off
+(§5.21), and never `--reload`.
 **Migrating on start assumes a single instance.** Alembic takes no lock, so
 two instances starting together would both migrate. A host that scales out,
 or starts the new instance before stopping the old one during a deploy,
@@ -1413,31 +1418,10 @@ so each event has one definition of its fields:
 
 **Behind a host's proxy**, the socket peer is the proxy, not the client,
 and the connection to the container is plain HTTP even when the visitor used
-HTTPS. `python -m app.serve` starts uvicorn with `proxy_headers=True` and
-`forwarded_allow_ips` from `FORWARDED_ALLOW_IPS`, so for proxies it trusts,
-`X-Forwarded-For` and `X-Forwarded-Proto` become `request.client` and
-`request.url.scheme`: the `client` and `scheme` in the log line, and the
-scheme in any absolute URL the app builds, such as FastAPI's trailing-slash
-redirect, and the client the write rate limit counts (§5.19). The default,
-`127.0.0.1`, trusts only a proxy on the same machine.
-
-On Render, set `FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
-Given a list, uvicorn reads `X-Forwarded-For` from the right, skips every
-trusted address and takes the first one that is not: here, the first public
-address, which is the one Render's router wrote for the connection it
-received. The router connects from a private address; no internet client
-can. This used to say `*`, which is wrong once a rate limit depends on the
-answer. With `*`, uvicorn takes the header's *leftmost* address. Render has
-said its router appends to an incoming `X-Forwarded-For` rather than
-replacing it, so the leftmost entry can be anything the client sent, and a
-client could claim a new address, and a fresh allowance, with every request.
-This reasoning comes from uvicorn 0.31's source and Render's own statements,
-not from a live Render service, so the README's pre-deploy checklist has a
-step that checks it after the first deploy.
-`tests/test_proxy_headers.py` runs the app behind uvicorn's own middleware,
-configured that way, and checks the trusted and untrusted cases, separate
-limits for two forwarded clients, and that a forged header buys no new
-allowance.
+HTTPS. The `client` and `scheme` in the log line are what
+`app/client_address.py` made of the forwarded headers (§5.21): the same
+client the write rate limit counts (§5.19), and the scheme of any absolute
+URL the app builds, such as FastAPI's trailing-slash redirect.
 
 The event's own id is not logged: `post_transaction` does not return it.
 `transaction_id` is the event's `aggregate_id`, which is enough to find
@@ -1612,8 +1596,8 @@ refused write never reads its body or opens a connection. It sits inside the
 request log, so the 429 is logged as an ordinary `request.completed` with the
 `client` it applied to, and inside the security headers, so the 429 has them.
 
-**Who the client is.** `scope["client"]`, after uvicorn's proxy-header
-handling (§5.15), the same address the log shows. IPv6 addresses are
+**Who the client is.** `scope["client"]`, as `app/client_address.py`
+set it (§5.21), the same address the log shows. IPv6 addresses are
 counted per /64, the block one subscriber is normally given, so cycling
 through the addresses of one connection earns no extra allowance. An
 IPv4-mapped IPv6 address counts as its IPv4 address.
@@ -1670,6 +1654,87 @@ rows are worth.
 `tests/test_capacity.py` covers each cap through both interfaces, that a
 refused write leaves nothing behind, replays at the cap, a refused key
 posting once there is room, `0`, and the uncapped scripts.
+
+### 5.21 `app/client_address.py` — who the client is
+
+Every request's client address and scheme are decided in one place:
+`ClientAddressMiddleware`, which wraps the whole app as `app.main.served`.
+`python -m app.serve` runs `served` with uvicorn's own proxy handling off,
+because that handling rewrites the peer before the app sees it, and the
+rule below needs the peer as it connected.
+
+**The chain on Render**, as the live service showed it on 2026-10-03, using a
+temporary diagnostic since removed:
+
+```
+visitor ──▶ Cloudflare ──▶ Render load balancer ──▶ Render proxy, 127.0.0.1 ──▶ Keel
+            sets CF-Connecting-IP                     (inside the container)
+            appends visitor to XFF
+                           appends the edge to XFF
+                                                    appends a 10.x hop to XFF
+```
+
+So `X-Forwarded-For` arrives as `[whatever the client sent..., visitor,
+Cloudflare edge, 10.x]`. The peer of every public request is `127.0.0.1`.
+Render's health checks connect from a `10.x` address and send only
+`X-Forwarded-Proto`. A client-set `CF-Connecting-IP` gets a 403 from
+Cloudflare. `True-Client-IP` and `X-Real-IP` are rewritten or passed through
+by layers Keel cannot see, so neither is read.
+
+**Two steps.**
+
+1. uvicorn's own `ProxyHeadersMiddleware`, unchanged. For a peer
+   `FORWARDED_ALLOW_IPS` trusts, `X-Forwarded-Proto` becomes the scheme, and
+   `X-Forwarded-For` is read from the right, skipping trusted hops. The
+   first untrusted hop becomes the client. With
+   `FORWARDED_ALLOW_IPS=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`
+   that skips the `10.x` hop and lands on the Cloudflare edge, which every
+   visitor behind that edge shares. That was the live behaviour before this
+   section existed.
+2. If the hop step 1 chose is in Cloudflare's published ranges
+   (`CLOUDFLARE_NETWORKS`), and the peer was loopback, and there is exactly
+   one `CF-Connecting-IP` holding exactly one address, that address is the
+   client. Otherwise step 1's answer stands.
+
+Step 2 reads the address step 1 already chose, so the two can never
+disagree about where the walk along `X-Forwarded-For` ended.
+
+**Why a visitor cannot pick their own address:**
+
+| Attempt | What happens |
+|---|---|
+| Forge `X-Forwarded-For` | The forged entries sit left of the hops the proxies appended, and step 1 stops at the first untrusted hop. |
+| Forge `CF-Connecting-IP` through Cloudflare | Cloudflare answers 403, and it sets the header itself on every request it forwards. |
+| A Worker on another Cloudflare account | Cloudflare sets `CF-Connecting-IP` to its fixed Worker address, `2a06:98c0:3600::103`, so all such Workers share one allowance. |
+| Reach Render's load balancer around Cloudflare | The hop it records is the caller's own address, not a Cloudflare one, so step 2 does not apply and the caller is the client. Render's public addresses (`216.24.57.0/24`) are announced only through Cloudflare's network (AS13335), so no such route is known, but nothing relies on that. |
+| Another service on Render's private network, or a health check | The peer is `10.x`, not loopback: step 2 does not apply. |
+| Forge `True-Client-IP` or `X-Real-IP` | Never read. |
+
+**What is left:** someone who reaches Render's load balancer from inside
+Cloudflare's address space, without going through Cloudflare's proxy, and
+knows an address of it that Render does not publish. A Worker's raw TCP
+socket is one way. Their forged `CF-Connecting-IP` would be believed. That
+buys a fresh write allowance and nothing more: the caps (§5.20) still bound
+the database.
+
+**Keeping `CLOUDFLARE_NETWORKS` current.** It is a copy of
+<https://www.cloudflare.com/ips-v4> and `/ips-v6`, with the fetch date in the
+code. `scripts/check_cloudflare_ranges.py` compares it with the live lists,
+and `.github/workflows/cloudflare-ranges.yml` runs that weekly and on demand.
+GitHub emails a failed scheduled run to whoever last changed its schedule.
+A stale copy fails safe: an edge in a new range is not recognised, so its
+visitors share the edge's address, as before. It never lets a client choose
+an address.
+
+`tests/test_proxy_headers.py` replays the Render chain. It checks the
+visitor Cloudflare names, forged `X-Forwarded-For`, `True-Client-IP` and
+`X-Real-IP` changing nothing, a bypass of Cloudflare with a forged
+`CF-Connecting-IP`, peers that aren't loopback (a health check, the private
+network), an untrusted loopback, malformed or duplicated `CF-Connecting-IP`,
+IPv6, and the rate limit: separate allowances for two visitors, one
+allowance however the headers are forged, and none gained by rotating a
+forged `CF-Connecting-IP` around Cloudflare. Each of step 2's three
+conditions was removed in turn, and a test failed every time.
 
 ---
 
@@ -1780,8 +1845,8 @@ per-request id, echoed as `X-Request-ID` (§5.15).
 TLS to a managed Postgres, `PORT`, and a refusal to start a hosted
 environment on the development database (§5.1); `python -m app.serve`,
 which migrates then serves, in an image that runs as an unprivileged user
-(§5.12); forwarded headers believed only from `FORWARDED_ALLOW_IPS`
-(§5.15); a request body limit and security headers with a nonce CSP
+(§5.12); forwarded headers believed only from `FORWARDED_ALLOW_IPS`, and
+`CF-Connecting-IP` only from Cloudflare via Render's proxy (§5.21); a request body limit and security headers with a nonce CSP
 (§5.18); `pip-audit` in CI (§5.13); and a Deploying section in the README.
 
 **Public writes, bounded** — a per-client write rate limit with `429` and
@@ -1800,7 +1865,7 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 250 tests (§5.11). 149 run with no database at all: the
+**Testing** — 291 tests (§5.11). 190 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
@@ -1850,11 +1915,12 @@ for the demo, `scripts/reset_demo_data.py` (§5.10) do their jobs, but
 nothing in the stack runs them. The Render deployment needs a daily prune
 and a periodic reset.
 
-**4. The forwarded client address is unchecked on Render.** Both the log's
-`client` and the rate limit depend on `FORWARDED_ALLOW_IPS` (§5.15). The
-documented value comes from uvicorn's source and Render's statements about
-its router, not from a live service. The first deploy has to check it, with
-the forged-header request in the README's pre-deploy checklist.
+**4. The forwarded client address, residual risk.** Settled on the live
+service (§5.21): the client is the visitor Cloudflare names. One gap is left.
+Someone who connects to Render's load balancer from inside Cloudflare's
+address space without going through Cloudflare's proxy, and who knows an
+unpublished address of it, can choose their own address. That costs only the
+rate limit.
 
 **5. One instance only.** Migrating on start (§5.12) and the in-memory
 rate limit (§5.19) both assume a single instance. Scaling out needs

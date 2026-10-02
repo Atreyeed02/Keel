@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-09-29.** A snapshot of what is actually built, what is
+**As of 2026-10-03.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Four PRs are merged into `main`, with regular merge commits, and their
+Seven PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -19,20 +19,35 @@ branches deleted:
 | [#2](https://github.com/Atreyeed02/Keel/pull/2) | `feat/json-api` (4 commits) | `bd9db76` |
 | [#3](https://github.com/Atreyeed02/Keel/pull/3) | `docs/status-after-merges` | `250b7e6` |
 | [#4](https://github.com/Atreyeed02/Keel/pull/4) | `chore/small-fixes` | `3f2be79` |
+| [#5](https://github.com/Atreyeed02/Keel/pull/5) | `chore/deploy-readiness` (14 commits) | `9f5bf5d` |
+| [#6](https://github.com/Atreyeed02/Keel/pull/6) | `fix/asyncpg-url-params` | `16a72ed` |
+| [#7](https://github.com/Atreyeed02/Keel/pull/7) | `diag/forwarding-headers` (temporary diagnostic, removed again by `fix/client-ip-cloudflare`) | `df01fe4` |
 
-CI passed on `main` after each merge, most recently at `f795e0b`.
+**Live.** Keel runs on Render (free tier, Singapore) from `main`, with
+Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
+connection, `sslmode=require`), with `ENVIRONMENT=demo` and
+`FORWARDED_ALLOW_IPS=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
+After #6 deployed, `/health` returned `{"status":"ok","db":"up"}`.
 
-**In review: `chore/deploy-readiness`**, which makes Keel fit to run as a
-public demo on a container host (§2, "Deploy readiness"). Everything below
-was checked on that branch, at migration head `c2e8f4a61b07`; it adds no
-migration.
+**In review: `fix/client-ip-cloudflare`**, which makes the client address
+the visitor's own behind Render and Cloudflare (§2, "Behind a proxy"). It
+also removes #7's diagnostic. Checked on that branch; it adds no migration:
 
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
-| `pytest` collection | **250 tests** |
-| `pytest` (no database available) | 149 passed, 101 skipped |
-| `pytest` (local Postgres 16) | 250 passed |
+| `pytest` collection | **291 tests** |
+| `pytest` (no database available) | 190 passed, 101 skipped |
+| `pytest` (local Postgres 16) | 291 passed |
+| New tests fail without their change | with the `CF-Connecting-IP` rule disabled, 6 tests fail. Removing each of its three conditions in turn (loopback peer, Cloudflare hop, exactly one header) fails 3, 4 and 1 tests |
+| `python -m app.serve` under real uvicorn, Render-shaped headers from `127.0.0.1` | the client is the visitor; forged `X-Forwarded-For`, `True-Client-IP` and `X-Real-IP` leave it the visitor; a forged `CF-Connecting-IP` without a Cloudflare hop gives the caller's own address |
+| `python -m scripts.check_cloudflare_ranges` | matches Cloudflare's 22 published ranges |
+| `pip-audit`, Docker image build and smoke test | CI |
+
+Checked for #5 (deploy readiness), at migration head `c2e8f4a61b07`:
+
+| Check | Result |
+|---|---|
 | `alembic upgrade head` → `downgrade base` → `upgrade head`, then `alembic check` | clean, on a scratch database; `alembic check` also runs in CI |
 | New tests fail without their change | each behaviour of the rate limit, the caps, the demo notice and the reset script was broken on purpose, one at a time, and a test failed every time. The startup guard's TLS and `FORWARDED_ALLOW_IPS` checks: all 22 refusal cases fail against the `app/config.py` without them |
 | `scripts.reset_demo_data` on a migrated database | refused with `ENVIRONMENT=production`; only counted without `--yes`; with `--yes` removed a visitor's account, restored 8 accounts and 18 events from sequence 1, and left the append-only trigger enabled |
@@ -40,8 +55,8 @@ migration.
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
 The 101 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 149 tests
-means barely half the suite actually executed.** Do not read it as a
+unless `TEST_DATABASE_URL` is set, so **a green local run of 190 tests
+means about a third of the suite never executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
 > **`alembic check` passes and runs in CI.** It used to report one
@@ -187,10 +202,12 @@ pins `COMPOSE_FILE` so it cannot accidentally pick up the dev bind-mount
 and test host code instead of the image. The dev bind mount itself sets
 `create_host_path: false`, so a checkout without `./app` refuses to start
 instead of mounting an empty directory over the image. On the
-deploy-readiness branch `lint-and-test` also runs `pip-audit --strict`, and
-`docker-smoke` fails if the container runs as root.
+Since #5, `lint-and-test` also runs `pip-audit --strict`, and `docker-smoke`
+fails if the container runs as root. A third, scheduled workflow, "Cloudflare
+ranges", compares `app/client_address.py`'s copy of Cloudflare's address
+ranges with the published lists every Monday.
 
-### Deploy readiness — on `chore/deploy-readiness`, in review
+### Deploy readiness — merged (#5), live on Render
 
 What a public demo on a container host needs, with the README's
 "Deploying" section as the operator's guide:
@@ -203,12 +220,17 @@ What a public demo on a container host needs, with the README's
 - **A start command for hosts.** `python -m app.serve` migrates, then
   serves, in a container running as an unprivileged user. Migrating on
   start is one reason Keel must run as a single instance.
-- **Behind a proxy.** Uvicorn believes `X-Forwarded-For`/`-Proto` only from
-  `FORWARDED_ALLOW_IPS`. On Render that is the private networks,
-  `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, **not `*`**: with `*` uvicorn
-  takes the leftmost entry, which a client can forge. This follows from
-  uvicorn's code and Render's statements and still has to be checked on the
-  live service; the README says how.
+- **Behind a proxy.** On Render a request goes visitor → Cloudflare →
+  Render's load balancer → Render's proxy on `127.0.0.1` → Keel, observed
+  on the live service. `X-Forwarded-For` is believed only from
+  `FORWARDED_ALLOW_IPS` (on Render
+  `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, **not `*`**), read
+  from the right to the Cloudflare edge. Before `fix/client-ip-cloudflare`,
+  that edge was the client, shared by every visitor behind it. With it,
+  Cloudflare's `CF-Connecting-IP` is the client, believed only when the peer
+  was loopback and that edge is in Cloudflare's published ranges.
+  `app/client_address.py` has the rule, and `ARCHITECTURE.md` §5.21 says why
+  no header can be forged and what risk is left.
 - **HTTP hardening.** A 64 KiB body limit (413) and security headers,
   including a CSP whose nonce lets the posting form's one inline script run.
 - **Public writes, bounded.** Every write, form or API, counts against a
@@ -252,19 +274,19 @@ the one remaining limit: entry ids are not reproduced.
 
 Ordered so that earlier items unblock or de-risk later ones.
 
-**1. A live deployment: Render + Neon**
-Nothing is hosted yet, so there is no URL to click without cloning the
-repo. This means a hosted demo instance, not a deployment pipeline, which
-is out of scope (below). Once `chore/deploy-readiness` is merged, the app
-side is ready, and the next PR is the Render + Neon one. It needs to:
+**1. Finish the live deployment**
+Keel is live on Render + Neon (§1). What is left:
 
-- run the image with `ENVIRONMENT=demo`, `DATABASE_URL`, `DATABASE_SSL` and
-  `FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`;
-- **check the forwarded client address on the live service** (the README's
-  pre-deploy checklist has the `curl`), adjusting `FORWARDED_ALLOW_IPS` if
-  the log shows anything but the caller's own address;
+- after `fix/client-ip-cloudflare` deploys, run the README's forged-header
+  check against the live service. Until it passes, treat the rate limit as
+  unverified;
 - schedule `python -m scripts.prune_idempotency_keys --yes` daily and
-  `python -m scripts.reset_demo_data --yes` periodically;
+  `python -m scripts.reset_demo_data --yes` periodically. Render's cron jobs
+  may need a paid plan, so a scheduled GitHub Actions workflow may be the
+  way;
+- try `sslmode=verify-full` with Neon, which needs a CA bundle both drivers
+  can find in `python:3.12-slim`;
+- optionally, a `render.yaml` blueprint matching the live settings;
 - stay on one instance, which both migrate-on-start and the in-memory rate
   limit assume.
 
@@ -312,7 +334,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 149 of 250 tests:
+you are running 190 of 291 tests:
 
 ```bash
 docker compose up -d db

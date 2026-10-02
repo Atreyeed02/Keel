@@ -262,7 +262,7 @@ check the status code, know that it will not notice a lost database.
 | `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. The only query parameters accepted are `sslmode` and `channel_binding`, and `channel_binding` only as `prefer` or `disable`. The app's driver, asyncpg, can't do channel binding, so `channel_binding=require`, which Neon puts in the URLs it gives you, stops startup: remove it or change it to `prefer`. Any other parameter (`application_name`, `connect_timeout`, `options`, ...) also stops startup, because asyncpg would fail on every connection. |
 | `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
-| `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
+| `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
 | `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
 | `DATABASE_SSL` | **yes** in `production` and `demo`, unless the URL has `sslmode` | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`. If the URL has an `sslmode` too, the stricter of the two is used, so neither can weaken the other. Unset: whatever the URL says, else the driver default. `production` and `demo` refuse to start unless the result is `require`, `verify-ca` or `verify-full`: with no mode, or `disable`, `allow` or `prefer`, the connection can be plaintext. |
 | `MAX_ACCOUNTS`, `MAX_TRANSACTIONS` | no | The most accounts and transactions the ledger will hold. A write that would add one more is a `409` (`ledger_full`), form or API; replays are still answered. Default 200 and 2000, sized for a 0.5 GB database (below). `0` means no cap, which a real ledger wants. |
@@ -282,64 +282,74 @@ under 200 MB. Concurrent writes can overshoot a cap by the few that were
 already in flight when it was reached. Raising `MAX_REQUEST_BODY_BYTES`
 raises the worst case with it.
 
-### Behind Render's proxy: `FORWARDED_ALLOW_IPS`
+### Behind Render and Cloudflare: `FORWARDED_ALLOW_IPS`
 
-On Render, every request reaches the container from Render's router, so
-without help every client has the router's address and they all share one
-write allowance. Set
+On Render, a visitor's request goes visitor → Cloudflare → Render's load
+balancer → Render's proxy inside the container, on `127.0.0.1` → Keel. Each
+hop appends to `X-Forwarded-For`, so it arrives as `[whatever the client
+sent..., visitor, Cloudflare edge, Render 10.x hop]`, and Cloudflare sets
+`CF-Connecting-IP` to the visitor's address. This was observed on the live
+service on 2026-10-03. Set
 
 ```
-FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+FORWARDED_ALLOW_IPS=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 ```
 
-The router connects from a private address, which no internet client can
-have. uvicorn then reads `X-Forwarded-For` from the right and takes the
-first address that is not private: the one Render's router wrote for the
-connection it received.
+- `127.0.0.1` is Render's proxy, the peer of every public request.
+- `10.0.0.0/8` covers the hop Render's load balancer appends after
+  Cloudflare's. The other two private ranges are there for the same kind of
+  hop. No internet client connects from any of them.
 
-**Not `*`.** With `*`, uvicorn takes the header's *leftmost* address. Render
-has said its router appends to an incoming `X-Forwarded-For` rather than
-replacing it, and documents no promise to strip one, so the leftmost
-address can be whatever the client sent. Any client could then name a new
-address with every request and never be rate limited. Reading from the
-right holds up whether the router appends or replaces, as long as it adds
-its entry at the end, which is what every proxy following the
-`X-Forwarded-For` convention does.
-`tests/test_proxy_headers.py` shows both: separate limits for two forwarded
-clients, and a forged header that buys no fresh allowance.
+Keel reads `X-Forwarded-For` from the right, past those hops, and stops at
+the first one it doesn't trust: the Cloudflare edge. Because that hop is in
+Cloudflare's published ranges and the peer was loopback, Keel takes the client
+from `CF-Connecting-IP`, which only Cloudflare sets. A client that sends its
+own gets a 403 from Cloudflare. `True-Client-IP` and `X-Real-IP` are never
+read. `app/client_address.py` has the rule, and `docs/ARCHITECTURE.md` §5.21
+explains why none of these headers can be forged, including by reaching
+Render around Cloudflare, and what risk is left.
 
-**Check it after the first deploy.** This setting follows from how Render
-says its router behaves and from uvicorn's code. It has not been checked
-against a live Render service. First find your own public address, then
-send a write with a forged header:
+**Not `*`.** With `*`, the header's *leftmost* address is taken, and the
+client writes that itself. Any client could then name a new address with
+every request and never be rate limited.
 
-```bash
-curl -s https://api.ipify.org; echo        # your public address
-curl -s -X POST -H 'X-Forwarded-For: 192.0.2.1' https://<service>/api/transactions
+**Cloudflare's ranges** are copied into `app/client_address.py`. The
+"Cloudflare ranges" workflow compares them with Cloudflare's published lists
+every Monday and fails when they differ. Run
+`python -m scripts.check_cloudflare_ranges` to see what changed. A stale
+copy fails safe: visitors behind an edge in a new range share that edge's
+address until the copy is updated.
+
+**Check it after a deploy.** From PowerShell, find your public address,
+then send a write with forged headers:
+
+```powershell
+$KEEL = "https://<service>.onrender.com"
+curl.exe -s https://api.ipify.org          # your public address
+curl.exe -s -o NUL -w "%{http_code}\n" -X POST -H "X-Forwarded-For: 192.0.2.1" -H "True-Client-IP: 192.0.2.2" -H "X-Real-IP: 192.0.2.3" "$KEEL/api/transactions"
 ```
 
-The write is refused with a 400 (`missing_idempotency_key`),
-which is fine: it is still logged, and still counted by the rate limit.
-Find that request's `request.completed` line in Render's logs and look at
-`client`:
+The write is refused with a 400 (`missing_idempotency_key`). That's fine:
+it's still logged, and still counted by the rate limit. Find that request's
+`request.completed` line in Render's logs and look at `client`. Compare it
+with the address `api.ipify.org` showed from the same machine and shell; a
+network with several exits can show different ones to different programs.
 
 | `client` is | Means | Do |
 |---|---|---|
-| your own public address | **Pass.** uvicorn skipped the forged entry and took the one Render's router wrote. | Nothing. |
-| `192.0.2.1` | **Fail: the forged address was believed.** Any client can pick its own address and a fresh write allowance, so the rate limit protects nothing (the caps still bound the database). | The router is not adding its entry at the end of the header, and no value of this setting fixes that. Keel needs a code change before the demo stays up. |
-| a private address (`10.x`, `172.16-31.x`, `192.168.x`), with `"scheme": "http"` | **Fail: the setting is not in effect.** Every client shares the router's address and one write allowance. | Check `FORWARDED_ALLOW_IPS` is set on the service, and redeploy. |
-| some other address that is not yours, such as a Cloudflare one | **Fail: another proxy is in the chain.** Every client behind it shares its address. | Add that proxy's published ranges to `FORWARDED_ALLOW_IPS`. |
+| your own public address | **Pass.** | Nothing. |
+| `192.0.2.1`, `.2` or `.3` | **Fail: a forged header was believed.** Any client can pick its own address and a fresh write allowance, so the rate limit protects nothing (the caps still bound the database). | Keel needs a code change; Render's chain has changed. |
+| a Cloudflare address (e.g. `172.64.x`–`172.71.x`), with `"scheme": "https"` | **Fail: `CF-Connecting-IP` was not used.** Every visitor behind that edge shares one allowance. | Run `python -m scripts.check_cloudflare_ranges`. If the edge's range is missing, update `CLOUDFLARE_NETWORKS`. |
+| a `10.x` address | **Fail: `10.0.0.0/8` is not trusted**, so Render's hop is taken for the client. | Set `FORWARDED_ALLOW_IPS` as above, and redeploy. |
+| `127.0.0.1`, with `"scheme": "http"` | **Fail: `127.0.0.1` is not trusted**, or the setting is not in effect. Every client shares one allowance. | Set `FORWARDED_ALLOW_IPS` as above, and redeploy. |
 
-The lines look like this (from Keel behind uvicorn's proxy handling, with
-the router's peer at `10.1.2.3` and the caller at `203.0.113.50`):
+Adding `-H "CF-Connecting-IP: 192.0.2.4"` to the request should get a 403
+from Cloudflare (`Server: cloudflare`) before it reaches Keel.
+
+A passing line looks like this:
 
 ```jsonc
-// pass: FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
-{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "203.0.113.50", "scheme": "https", "duration_ms": 4.1}
-// fail: the forged address believed
-{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "192.0.2.1", "scheme": "https", "duration_ms": 0.4}
-// fail: FORWARDED_ALLOW_IPS not in effect (the default, 127.0.0.1)
-{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "10.1.2.3", "scheme": "http", "duration_ms": 0.6}
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "103.161.223.14", "scheme": "https", "duration_ms": 4.1}
 ```
 
 ### Scheduled and one-off jobs
@@ -359,14 +369,14 @@ cron or scheduled-job feature, or its one-off shell:
 - [ ] `ENVIRONMENT=production` (or `demo` for the public demo) and `DATABASE_URL` set on the host.
 - [ ] `DATABASE_SSL=require` (or stricter), or `sslmode=require` in `DATABASE_URL`. The app refuses to start without one.
 - [ ] `DATABASE_URL` has no query parameters other than `sslmode` and `channel_binding=prefer`. Neon's URLs end in `&channel_binding=require`: remove it or change it to `prefer`, or the app refuses to start.
-- [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above). The app refuses to start on `*` or an empty value.
+- [ ] `FORWARDED_ALLOW_IPS` set to the proxies' addresses and networks (on Render, `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, above). The app refuses to start on `*` or an empty value.
 - [ ] Health check on `/health`, checking the body, not just the status.
 - [ ] Exactly one instance, with autoscaling off (above: migrations on startup, and the in-memory rate limit).
 - [ ] A daily job for `python -m scripts.prune_idempotency_keys --yes`.
 - [ ] `DB_POOL_SIZE + DB_MAX_OVERFLOW` times the number of instances is under the database's connection limit.
 - [ ] CI is green on the commit being deployed: tests, `alembic check`, `pip-audit`, and the image smoke test.
 - [ ] After the first deploy: `/health` returns `{"status":"ok","db":"up"}`, and the response headers include `Content-Security-Policy`.
-- [ ] After the first deploy: a write with a forged `X-Forwarded-For` is logged with your own address as `client` (above).
+- [ ] After the first deploy: a write with forged `X-Forwarded-For`, `True-Client-IP` and `X-Real-IP` is logged with your own address as `client` (above).
 
 ## Running tests
 
@@ -379,7 +389,7 @@ pytest -v
 ruff check .
 ```
 
-250 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+291 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -407,7 +417,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
 | `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command |
 | `test_hardening.py` | the body size limit, security headers, the posting form's CSP nonce |
-| `test_proxy_headers.py` | which forwarded headers are believed; separate write limits for two forwarded clients; a forged `X-Forwarded-For` buys no fresh allowance |
+| `test_proxy_headers.py` | which forwarded headers are believed; the Render chain behind Cloudflare, with `CF-Connecting-IP` believed only when it can be; forged headers, including around Cloudflare, change neither the client nor the write limit |
 | `test_rate_limit.py` | the write rate limit: 429 and an exact `Retry-After`, forms and API sharing one allowance, reads unlimited, IPv6 per /64 |
 | `test_capacity.py` | the account and transaction caps through both interfaces, replays at the cap, uncapped scripts |
 | `test_demo.py` | the demo notice on every page, and the reset script's refusals, restore and rollback |
@@ -511,12 +521,14 @@ app/
 ├── observability.py      JSON logging, request-id middleware
 ├── security.py           body size limit, security headers
 ├── ratelimit.py          per-client write rate limit
+├── client_address.py     who the client is, behind Render and Cloudflare
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
-                          backfill_account_events.py, prune_idempotency_keys.py
-tests/                    250 tests; see above
+                          backfill_account_events.py, prune_idempotency_keys.py,
+                          check_cloudflare_ranges.py
+tests/                    291 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
