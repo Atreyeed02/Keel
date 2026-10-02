@@ -259,7 +259,7 @@ check the status code, know that it will not notice a lost database.
 
 | Variable | Required | What it does |
 |---|---|---|
-| `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. |
+| `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. The only query parameters accepted are `sslmode` and `channel_binding`, and `channel_binding` only as `prefer` or `disable`. The app's driver, asyncpg, can't do channel binding, so `channel_binding=require`, which Neon puts in the URLs it gives you, stops startup: remove it or change it to `prefer`. Any other parameter (`application_name`, `connect_timeout`, `options`, ...) also stops startup, because asyncpg would fail on every connection. |
 | `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
 | `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
@@ -358,6 +358,7 @@ cron or scheduled-job feature, or its one-off shell:
 
 - [ ] `ENVIRONMENT=production` (or `demo` for the public demo) and `DATABASE_URL` set on the host.
 - [ ] `DATABASE_SSL=require` (or stricter), or `sslmode=require` in `DATABASE_URL`. The app refuses to start without one.
+- [ ] `DATABASE_URL` has no query parameters other than `sslmode` and `channel_binding=prefer`. Neon's URLs end in `&channel_binding=require`: remove it or change it to `prefer`, or the app refuses to start.
 - [ ] `FORWARDED_ALLOW_IPS` set to the proxy's networks (on Render, the three private ranges above). The app refuses to start on `*` or an empty value.
 - [ ] Health check on `/health`, checking the body, not just the status.
 - [ ] Exactly one instance, with autoscaling off (above: migrations on startup, and the in-memory rate limit).

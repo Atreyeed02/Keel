@@ -654,6 +654,20 @@ psycopg, which is libpq underneath, keeps it in the URL. `DATABASE_SSL`
 so a leftover setting in one place can never weaken the other. With
 `DATABASE_SSL=require` and `?sslmode=verify-full`, the connection verifies
 the certificate and host name. A malformed URL or unknown mode stops the process at start.
+
+**No other query parameters.** SQLAlchemy passes every query parameter in
+the asyncpg URL to `asyncpg.connect()` as a keyword argument, and asyncpg
+accepts none of libpq's. So a URL with `?channel_binding=require` (Neon's
+default) used to let the migrations connect through psycopg while every
+connection the app made failed with a `TypeError`. The live demo went down
+that way: `/health` reported `degraded` and every page returned 500. The
+asyncpg URL now carries no query parameters. `channel_binding=prefer` or
+`disable` reaches psycopg only, which is no weaker, since asyncpg never
+binds and `prefer` allows that. `channel_binding=require` stops the process
+at start: asyncpg cannot honour it, and dropping it would quietly weaken
+every runtime connection. Any other parameter stops the process too. Each
+refusal names the parameter, never the URL. `Settings` sets
+`hide_input_in_errors`, so pydantic's error doesn't print DATABASE_URL either.
 Alembic stores the URL in an ini-style config where `%` is special, so it
 gets `alembic_url`, the psycopg URL with `%` escaped; a percent-encoded
 password would otherwise break every migration.
@@ -842,12 +856,18 @@ async def ping() -> bool:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as exc:
+        log.warning(
+            "db.ping_failed",
+            extra={"error": type(exc).__name__, "detail": _without_password(str(exc))},
+        )
         return False
 ```
 
 Returns a boolean rather than raising — the health endpoint must always
-answer. **This is the behaviour that made the CI smoke test interesting**
+answer. It logs a `db.ping_failed` warning with the error's type and message,
+with the password masked and no traceback, because a bare `degraded` says
+nothing about the cause. **This is the behaviour that made the CI smoke test interesting**
 (§5.13).
 
 **`connect()` vs `begin()` — the single most important async-SQLAlchemy

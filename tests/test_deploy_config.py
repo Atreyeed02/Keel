@@ -64,12 +64,77 @@ def test_every_host_spelling_of_the_url_reaches_both_drivers(url):
 
 def test_sslmode_in_the_url_moves_out_of_asyncpgs_url():
     """asyncpg refuses sslmode in the URL; psycopg wants it there."""
-    target = database_target("postgres://u:p@h/keel?sslmode=require&application_name=keel")
-    assert target.async_url == "postgresql+asyncpg://u:p@h/keel?application_name=keel"
+    target = database_target("postgres://u:p@h/keel?sslmode=require")
+    assert target.async_url == "postgresql+asyncpg://u:p@h/keel"
     assert target.ssl == "require"
-    assert (
-        target.sync_url == "postgresql+psycopg://u:p@h/keel?application_name=keel&sslmode=require"
+    assert target.sync_url == "postgresql+psycopg://u:p@h/keel?sslmode=require"
+
+
+# The URL Neon hands out, which took the live demo down: migrations (psycopg)
+# connected, and every connection the app made (asyncpg) failed.
+NEON_URL = (
+    "postgresql://neondb_owner:pw@ep-x.ap-southeast-1.aws.neon.tech/neondb"
+    "?sslmode=require&channel_binding=require"
+)
+
+
+def _neon(binding: str) -> str:
+    return NEON_URL.replace("channel_binding=require", f"channel_binding={binding}")
+
+
+@pytest.mark.parametrize("environment", ["development", "demo"])
+def test_neons_channel_binding_require_stops_startup(clean_env, environment):
+    """asyncpg cannot bind the channel, and dropping the demand would quietly weaken it."""
+    with pytest.raises(ValidationError, match="channel_binding=require") as refused:
+        _settings(
+            database_url=NEON_URL,
+            environment=environment,
+            forwarded_allow_ips=HOSTED["forwarded_allow_ips"],
+        )
+    assert "set it to prefer" in str(refused.value)
+    # the refusal names the parameter, never the URL it came from
+    assert "neondb_owner" not in str(refused.value)
+
+
+@pytest.mark.parametrize("binding", ["prefer", "disable"])
+def test_channel_binding_that_asks_nothing_of_asyncpg_reaches_psycopg_only(binding):
+    target = database_target(_neon(binding))
+    assert target.async_url == (
+        "postgresql+asyncpg://neondb_owner:pw@ep-x.ap-southeast-1.aws.neon.tech/neondb"
     )
+    assert target.ssl == "require"
+    assert target.sync_url.endswith(f"/neondb?channel_binding={binding}&sslmode=require")
+
+
+def test_a_bad_channel_binding_stops_startup(clean_env):
+    with pytest.raises(ValidationError, match="channel_binding must be one of"):
+        _settings(database_url="postgres://u:p@h/keel?channel_binding=yes")
+
+
+@pytest.mark.parametrize(
+    "query", ["application_name=keel", "connect_timeout=10", "options=-csearch_path%3Dx"]
+)
+def test_query_parameters_asyncpg_would_reject_stop_startup(clean_env, query):
+    with pytest.raises(ValidationError, match="does not accept: " + query.split("=")[0]):
+        _settings(database_url=f"postgres://u:p@h/keel?sslmode=require&{query}")
+
+
+@pytest.mark.parametrize("binding", ["prefer", "disable"])
+def test_asyncpg_is_given_only_arguments_it_accepts(binding):
+    """
+    What SQLAlchemy actually hands asyncpg.connect() for the URL, checked
+    against asyncpg's own signature: the check that would have caught
+    channel_binding before it reached the live demo.
+    """
+    import inspect
+
+    import asyncpg
+    from sqlalchemy.dialects.postgresql.asyncpg import dialect
+    from sqlalchemy.engine import make_url
+
+    async_url = make_url(database_target(_neon(binding)).async_url)
+    _, kwargs = dialect().create_connect_args(async_url)
+    assert set(kwargs) <= set(inspect.signature(asyncpg.connect).parameters)
 
 
 @pytest.mark.parametrize(
@@ -142,12 +207,12 @@ def test_the_engine_passes_tls_as_asyncpgs_ssl_argument(monkeypatch):
     monkeypatch.setattr(
         app.config,
         "settings",
-        Settings(_env_file=None, database_url="postgres://u:p@h/keel?sslmode=require&x=1"),
+        Settings(_env_file=None, database_url="postgres://u:p@h/keel?sslmode=require"),
     )
     monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", fake_create)
     try:
         importlib.reload(engine_module)
-        assert seen["url"] == "postgresql+asyncpg://u:p@h/keel?x=1"
+        assert seen["url"] == "postgresql+asyncpg://u:p@h/keel"
         assert seen["connect_args"] == {"ssl": "require"}
     finally:
         monkeypatch.undo()
