@@ -856,12 +856,18 @@ async def ping() -> bool:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as exc:
+        log.warning(
+            "db.ping_failed",
+            extra={"error": type(exc).__name__, "detail": _without_password(str(exc))},
+        )
         return False
 ```
 
 Returns a boolean rather than raising — the health endpoint must always
-answer. **This is the behaviour that made the CI smoke test interesting**
+answer. It logs a `db.ping_failed` warning with the error's type and message,
+with the password masked and no traceback, because a bare `degraded` says
+nothing about the cause. **This is the behaviour that made the CI smoke test interesting**
 (§5.13).
 
 **`connect()` vs `begin()` — the single most important async-SQLAlchemy
