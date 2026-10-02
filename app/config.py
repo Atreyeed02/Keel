@@ -22,16 +22,27 @@ SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"
 # when the server does not offer TLS, so a hosted environment refuses them.
 ENCRYPTED_SSL_MODES = ("require", "verify-ca", "verify-full")
 
+# libpq's channel_binding values. psycopg honours them; asyncpg cannot do
+# channel binding at all, so only the two that ask nothing of it are accepted.
+CHANNEL_BINDING_MODES = ("disable", "prefer", "require")
+
+# The only query parameters DATABASE_URL may carry. SQLAlchemy hands every
+# parameter in the asyncpg URL to asyncpg.connect() as a keyword argument, and
+# asyncpg takes none of libpq's (channel_binding, application_name,
+# connect_timeout, options...): each one fails every connection the app
+# makes, while the migrations, on psycopg, connect fine.
+URL_PARAMETERS = ("sslmode", "channel_binding")
+
 
 @dataclass(frozen=True)
 class DatabaseTarget:
     """One database, spelled for each driver that connects to it."""
 
-    # For the app's asyncpg engine. Carries no sslmode: asyncpg rejects it in
-    # the URL, so the mode travels separately, as `ssl`.
+    # For the app's asyncpg engine. Carries no query parameters: asyncpg
+    # rejects them in the URL, so the SSL mode travels separately, as `ssl`.
     async_url: str
     # For Alembic, which runs synchronously on psycopg. psycopg is libpq
-    # underneath and takes `sslmode` in the URL, so the mode goes there.
+    # underneath and takes `sslmode` and `channel_binding` in the URL.
     sync_url: str
     # An entry of SSL_MODES, or None to leave the driver's default.
     ssl: str | None
@@ -54,8 +65,15 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
     `postgres://`, `postgresql://` and `postgresql+<driver>://` are all the
     same database. `sslmode` in the URL and `ssl` (the DATABASE_SSL setting)
     are both honoured: when both are given, the stricter one is used, so
-    neither can quietly weaken the other. Any other query parameter is passed
-    through untouched.
+    neither can quietly weaken the other.
+
+    `channel_binding` (Neon puts `require` in the URLs it hands out) reaches
+    psycopg only. `disable` and `prefer` are accepted, since asyncpg not
+    binding is what `prefer` allows anyway. `require` is refused: asyncpg
+    cannot honour it, and dropping it would quietly weaken every connection
+    but the migrations'. Any other query parameter is refused too, because
+    asyncpg would fail on it (URL_PARAMETERS). Each refusal names only the
+    parameter, never the URL, which holds the password.
     """
     parts = urlsplit(url)
     if parts.scheme.split("+", 1)[0].lower() not in ("postgres", "postgresql"):
@@ -63,8 +81,25 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
             f"DATABASE_URL must be a postgres:// or postgresql:// URL, not {parts.scheme}://"
         )
     query = parse_qsl(parts.query, keep_blank_values=True)
+    unsupported = sorted({key for key, _ in query} - set(URL_PARAMETERS))
+    if unsupported:
+        raise ValueError(
+            f"DATABASE_URL has query parameters the app's database driver (asyncpg) does not "
+            f"accept: {', '.join(unsupported)}. Remove them; the URL may carry only "
+            f"{' and '.join(URL_PARAMETERS)}."
+        )
     url_mode = next((value for key, value in query if key == "sslmode"), None)
-    others = [(key, value) for key, value in query if key != "sslmode"]
+    binding = next((value for key, value in query if key == "channel_binding"), None)
+    if binding is not None and binding not in CHANNEL_BINDING_MODES:
+        raise ValueError(
+            f"channel_binding must be one of {', '.join(CHANNEL_BINDING_MODES)}, not {binding!r}"
+        )
+    if binding == "require":
+        raise ValueError(
+            "DATABASE_URL has channel_binding=require, which the app cannot honour: its "
+            "database driver (asyncpg) does not support channel binding. Remove channel_binding "
+            "from DATABASE_URL, or set it to prefer. TLS still follows sslmode."
+        )
     given = [mode for mode in (ssl, url_mode) if mode is not None]
     for mode in given:
         if mode not in SSL_MODES:
@@ -74,9 +109,11 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
     def spelled(scheme: str, params: list[tuple[str, str]]) -> str:
         return urlunsplit((scheme, parts.netloc, parts.path, urlencode(params), parts.fragment))
 
+    libpq_params = [("channel_binding", binding)] if binding else []
+    libpq_params += [("sslmode", mode)] if mode else []
     return DatabaseTarget(
-        async_url=spelled("postgresql+asyncpg", others),
-        sync_url=spelled("postgresql+psycopg", others + ([("sslmode", mode)] if mode else [])),
+        async_url=spelled("postgresql+asyncpg", []),
+        sync_url=spelled("postgresql+psycopg", libpq_params),
         ssl=mode,
     )
 
@@ -84,7 +121,9 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
 class Settings(BaseSettings):
     """Central app config, loaded from environment / .env."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # hide_input_in_errors: a refusal at startup would otherwise print the
+    # input it refused, DATABASE_URL and its password included, to the logs.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     app_name: str = "ledger-service"
     # "development" (the default), "production", or "demo" for the public demo.
