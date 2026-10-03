@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Seven PRs are merged into `main`, with regular merge commits, and their
+Eight PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -21,7 +21,8 @@ branches deleted:
 | [#4](https://github.com/Atreyeed02/Keel/pull/4) | `chore/small-fixes` | `3f2be79` |
 | [#5](https://github.com/Atreyeed02/Keel/pull/5) | `chore/deploy-readiness` (14 commits) | `9f5bf5d` |
 | [#6](https://github.com/Atreyeed02/Keel/pull/6) | `fix/asyncpg-url-params` | `16a72ed` |
-| [#7](https://github.com/Atreyeed02/Keel/pull/7) | `diag/forwarding-headers` (temporary diagnostic, removed again by `fix/client-ip-cloudflare`) | `df01fe4` |
+| [#7](https://github.com/Atreyeed02/Keel/pull/7) | `diag/forwarding-headers` (temporary diagnostic, removed again by #8) | `df01fe4` |
+| [#8](https://github.com/Atreyeed02/Keel/pull/8) | `fix/client-ip-cloudflare` (3 commits) | `0ce9bca` |
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
@@ -29,9 +30,18 @@ connection, `sslmode=require`), with `ENVIRONMENT=demo` and
 `FORWARDED_ALLOW_IPS=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
 After #6 deployed, `/health` returned `{"status":"ok","db":"up"}`.
 
-**In review: `fix/client-ip-cloudflare`**, which makes the client address
-the visitor's own behind Render and Cloudflare (§2, "Behind a proxy"). It
-also removes #7's diagnostic. Checked on that branch; it adds no migration:
+**Rate limit verified on the live service** (2026-10-03, on `0ce9bca`). The
+README's forged-header check passed. A write sent with forged
+`X-Forwarded-For: 192.0.2.1`, `True-Client-IP: 192.0.2.2` and
+`X-Real-IP: 192.0.2.3` was answered 400 and logged with the caller's own
+public address as `client` (the one `api.ipify.org` reported from the same
+shell) and `scheme` `https`. A browser request was logged the same way.
+Each visitor gets their own write allowance, and no forged header changes
+whose it is. The one remaining risk is in `ARCHITECTURE.md` §5.21.
+
+**#8, `fix/client-ip-cloudflare`**, made the client address the visitor's
+own behind Render and Cloudflare (§2, "Behind a proxy"), and removed #7's
+diagnostic. Checked on that branch before merging; it adds no migration:
 
 | Check | Result |
 |---|---|
@@ -225,10 +235,11 @@ What a public demo on a container host needs, with the README's
   on the live service. `X-Forwarded-For` is believed only from
   `FORWARDED_ALLOW_IPS` (on Render
   `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, **not `*`**), read
-  from the right to the Cloudflare edge. Before `fix/client-ip-cloudflare`,
-  that edge was the client, shared by every visitor behind it. With it,
-  Cloudflare's `CF-Connecting-IP` is the client, believed only when the peer
-  was loopback and that edge is in Cloudflare's published ranges.
+  from the right to the Cloudflare edge. Before #8, that edge was the
+  client, shared by every visitor behind it. Since #8, Cloudflare's
+  `CF-Connecting-IP` is the client, believed only when the peer was
+  loopback and that edge is in Cloudflare's published ranges. Verified on
+  the live service with forged headers (§1).
   `app/client_address.py` has the rule, and `ARCHITECTURE.md` §5.21 says why
   no header can be forged and what risk is left.
 - **HTTP hardening.** A 64 KiB body limit (413) and security headers,
@@ -277,9 +288,6 @@ Ordered so that earlier items unblock or de-risk later ones.
 **1. Finish the live deployment**
 Keel is live on Render + Neon (§1). What is left:
 
-- after `fix/client-ip-cloudflare` deploys, run the README's forged-header
-  check against the live service. Until it passes, treat the rate limit as
-  unverified;
 - schedule `python -m scripts.prune_idempotency_keys --yes` daily and
   `python -m scripts.reset_demo_data --yes` periodically. Render's cron jobs
   may need a paid plan, so a scheduled GitHub Actions workflow may be the
