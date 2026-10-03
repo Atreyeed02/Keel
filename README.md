@@ -398,7 +398,7 @@ stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
 Without `TEST_DATABASE_URL`, the 101 database-backed tests are **skipped,
-not failed**. A green run of the remaining 149 is partial coverage:
+not failed**. A green run of the remaining 190 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
