@@ -11,8 +11,9 @@ uses the API's error shape. A refused request does not count, so a client
 that waits `Retry-After` seconds is let through. Reads are not limited.
 
 **Who the client is.** `scope["client"]`, which behind a host's proxy is
-what uvicorn's proxy-headers middleware made of `X-Forwarded-For`, trusting
-only the proxies `FORWARDED_ALLOW_IPS` names (app/serve.py). The log's
+what app/client_address.py made of `X-Forwarded-For` (trusting only the
+proxies `FORWARDED_ALLOW_IPS` names) and, behind Cloudflare, of
+`CF-Connecting-IP`. A client cannot choose it by forging either. The log's
 `client` field comes from the same place, so the log shows exactly which
 address a limit applied to. IPv6 clients are counted per /64, the block one
 subscriber is normally given, so rotating through addresses in it does not

@@ -1,0 +1,33 @@
+name: Cloudflare ranges
+
+# app/client_address.py believes CF-Connecting-IP only behind an address in
+# its copy of Cloudflare's published ranges. This checks that copy weekly
+# against the live list and fails when they differ. GitHub emails a failed
+# scheduled run to whoever last changed the schedule below. It also stops
+# scheduled runs in a public repository after 60 days without activity;
+# run it by hand from the Actions tab then.
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compare with Cloudflare's published ranges
+        run: python -m scripts.check_cloudflare_ranges

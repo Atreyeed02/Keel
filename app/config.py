@@ -147,20 +147,21 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = Field(8000, ge=1, le=65535)
 
-    # Which proxies uvicorn believes about X-Forwarded-For and
-    # X-Forwarded-Proto: a comma-separated list of addresses and networks, or
-    # "*". The default trusts only a proxy on the same machine. uvicorn reads
-    # X-Forwarded-For from the right and takes the first address that is not
-    # trusted: the one the nearest untrusted hop connected from. The client
-    # it finds is the one the log shows and the write rate limit counts.
+    # Which proxies are believed about X-Forwarded-For and X-Forwarded-Proto:
+    # a comma-separated list of addresses and networks, or "*". The default
+    # trusts only a proxy on the same machine. X-Forwarded-For is read from
+    # the right, skipping these, and the first address that is not one of them
+    # is the client: the one the nearest untrusted hop connected from. If
+    # that is a Cloudflare edge and the peer was loopback, Cloudflare's
+    # CF-Connecting-IP is the client instead (app/client_address.py). The
+    # client found is the one the log shows and the write rate limit counts.
     #
-    # On a host whose router connects from a private address (Render), set
-    # "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16". Not "*": with "*" uvicorn
-    # takes the header's leftmost address, which a client writes itself when
-    # the router appends to the header rather than replacing it, as Render
-    # has said its router does. Any client could then claim a fresh address,
-    # and a fresh write allowance, with every request. A hosted environment
-    # refuses to start on "*", or on nothing at all.
+    # On Render, set "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16":
+    # Render's proxy connects from 127.0.0.1 and its load balancer appends a
+    # 10.x hop after Cloudflare's. Not "*": with "*" the header's leftmost
+    # address is taken, and a client writes that itself. Any client could
+    # then claim a fresh address, and a fresh write allowance, with every
+    # request. A hosted environment refuses to start on "*", or on nothing.
     forwarded_allow_ips: str = "127.0.0.1"
 
     # Largest request body accepted, in bytes (app/security.py). A posting with
@@ -184,11 +185,6 @@ class Settings(BaseSettings):
 
     # Level for the `keel` JSON logger (app/observability.py)
     log_level: str = "INFO"
-
-    # Temporary diagnostic: log, per request, the peer that connected and the
-    # IP-shaped values of the forwarding headers it sent
-    # (app/forwarding_log.py). Off unless set.
-    log_forwarding_headers: bool = False
 
     @model_validator(mode="after")
     def refuse_unsafe_hosted_config(self) -> "Settings":
