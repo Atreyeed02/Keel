@@ -33,7 +33,7 @@ PRIVATE_NETWORKS = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 RENDER_TRUSTED = "127.0.0.1," + PRIVATE_NETWORKS
 RENDER_PROXY = ("127.0.0.1", 41000)
 HEALTH_CHECK = ("10.237.26.210", 52000)
-VISITOR = "103.161.223.14"
+VISITOR = "203.0.113.50"
 EDGE = "172.68.147.142"  # a Cloudflare edge, inside 172.64.0.0/13
 RENDER_HOP = "10.204.7.31"
 
@@ -301,7 +301,7 @@ async def test_a_forged_forwarded_for_does_not_buy_a_fresh_allowance(monkeypatch
 async def test_behind_render_two_visitors_get_separate_write_limits(monkeypatch):
     """Before CF-Connecting-IP was read, every visitor behind one edge shared its limit."""
     monkeypatch.setattr(write_limiter, "limit", 2)
-    other = "123.63.59.156"
+    other = "198.51.100.23"
     async with _behind_proxy(trusted=RENDER_TRUSTED, peer=RENDER_PROXY) as client:
         one = [(await _write(client, _via_render())).status_code for _ in range(3)]
         two = [

@@ -349,7 +349,7 @@ from Cloudflare (`Server: cloudflare`) before it reaches Keel.
 A passing line looks like this:
 
 ```jsonc
-{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "103.161.223.14", "scheme": "https", "duration_ms": 4.1}
+{"ts": "...", "level": "INFO", "logger": "keel", "event": "request.completed", "request_id": "...", "method": "POST", "path": "/api/transactions", "status": 400, "client": "203.0.113.50", "scheme": "https", "duration_ms": 4.1}
 ```
 
 ### Scheduled and one-off jobs
