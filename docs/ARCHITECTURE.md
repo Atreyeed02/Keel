@@ -1883,7 +1883,7 @@ broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"149 passed, 101 skipped" and is not a passing build. See the README for
+"190 passed, 101 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
