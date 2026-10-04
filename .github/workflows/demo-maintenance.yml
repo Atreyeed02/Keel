@@ -1,0 +1,81 @@
+name: Demo maintenance
+
+# Resets the public demo every day: deletes everything visitors wrote and
+# restores the demo data (scripts/reset_demo_data.py). The README's
+# "Scheduled maintenance" section has the setup, why key pruning is not
+# scheduled here, and what a visitor sees during a reset.
+#
+# The job runs with the live database's URL, so:
+# - Only the schedule or a manual run starts it, never a push or a pull
+#   request, so code from a branch or a fork never runs with the secret.
+#   The production-demo environment admits main only, which also stops a
+#   manual run started from another branch.
+# - DATABASE_URL comes from that environment, and only the two steps that
+#   use it get it. No `run:` line mentions it; Python reads it from the
+#   environment, so a traced shell (set -x) has nothing secret to show.
+# - The host is checked before the reset: the live Neon endpoint, in
+#   Singapore, direct rather than through the pooler.
+# tests/test_demo_maintenance.py fails CI if any of that changes.
+#
+# GitHub emails a failed scheduled run to whoever last changed the schedule
+# below, and a failed manual run to whoever started it. In a public
+# repository it stops scheduled runs after 60 days without activity, and
+# then there is no failure to email: re-enable it from the Actions tab.
+on:
+  schedule:
+    # Daily, 21:43 UTC (03:13 in India, 05:43 in Singapore): a quiet hour,
+    # and off the top of the hour, when GitHub delays scheduled runs most.
+    - cron: "43 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time across everything that writes to the live database: a
+# second run waits, and a reset is never cancelled part-way.
+concurrency:
+  group: demo-database
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    # A fork that turns Actions on has no secret; don't fail there nightly.
+    if: github.repository == 'Atreyeed02/Keel'
+    # Pinned, so the runner image changes only when this file does.
+    runs-on: ubuntu-24.04
+    # A reset takes seconds. One stuck waiting for a lock shouldn't hold the
+    # database for the default six hours.
+    timeout-minutes: 10
+    environment:
+      name: production-demo
+      # The environment's secret and branch rule, without a deployment
+      # record every day.
+      deployment: false
+    env:
+      ENVIRONMENT: demo
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Actions pinned to a commit: this job holds the production secret.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12" # the Dockerfile's python:3.12-slim
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check the database host
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scripts.check_database_host --prefix ep-solitary-haze- --region ap-southeast-1
+
+      - name: Reset the demo data
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scripts.reset_demo_data --yes

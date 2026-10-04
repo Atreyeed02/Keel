@@ -1239,7 +1239,8 @@ table's owner, which is the role that ran the migrations. The tables are
 locked first, in the order a posting takes them, so a reset waits for
 postings in flight rather than deadlocking with them. A page read can still
 deadlock with it. Postgres then aborts one of the two, and a reset that
-loses rolls back whole and can be run again. Nothing schedules it yet.
+loses rolls back whole and can be run again. The "Demo maintenance"
+workflow runs it every night (§5.13).
 
 ### 5.11 `tests/`
 
@@ -1260,6 +1261,7 @@ loses rolls back whole and can be run again. Nothing schedules it yet.
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
 | `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |
 | `test_demo.py` | partly | the notice on every page only with `ENVIRONMENT=demo`; the reset script refusing outside the demo before connecting and without `--yes`, restoring exactly a fresh seed, re-enabling the append-only trigger, and rolling back whole on failure (§5.8, §5.10) |
+| `test_demo_maintenance.py` | no | the database host check: each refusal, the endpoint id masked, the URL never printed; the nightly reset's workflow: only a schedule or a manual run, a read-only token, no overlapping runs, the secret only in the two script steps' `env:`, the reset only after a passing host check, actions pinned to commits, the Dockerfile's Python (§5.13) |
 
 `tests/conftest.py` clears the write rate limit's counts around every test,
 so each test starts with a client's full allowance under the real default.
@@ -1335,9 +1337,9 @@ false`: the short form would create a missing `./app` as an empty
 directory and mount it over the image's code, where this form refuses to
 start.
 
-### 5.13 `.github/workflows/ci.yml`
+### 5.13 `.github/workflows/ci.yml` and `demo-maintenance.yml`
 
-Two independent jobs:
+`ci.yml` has two independent jobs:
 
 **`lint-and-test`** — ruff; `pip-audit --strict -r requirements.txt`, which
 fails the build if any pinned dependency has a known vulnerability (or
@@ -1367,6 +1369,29 @@ The exact-body assertion is the point. Because `/health` returns 200 even
 when the database is down (§5.6), a status-code check would go green over
 a failed migration. Verified by stopping the db container: `/health` still
 returned **HTTP 200** with `{"status":"degraded","db":"down"}`.
+
+**`demo-maintenance.yml`** resets the public demo every night at 21:43 UTC
+(§5.10). It is the only workflow that holds a production secret, and it is
+built around that:
+
+- It starts only on its schedule or by hand, never on a push or a pull
+  request, so no branch's or fork's code runs with the secret. Its token
+  can only read.
+- `DATABASE_URL` comes from the `production-demo` environment, which admits
+  `main` only. Only the two steps that run scripts get it, through their
+  `env:`. No `run:` line mentions it, so a traced shell has nothing to show.
+- `scripts/check_database_host.py` runs first and stops the run unless the
+  host is the live Neon endpoint, direct and in Singapore. It prints the
+  host with the endpoint's id masked, because the repository's logs are
+  public.
+- Actions are pinned to commits, runs never overlap, and a running reset is
+  never cancelled.
+
+`tests/test_demo_maintenance.py` fails if any of that changes. Key pruning
+isn't scheduled: the reset empties `idempotency_keys`, so on the demo no key
+lives to 30 days. The README's "Scheduled maintenance" section covers the
+setup, failure emails, GitHub's 60-day pause, and what a visitor sees
+during a reset.
 
 ### 5.14 `app/domain/idempotency.py`
 
@@ -1856,7 +1881,8 @@ on total accounts and transactions sized from measured bytes per write
 
 **The public demo** — `ENVIRONMENT=demo`, a notice on every page that the
 demo is public and resets (§5.8), and `python -m scripts.reset_demo_data`,
-which restores the demo data and refuses to run anywhere else (§5.10).
+which restores the demo data and refuses to run anywhere else (§5.10). A
+scheduled workflow runs it every night (§5.13).
 
 **Templates** — shared `base.html`; the four original pages were
 refactored onto it with rendered output verified byte-identical, and
@@ -1865,29 +1891,31 @@ every page added since was built on it directly.
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 291 tests (§5.11). 190 run with no database at all: the
+**Testing** — 312 tests (§5.11). 211 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
 before the database is touched, the deployment configuration, the body
 limit and security headers, the proxy headers, the write rate limit, the
-demo notice's absence and the reset script's refusals. The other 101 are
+demo notice's absence, the reset script's refusals, the database host
+check and the nightly reset's workflow. The other 101 are
 Postgres-backed. They cover the pages, filters and pagination; idempotency,
 including concurrent duplicates and key retention; the database triggers
 against writes that bypass the app; atomic rollback; agreement between the
 log and the read model; the rebuild, including recovery from a corrupted
 projection, a posting made mid-rebuild and a backfilled legacy ledger; the
 caps; and the demo reset. Each test added for the rate limit, the caps,
-the notice and the reset was checked to fail with the behaviour it covers
-broken.
+the notice, the reset and its workflow was checked to fail with the
+behaviour it covers broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"190 passed, 101 skipped" and is not a passing build. See the README for
+"211 passed, 101 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
-proves the container builds, migrates and serves a real posting flow.
+proves the container builds, migrates and serves a real posting flow. A
+separate scheduled workflow resets the public demo every night (§5.13).
 
 ---
 
@@ -1910,10 +1938,13 @@ will hold (§5.20), and a reset (§5.10). For anything real it is
 disqualifying. It is also why `rebuild_read_model()` and the other
 maintenance tasks are CLIs and not routes.
 
-**3. Nothing is scheduled.** `scripts/prune_idempotency_keys.py` (§4) and,
-for the demo, `scripts/reset_demo_data.py` (§5.10) do their jobs, but
-nothing in the stack runs them. The Render deployment needs a daily prune
-and a periodic reset.
+**3. Scheduled jobs depend on GitHub.** The demo reset (§5.10) runs every
+night from GitHub Actions (§5.13), not from anything in the stack. In a
+public repository GitHub pauses scheduled workflows after 60 days without
+activity, and a paused workflow emails nobody, so someone has to keep the
+repository active or re-enable it. Key pruning (§4) has no scheduler. The
+demo doesn't need one, since the reset empties the keys, but a ledger that
+isn't reset would.
 
 **4. The forwarded client address, residual risk.** Settled on the live
 service (§5.21): the client is the visitor Cloudflare names. One gap is left.
