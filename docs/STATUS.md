@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-03.** A snapshot of what is actually built, what is
+**As of 2026-10-05.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Eight PRs are merged into `main`, with regular merge commits, and their
+Ten PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -23,6 +23,8 @@ branches deleted:
 | [#6](https://github.com/Atreyeed02/Keel/pull/6) | `fix/asyncpg-url-params` | `16a72ed` |
 | [#7](https://github.com/Atreyeed02/Keel/pull/7) | `diag/forwarding-headers` (temporary diagnostic, removed again by #8) | `df01fe4` |
 | [#8](https://github.com/Atreyeed02/Keel/pull/8) | `fix/client-ip-cloudflare` (3 commits) | `0ce9bca` |
+| [#9](https://github.com/Atreyeed02/Keel/pull/9) | `docs/rate-limit-verified` | `d1cf9f3` |
+| [#10](https://github.com/Atreyeed02/Keel/pull/10) | `docs/contributing` | `66cd17d` |
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
@@ -38,6 +40,27 @@ public address as `client` (the one `api.ipify.org` reported from the same
 shell) and `scheme` `https`. A browser request was logged the same way.
 Each visitor gets their own write allowance, and no forged header changes
 whose it is. The one remaining risk is in `ARCHITECTURE.md` §5.21.
+
+**Demo reset by hand on the live database** (2026-10-05), from the owner's
+own shell against the direct endpoint, after a Neon snapshot branch was
+taken. The dry run counted an empty ledger, `--yes` restored 8 accounts
+and 10 transactions, and the live site showed both currencies balanced.
+So on Neon the app's database role can disable the append-only trigger,
+which the reset needs.
+
+**#11, `chore/scheduled-demo-reset`**, schedules that reset daily on GitHub
+Actions (§2, "The demo itself"). Checked on that branch; it changes no app
+code and adds no migration:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **312 tests** |
+| `pytest` (no database available) | 211 passed, 101 skipped |
+| `pytest` (Postgres) | not run locally; CI's `lint-and-test` runs the full suite. The change touches no database code |
+| New tests fail without their change | 22 deliberate breaks, one at a time, each failed a test: a `push` or `pull_request` trigger, `contents: write`, `cancel-in-progress: true`, another environment, `ENVIRONMENT=production`, the default timeout, `shell: sh`, the secret at job level, in a `run:` line or given to `pip install`, the host check removed or allowed to fail, the reset under `if: always()`, an unpinned action, another Python; and in the host check, each of its four refusals removed, the host printed unmasked, the URL printed |
+| `python -m scripts.check_database_host` with `ENVIRONMENT=demo` and made-up URLs | the expected host passes and is printed with its endpoint id masked; a `-pooler` host is refused; an empty secret and `channel_binding=require` are refused by the settings guard; no password or endpoint id is printed |
+| The workflow on GitHub | not run yet. It needs the `production-demo` environment and its secret (README, "Scheduled maintenance"); one manual run after merging is the check |
 
 **#8, `fix/client-ip-cloudflare`**, made the client address the visitor's
 own behind Render and Cloudflare (§2, "Behind a proxy"), and removed #7's
@@ -65,7 +88,7 @@ Checked for #5 (deploy readiness), at migration head `c2e8f4a61b07`:
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
 The 101 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 190 tests
+unless `TEST_DATABASE_URL` is set, so **a green local run of 211 tests
 means about a third of the suite never executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -215,7 +238,8 @@ instead of mounting an empty directory over the image. On the
 Since #5, `lint-and-test` also runs `pip-audit --strict`, and `docker-smoke`
 fails if the container runs as root. A third, scheduled workflow, "Cloudflare
 ranges", compares `app/client_address.py`'s copy of Cloudflare's address
-ranges with the published lists every Monday.
+ranges with the published lists every Monday. A fourth, "Demo
+maintenance", resets the public demo every night (below).
 
 ### Deploy readiness — merged (#5), live on Render
 
@@ -256,7 +280,12 @@ What a public demo on a container host needs, with the README's
   `python -m scripts.reset_demo_data --yes` restores the demo data. It
   refuses in any other environment and counts only without `--yes`. It is
   the one sanctioned exception to the append-only log, done in a single
-  transaction that re-enables the trigger. Nothing schedules it yet.
+  transaction that re-enables the trigger. The "Demo maintenance" workflow
+  runs it daily at 21:43 UTC on GitHub Actions, with `DATABASE_URL` from
+  the `production-demo` environment, after
+  `python -m scripts.check_database_host` confirms the host is the live
+  endpoint. Key pruning isn't scheduled on the demo: the reset empties the
+  keys. The README's "Scheduled maintenance" section has the setup.
 
 ---
 
@@ -288,10 +317,10 @@ Ordered so that earlier items unblock or de-risk later ones.
 **1. Finish the live deployment**
 Keel is live on Render + Neon (§1). What is left:
 
-- schedule `python -m scripts.prune_idempotency_keys --yes` daily and
-  `python -m scripts.reset_demo_data --yes` periodically. Render's cron jobs
-  may need a paid plan, so a scheduled GitHub Actions workflow may be the
-  way;
+- create the `production-demo` environment and its secret, and check one
+  manual run of the "Demo maintenance" workflow (README, "Scheduled
+  maintenance"). After that, keep the repository active, or GitHub pauses
+  the schedule after 60 days;
 - try `sslmode=verify-full` with Neon, which needs a CA bundle both drivers
   can find in `python:3.12-slim`;
 - optionally, a `render.yaml` blueprint matching the live settings;
@@ -342,7 +371,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 190 of 291 tests:
+you are running 211 of 312 tests:
 
 ```bash
 docker compose up -d db
