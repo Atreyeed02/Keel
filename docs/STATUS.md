@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Thirteen PRs are merged into `main`, with regular merge commits, and their
+Fourteen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -28,6 +28,7 @@ branches deleted:
 | [#11](https://github.com/Atreyeed02/Keel/pull/11) | `chore/scheduled-demo-reset` (2 commits) | `a083641` |
 | [#12](https://github.com/Atreyeed02/Keel/pull/12) | `docs/status-scheduled-reset` | `2cfdc49` |
 | [#13](https://github.com/Atreyeed02/Keel/pull/13) | `chore/pin-workflow-actions` | `deb637e` |
+| [#14](https://github.com/Atreyeed02/Keel/pull/14) | `feat/ui-foundation` | `16006d3` |
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
@@ -55,11 +56,27 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-foundation`**, the first phase of the UI redesign, replaces the
+**`feat/ui-learn`**, the redesign's second phase, adds `/learn` (how
+double-entry works, with worked examples from the demo's own data) and
+defines terms where the pages use them: debit, credit, normal side,
+balanced, trial balance, the five account types and event (§2, "HTTP").
+Checked on that branch; it adds no migration and no dependency:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **327 tests** |
+| `pytest` (no database available) | 224 passed, 103 skipped |
+| `pytest` (local Postgres 16) | 327 passed |
+| Headless Chrome, seeded demo data | all seven pages, in light and dark, at 1280 px and 390 px: no CSP violation, console error, failed request or horizontal page scroll |
+| A term's card, from the accessibility tree and computed styles | the term is a button named by its word and described by its definition, `expanded` false, then true when open. Desktop: a click opens the card 8 px under its term; Esc closes it and focus returns to the term; hovering opens it after 300 ms (not at 150 ms), it stays while the pointer is over the card and closes after leaving; one opened by a click stays when the pointer leaves, and a click elsewhere closes it. Keyboard: Enter opens, Tab reaches "More about …", Esc closes and returns focus. Phone: a tap opens a full-width sheet along the bottom; Close closes it. JavaScript off: a click still opens it, hover does not. Reduced motion: no fade |
+| Learn | the quiz's answers open without JavaScript; a `/learn#…` link marks where it lands |
+
+**#14, `feat/ui-foundation`**, the first phase of the UI redesign, replaces the
 Tailwind CDN with Keel's own stylesheet (light and dark themes,
 self-hosted fonts and icons) and tightens the page CSP to name no other
-origin and allow no inline styles (§2, "HTTP"). Checked on that branch; it
-adds no migration and no dependency:
+origin and allow no inline styles (§2, "HTTP"). Checked on that branch, then
+on the live site after merging; it adds no migration and no dependency:
 
 | Check | Result |
 |---|---|
@@ -72,6 +89,7 @@ adds no migration and no dependency:
 | Contrast | every text/background pair in both themes at least 4.5:1, control borders and the focus ring at least 3:1 |
 | Motion, read from computed styles | normal: 150 ms fades on links, buttons, fields and table rows; the posting button lifts 2 px on hover; the status dot pulses 3 times; the busy spinner turns 12 times, then the button resets on back navigation; the amount field takes its line's colour on focus in both themes. `prefers-reduced-motion: reduce`: every duration 0 s, no pulse, no lift, no spinner |
 | JavaScript off | every page renders, and the posting form still posts and redirects to the new transaction |
+| Live, on `16006d3`, read-only (GET requests; the browser checks submitted nothing) | every page sends the new CSP with a nonce per request, `style-src 'self'`, no CDN and no `'unsafe-inline'`, with `nosniff`, `DENY` and `same-origin`; static files are served with their types, the fonts byte for byte as committed. Six pages in light and dark at 1280 px and 390 px (24 renders): all 200, no CSP violation, console error or failed request, both fonts loaded, the theme and font applied, the demo notice present, no horizontal scroll. An injected style attribute, `<style>` and un-nonced script were refused; the posting form's live total updated |
 
 **#13, `chore/pin-workflow-actions`**, pins every action by commit
 (checkout v7.0.1, setup-python v7.0.0) and runs every job on
@@ -124,8 +142,8 @@ Checked for #5 (deploy readiness), at migration head `c2e8f4a61b07`:
 | Storage per write, Postgres 16 | account ≈ 1.1 KB; two-entry transaction ≈ 1.7 KB; largest transaction the body limit admits (470 entries) ≈ 91 KB. The source of the default caps. |
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
-The 102 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 217 tests
+The 103 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 224 tests
 means about a third of the suite never executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -198,12 +216,14 @@ and `alembic check` finds no difference in CI.
   transaction boundary, which is what lets the idempotency check wrap it
   in the same database transaction.
 
-### HTTP — six server-rendered pages
+### HTTP — seven server-rendered pages
 
 All in `app/main.py`, Jinja2 on a shared `base.html`:
 overview with per-account balances and normal-side signs, paginated
 event log, filterable + paginated transaction list, posting form,
-transaction detail with debit/credit columns, account creation. Plus
+transaction detail with debit/credit columns, account creation, and
+`/learn`, which explains double-entry with the demo's own data and needs
+no database. Plus
 `/health`, which reports `degraded` rather than raising. The
 `/transactions` date filters are UTC days, matching the UTC timestamps
 the pages show, whatever time zone the database session uses.
@@ -214,9 +234,10 @@ visitor's system setting, and self-hosted fonts and icons. Nothing loads
 from another origin, so the page CSP is `style-src 'self'` with no CDN
 (`ARCHITECTURE.md` §5.8, §5.18). Debits and credits are never shown by
 colour alone. The Stitch designs' animations are kept, in CSS, and all
-stop for visitors who ask their system for reduced motion. This is the
-first phase of a redesign, one PR per phase;
-§6 has the rest.
+stop for visitors who ask their system for reduced motion. Key terms
+are defined where they appear: a dotted-underlined term opens a short
+card that links to its section of `/learn` (`app/glossary.py`). This is a
+redesign done one PR per phase; §6 has the rest.
 
 ### JSON API — four endpoints
 
@@ -382,7 +403,7 @@ Every route is public. Fine for a demo, disqualifying otherwise.
 No single-account read, no transaction listing, no pagination and no
 event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
 
-**4. The UI redesign, phases 2–7**
+**4. The UI redesign, phases 3–7**
 One PR each, in the order §6 lists. Each keeps every page working, is
 checked in light and dark at desktop and phone width, and claims nothing
 the ledger does not do.
@@ -424,7 +445,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 217 of 319 tests:
+you are running 224 of 327 tests:
 
 ```bash
 docker compose up -d db
@@ -480,11 +501,12 @@ impossible. Every figure on a page comes from the database.
 
 The redesign ships one PR per phase:
 
-1. **Foundation** (`feat/ui-foundation`): the stylesheet, light and dark
+1. **Foundation** (#14, merged): the stylesheet, light and dark
    tokens, fonts, icons, logo, header, motion, and all six pages
    restyled.
-2. **Learn** (`/learn`) and inline definitions of debit, credit, normal
-   side and the account types, linking to it.
+2. **Learn** (`feat/ui-learn`): `/learn`, and inline definitions of
+   debit, credit, normal side, balanced, trial balance, the account types
+   and event, each linking to its section.
 3. **Posting form**: live totals, "out of balance by X" until they match,
    rejections that explain the rule broken, the script moved to a file and
    the CSP nonce removed.
@@ -494,7 +516,6 @@ The redesign ships one PR per phase:
 6. **Event log** as a timeline.
 7. **Account detail**, a T-account per account.
 
-Each phase brings the Stitch animations of the elements it builds (the
-definition popovers' fade, card hovers, the balance banner's change of
-state, bar widths), under the same rules: CSS first, nothing endless, all
+Each phase brings the Stitch animations of the elements it builds (card
+hovers, the balance banner's change of state, bar widths), under the same rules: CSS first, nothing endless, all
 of it off under reduced motion, and every page working without JavaScript.

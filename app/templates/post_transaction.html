@@ -26,7 +26,7 @@
 <div class="page-head">
   <p class="eyebrow">Journal</p>
   <h1>Post a transaction</h1>
-  <p class="lede">Each line debits or credits one account. The transaction posts only if its debits equal its credits in each currency.</p>
+  <p class="lede">Each line {{ ui.term("debit", "debits") }} or {{ ui.term("credit", "credits") }} one account. The transaction posts only if it is {{ ui.term("balanced", "balanced") }}: its debits equal its credits in each currency.</p>
 </div>
 
 {% if error %}

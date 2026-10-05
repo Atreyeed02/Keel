@@ -151,6 +151,7 @@ async def test_every_page_carries_the_notice_on_the_demo(database, demo):
                 "/event-log",
                 "/post-transaction",
                 "/accounts/new",
+                "/learn",
                 f"/transaction-detail/{transaction_id}",
             )
         }

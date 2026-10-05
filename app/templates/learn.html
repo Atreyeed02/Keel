@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Learn{% endblock %}
+
+{#- A short journal entry: rows of (account, its type, side, amount[, currency]). -#}
+{% macro entry_table(label_id, rows, currencies=false) -%}
+<div class="table-scroll" role="region" aria-labelledby="{{ label_id }}" tabindex="0">
+  <table class="ledger entry-table">
+    <thead>
+      <tr><th scope="col">Account</th>{% if currencies %}<th scope="col">Currency</th>{% endif %}<th scope="col" class="num debit">Debit</th><th scope="col" class="num credit">Credit</th></tr>
+    </thead>
+    <tbody>
+      {%- for account, kind, side, amount, currency in rows %}
+      <tr>
+        <td>{{ account }} <span class="muted">({{ kind }})</span></td>
+        {%- if currencies %}<td class="mono">{{ currency }}</td>{% endif %}
+        <td class="num debit">{{ amount if side == "debit" else "" }}</td>
+        <td class="num credit">{{ amount if side == "credit" else "" }}</td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}
+
+{#- One T-account: a list per side, its totals, and the balance. -#}
+{% macro t_account(id, name, kind, debits, credits, debit_total, credit_total, balance, side, note) -%}
+<figure class="t-account" aria-labelledby="{{ id }}-title">
+  <figcaption class="t-title" id="{{ id }}-title">{{ name }} <span class="muted">{{ kind }}, {{ side }}-normal</span></figcaption>
+  <div class="t-sides">
+    {%- for heading, rows, total, cls in [("Debit (Dr)", debits, debit_total, "debit"), ("Credit (Cr)", credits, credit_total, "credit")] %}
+    <div class="t-side {{ cls }}">
+      <h4 class="t-head">{{ heading }}</h4>
+      <ul>
+        {%- for label, amount in rows %}
+        <li><span>{{ label }}</span><span class="num">{{ amount }}</span></li>
+        {%- endfor %}
+      </ul>
+      <p class="t-total"><span>Total</span><span class="num">{{ total }}</span></p>
+    </div>
+    {%- endfor %}
+  </div>
+  <p class="t-balance">Balance <span class="num">{{ balance }}</span> {{ ui.side(side, long=True) }}</p>
+  <p class="t-note">{{ note }}.</p>
+</figure>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Learn</p>
+  <h1>How double-entry works</h1>
+  <p class="lede">The ideas behind every page in Keel, in the order they build on each other.{% if is_demo() %} The examples are this demo's starting data, so you can check every number on the overview and the transactions page.{% endif %}</p>
+</div>
+
+<nav class="toc" aria-label="On this page">
+  <ol>
+    {%- for anchor, title in [
+      ("equation", "The accounting equation"),
+      ("debits-and-credits", "Debits and credits"),
+      ("normal-side", "Normal side and T-accounts"),
+      ("account-types", "The five account types"),
+      ("dead-clic", "DEAD CLIC"),
+      ("balanced", "When a transaction balances"),
+      ("events", "How Keel records it"),
+      ("check", "Check yourself"),
+    ] %}
+    <li><a href="#{{ anchor }}"><span class="toc-number" aria-hidden="true">{{ "%02d"|format(loop.index) }}</span>{{ title }}</a></li>
+    {%- endfor %}
+  </ol>
+</nav>
+
+<div class="stack learn">
+
+<section class="card" id="equation" aria-labelledby="equation-heading">
+  <div class="card-head"><h2 id="equation-heading"><span class="section-number" aria-hidden="true">01</span>The accounting equation</h2></div>
+  <div class="card-body prose">
+    <p>Everything a business owns was paid for by someone: by lenders, or by its owners. So what it owns always equals what it owes plus what its owners have put in:</p>
+    <p class="formula">Assets = Liabilities + Equity</p>
+    <p>While the business trades, revenue adds to the owners' stake and expenses take from it, so until the year's books are closed the equation reads:</p>
+    <p class="formula">Assets = Liabilities + Equity + (Revenue − Expenses)</p>
+    <div class="example">
+      <h3 id="equation-example">Worked example: four of the consultancy's transactions, in USD</h3>
+      <div class="table-scroll" role="region" aria-labelledby="equation-example" tabindex="0">
+        <table class="ledger equation-table">
+          <thead>
+            <tr><th scope="col">Step</th><th scope="col" class="num">Assets</th><th scope="col" class="num">= Liabilities</th><th scope="col" class="num">+ Equity</th><th scope="col" class="num">+ (Revenue − Expenses)</th></tr>
+          </thead>
+          <tbody>
+            {%- for step, assets, liabilities, equity, earned in [
+              ("Start", "0.00", "0.00", "0.00", "0.00"),
+              ("Owner puts in 25,000.00 cash", "25,000.00", "0.00", "25,000.00", "0.00"),
+              ("Takes out a 12,000.00 equipment loan (the cash goes into Cash)", "37,000.00", "12,000.00", "25,000.00", "0.00"),
+              ("Customer pays invoice 1001, 4,800.00", "41,800.00", "12,000.00", "25,000.00", "4,800.00"),
+              ("Pays February's rent, 2,400.00", "39,400.00", "12,000.00", "25,000.00", "2,400.00"),
+            ] %}
+            <tr><th scope="row">{{ step }}</th><td class="num">{{ assets }}</td><td class="num">{{ liabilities }}</td><td class="num">{{ equity }}</td><td class="num">{{ earned }}</td></tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">For simplicity, the demo records revenue when it's paid.</p>
+      <p>After every step both sides match. With all of the demo's USD transactions: <span class="num">43,643.50 = 10,500.00 + 25,000.00 + (14,450.00 − 6,306.50)</span>.</p>
+    </div>
+    <p>Keel keeps this true separately in each currency. The euro accounts have their own: <span class="num">1,800.00 = 0.00 + 0.00 + (1,800.00 − 0.00)</span>.</p>
+  </div>
+</section>
+
+<section class="card" id="debits-and-credits" aria-labelledby="debits-heading">
+  <div class="card-head"><h2 id="debits-heading"><span class="section-number" aria-hidden="true">02</span>Debits and credits</h2></div>
+  <div class="card-body prose">
+    <p>Every transaction is written as entries, and every entry is either a debit or a credit. On paper, debits go in an account's left column and credits in its right. The words come from Latin (debit from <i lang="la">debere</i>, "to owe"; credit from <i lang="la">credere</i>, "to entrust"), but today they name only the side. Neither means good or bad, and neither always means increase or decrease. What an entry does depends on the account's type:</p>
+    <ul class="sides">
+      <li id="debit">{{ ui.side("debit", hidden=True) }}<span>A <strong>debit</strong> increases assets and expenses, and decreases liabilities, equity and revenue.</span></li>
+      <li id="credit">{{ ui.side("credit", hidden=True) }}<span>A <strong>credit</strong> increases liabilities, equity and revenue, and decreases assets and expenses.</span></li>
+    </ul>
+    <p>Keel shows debits in blue and credits in amber, always labelled Dr and Cr too. It never uses red and green, because a credit isn't a loss.</p>
+    <div class="example">
+      <h3 id="example-rent">Example A: February's rent</h3>
+      {{ entry_table("example-rent", [
+        ("Office rent", "expense", "debit", "2,400.00", "USD"),
+        ("Cash", "asset", "credit", "2,400.00", "USD"),
+      ]) }}
+      <p>The expense grows, so it's debited. Cash shrinks, so it's credited.</p>
+    </div>
+    <div class="example">
+      <h3 id="example-january">Example B: January's operating costs</h3>
+      {{ entry_table("example-january", [
+        ("Office rent", "expense", "debit", "2,400.00", "USD"),
+        ("Software subscriptions", "expense", "debit", "318.50", "USD"),
+        ("Cash", "asset", "credit", "2,718.50", "USD"),
+      ]) }}
+      <p>Two debits and one credit. A transaction needs at least two entries, but the counts on each side needn't match. The amounts must: <span class="num">2,400.00 + 318.50 = 2,718.50</span>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="card" id="normal-side" aria-labelledby="normal-heading">
+  <div class="card-head"><h2 id="normal-heading"><span class="section-number" aria-hidden="true">03</span>Normal side and T-accounts</h2></div>
+  <div class="card-body prose">
+    <p>An account's <strong>normal side</strong> is the side that increases it: debit for assets and expenses, credit for liabilities, equity and revenue. Keel shows every balance on its account's normal side, so an account that has grown shows a positive number. A balance below zero means more went out on the other side than came in, such as cash overdrawn.</p>
+    <p>A T-account is the paper bookkeeper's sketch of one account: debits under the left arm, credits under the right. Luca Pacioli described double-entry bookkeeping in print in 1494.</p>
+    <div class="t-accounts">
+      {{ t_account("t-cash", "Cash", "asset",
+        [("Opening capital contribution", "25,000.00"), ("Equipment loan drawdown", "12,000.00"),
+         ("Invoice 1001 settled", "4,800.00"), ("Invoice 1002 settled", "6,250.00"),
+         ("Invoice 1004 settled", "3,400.00")],
+        [("January operating costs", "2,718.50"), ("February office rent", "2,400.00"),
+         ("Equipment loan repayment", "1,500.00"), ("Annual analytics subscription", "1,188.00")],
+        "51,450.00", "7,806.50", "43,643.50", "debit", "The demo's starting Cash balance") }}
+      {{ t_account("t-loan", "Equipment loan payable", "liability",
+        [("Equipment loan repayment", "1,500.00")],
+        [("Equipment loan drawdown", "12,000.00")],
+        "1,500.00", "12,000.00", "10,500.00", "credit", "What's still owed") }}
+    </div>
+  </div>
+</section>
+
+<section class="card" id="account-types" aria-labelledby="types-heading">
+  <div class="card-head"><h2 id="types-heading"><span class="section-number" aria-hidden="true">04</span>The five account types</h2></div>
+  <div class="card-body prose">
+    <div class="type-cards">
+      {%- for key, name, side, what, demo, example in [
+        ("asset", "Asset", "debit", "What the business owns or is owed.", "Cash, EUR operating account", [("debit", "A customer paying is", "Cash")]),
+        ("liability", "Liability", "credit", "What it owes others.", "Equipment loan payable", [("credit", "Borrowing is", ""), ("debit", "repaying is", "")]),
+        ("equity", "Equity", "credit", "The owners' stake, meaning what they put in plus profits kept in the business.", "Owner's capital", [("credit", "Investing is", "")]),
+        ("revenue", "Revenue", "credit", "What the business earns from its work.", "Consulting revenue, European consulting revenue", [("credit", "Earning is", "")]),
+        ("expense", "Expense", "debit", "What it costs to run the business.", "Office rent, Software subscriptions", [("debit", "Spending is", "")]),
+      ] %}
+      <article class="type-card" id="{{ key }}" aria-labelledby="{{ key }}-heading">
+        <h3 id="{{ key }}-heading">{{ name }}</h3>
+        <p class="type-normal">Normal side {{ ui.side(side, long=True) }}</p>
+        <p>{{ what }}</p>
+        <p class="muted">Demo: {{ demo }}.</p>
+        <p>{% for entry_side, words, account in example %}{{ words }} {{ ui.side(entry_side) }}{% if account %} {{ account }}{% endif %}{{ ", " if not loop.last else "." }}{% endfor %}</p>
+      </article>
+      {%- endfor %}
+    </div>
+    <p>Every Keel account is exactly one of these five, because the type decides the normal side.</p>
+  </div>
+</section>
+
+<section class="card" id="dead-clic" aria-labelledby="dead-clic-heading">
+  <div class="card-head"><h2 id="dead-clic-heading"><span class="section-number" aria-hidden="true">05</span>DEAD CLIC</h2></div>
+  <div class="card-body prose">
+    <div class="mnemonic">
+      <div class="mnemonic-side debit">
+        <p class="mnemonic-word" aria-hidden="true">D·E·A·D</p>
+        <p><strong>D</strong>ebits increase <strong>E</strong>xpenses, <strong>A</strong>ssets and <strong>D</strong>rawings.</p>
+      </div>
+      <div class="mnemonic-side credit">
+        <p class="mnemonic-word" aria-hidden="true">C·L·I·C</p>
+        <p><strong>C</strong>redits increase <strong>L</strong>iabilities, <strong>I</strong>ncome and <strong>C</strong>apital.</p>
+      </div>
+    </div>
+    <p>Income is revenue and capital is equity. Drawings (money the owner takes out) has no type of its own in Keel: record it as a debit to an equity account, which reduces the owner's stake.</p>
+  </div>
+</section>
+
+<section class="card" id="balanced" aria-labelledby="balanced-heading">
+  <div class="card-head"><h2 id="balanced-heading"><span class="section-number" aria-hidden="true">06</span>When a transaction balances</h2></div>
+  <div class="card-body prose">
+    <p>A transaction is <strong>balanced</strong> when its debits equal its credits. Keel accepts one only when:</p>
+    <ol class="rules">
+      <li>it has at least two entries;</li>
+      <li>every amount is more than zero, with at most two decimal places;</li>
+      <li>in each currency, debits equal credits;</li>
+      <li>every entry names an existing account, in that account's currency.</li>
+    </ol>
+    <p>If any rule fails, nothing is written and the form says which rule. The database checks the balance again when the transaction commits, so even a write that bypassed the app couldn't leave the books lopsided. One transaction may hold several currencies if each balances by itself, but it can't convert between them: converting currency takes an exchange account, which Keel doesn't have yet.</p>
+    <div class="example">
+      <h3 id="example-two-currencies">Balanced, in two currencies</h3>
+      {{ entry_table("example-two-currencies", [
+        ("Cash", "asset", "debit", "100.00", "USD"),
+        ("Consulting revenue", "revenue", "credit", "100.00", "USD"),
+        ("EUR operating account", "asset", "debit", "50.00", "EUR"),
+        ("European consulting revenue", "revenue", "credit", "50.00", "EUR"),
+      ], currencies=true) }}
+    </div>
+    <div class="example">
+      <h3 id="example-refused">Refused</h3>
+      {{ entry_table("example-refused", [
+        ("Cash", "asset", "debit", "100.00", "USD"),
+        ("European consulting revenue", "revenue", "credit", "100.00", "EUR"),
+      ], currencies=true) }}
+      <p>Added up without looking at currencies, it seems to balance, but USD is 100.00 over and EUR 100.00 under.</p>
+    </div>
+    <p id="trial-balance">A traditional <strong>trial balance</strong> lists every account's balance in debit and credit columns. Keel's overview adds up every debit and credit entry per currency instead. Either way, when every transaction balances, the two totals are equal.</p>
+  </div>
+</section>
+
+<section class="card" id="events" aria-labelledby="events-heading">
+  <div class="card-head"><h2 id="events-heading"><span class="section-number" aria-hidden="true">07</span>How Keel records it</h2></div>
+  <div class="card-body prose">
+    <p>Every account opened and every transaction posted is also written as an event, in the same database transaction; the <a href="/event-log">event log</a> lists them. The database refuses to change or delete an event, and the ledger's tables can be rebuilt from the events in order. So nothing is edited: to fix a mistake, post a transaction with the same entries on the opposite sides, then post the right one. On the public demo, the nightly reset is the one exception: it empties the ledger and the log together.</p>
+  </div>
+</section>
+
+<section class="card" id="check" aria-labelledby="check-heading">
+  <div class="card-head"><h2 id="check-heading"><span class="section-number" aria-hidden="true">08</span>Check yourself</h2></div>
+  <div class="card-body prose">
+    <p class="quiz-question" id="quiz-question">The business pays 120.00 from Cash for a software subscription. Which entries record it?</p>
+    <p class="muted">Open an answer to see whether it's right.</p>
+    <div class="quiz" role="group" aria-labelledby="quiz-question">
+      {#- each option: its letter, its entries as (side, account), whether it is the
+          answer, and what opening it says -#}
+      {%- for letter, entries, right, feedback in [
+        ("A", [("debit", "Cash"), ("credit", "Software subscriptions")], false,
+         "That adds 120.00 to Cash and takes it off the expense: the reverse of what happened."),
+        ("B", [("debit", "Software subscriptions"), ("credit", "Cash")], true,
+         "The expense grows with a debit, and Cash shrinks with a credit. Debits 120.00 = credits 120.00."),
+        ("C", [("debit", "Software subscriptions"), ("debit", "Cash")], false,
+         "Two debits and no credit don't balance, so Keel would refuse this."),
+        ("D", [("debit", "Equipment loan payable"), ("credit", "Cash")], false,
+         "It balances, so Keel would accept it, but it records repaying the loan. Balancing proves the arithmetic, not the choice of accounts."),
+      ] %}
+      <details class="quiz-option" data-answer="{{ 'right' if right else 'wrong' }}">
+        <summary><span class="quiz-letter">{{ letter }}</span><span>{% for side, account in entries %}{{ ui.side(side) }} {{ account }}{{ " · " if not loop.last }}{% endfor %}</span></summary>
+        <p class="quiz-feedback {{ 'right' if right else 'wrong' }}">{% if right %}{{ ui.icon("check-circle") }}{% endif %}<span><strong>{{ "Right." if right else "Not quite." }}</strong> {{ feedback }}</span></p>
+      </details>
+      {%- endfor %}
+    </div>
+    <p><a class="btn btn-primary" href="/post-transaction">Try it: post a transaction{{ ui.icon("arrow-forward") }}</a></p>
+  </div>
+</section>
+
+</div>
+{% endblock %}

@@ -493,7 +493,7 @@ pytest -v
 ruff check .
 ```
 
-319 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+327 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -501,8 +501,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 102 database-backed tests are **skipped,
-not failed**. A green run of the remaining 217 is partial coverage:
+Without `TEST_DATABASE_URL`, the 103 database-backed tests are **skipped,
+not failed**. A green run of the remaining 224 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -574,6 +574,7 @@ passes `WRITE_RATE_LIMIT`. Details:
 | `GET` | `/transactions` | all transactions; `q` (description search), `date_from`, `date_to`, `page` |
 | `GET` | `/transaction-detail/{id}` | one transaction's debits and credits, and its event |
 | `GET` | `/event-log` | the raw event log, newest first, paginated |
+| `GET` | `/learn` | how double-entry works, with worked examples from the demo's data; needs no database |
 | `GET` / `POST` | `/accounts/new`, `/accounts` | create an account: `name`, `account_type`, `currency` |
 | `GET` / `POST` | `/post-transaction` | post a transaction: repeated `account_id` / `entry_type` / `amount` / `currency` fields, plus `description` and `submission_key` |
 | `GET` | `/health` | `{"status":"ok","db":"up"}`, or `degraded`/`down` (never raises) |
@@ -627,13 +628,14 @@ app/
 ├── security.py           body size limit, security headers
 ├── ratelimit.py          per-client write rate limit
 ├── client_address.py     who the client is, behind Render and Cloudflare
+├── glossary.py           the terms the pages define in place, each linked to /learn
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages; the stylesheet, self-hosted fonts and icons
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    319 tests; see above
+tests/                    327 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 

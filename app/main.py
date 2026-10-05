@@ -43,6 +43,7 @@ from app.domain.ledger import (
     validate_description,
 )
 from app.domain.reads import account_balances, currency_totals, transaction_with_entries
+from app.glossary import GLOSSARY
 from app.observability import (
     configure_logging,
     log_account_created,
@@ -172,6 +173,8 @@ templates.env.filters["utc"] = _utc
 # A function, not a value, so the notice follows the setting at render time. The
 # pages get this one flag, never the settings object with its database URL.
 templates.env.globals["is_demo"] = lambda: settings.is_demo
+# The terms the pages define in place (app/glossary.py, the `term` macro).
+templates.env.globals["glossary"] = GLOSSARY
 
 
 async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str, Any]:
@@ -321,6 +324,12 @@ async def read_transactions(
             "is_filtered": bool(active),
         },
     )
+
+
+@app.get("/learn", response_class=HTMLResponse)
+async def read_learn(request: Request):
+    """How double-entry works. Fixed text: it never touches the database."""
+    return templates.TemplateResponse(request=request, name="learn.html")
 
 
 @app.get("/accounts/new", response_class=HTMLResponse)

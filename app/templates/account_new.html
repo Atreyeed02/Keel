@@ -5,7 +5,7 @@
 <div class="page-head">
   <p class="eyebrow">Chart of accounts</p>
   <h1>New account</h1>
-  <p class="lede">An account's type decides its normal side. Assets and expenses grow with debits; liabilities, equity and revenue grow with credits.</p>
+  <p class="lede">An account's type decides its {{ ui.term("normal-side", "normal side") }}. Assets and expenses grow with debits; liabilities, equity and revenue grow with credits.</p>
 </div>
 
 {% if error %}
@@ -27,6 +27,7 @@
       <option value="{{ type }}"{% if account.account_type == type %} selected{% endif %}>{{ type|capitalize }}</option>
       {%- endfor %}
     </select>
+    <span class="field-hint">One of the five types. <a href="/learn#account-types">What each type is for</a></span>
   </label>
   <label class="field">
     <span class="field-label">Currency</span>

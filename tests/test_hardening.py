@@ -191,6 +191,7 @@ async def test_pages_allow_only_their_own_scripts_and_styles_and_the_nonce(no_da
         ("/static/fonts/plus-jakarta-sans-latin.woff2", "font/woff2"),
         ("/static/css/keel.css", "text/css; charset=utf-8"),
         ("/static/js/post-transaction.js", "text/javascript; charset=utf-8"),
+        ("/static/js/terms.js", "text/javascript; charset=utf-8"),
     ],
 )
 async def test_static_files_are_served_with_their_types(no_database, path, content_type):
@@ -282,6 +283,7 @@ async def test_pages_load_nothing_from_elsewhere_and_have_no_inline_styles(datab
                 "/event-log",
                 "/post-transaction",
                 "/accounts/new",
+                "/learn",
                 posted.headers["location"],
             )
         }

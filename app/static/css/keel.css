@@ -115,6 +115,8 @@
 
   --shadow-card: 0 1px 3px rgb(15 23 42 / 0.04), 0 4px 12px rgb(15 23 42 / 0.02);
   --shadow-raise: 0 4px 12px rgb(15 76 92 / 0.18), 0 2px 4px rgb(15 23 42 / 0.06);
+  /* what floats above the page: a term's card */
+  --shadow-float: 0 10px 25px -5px rgb(15 76 92 / 0.16), 0 8px 10px -6px rgb(15 23 42 / 0.08);
 
   /* motion: the timing the Stitch designs use (Tailwind's defaults) */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -174,6 +176,7 @@
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35);
     --shadow-raise: 0 4px 14px rgb(0 0 0 / 0.5);
+    --shadow-float: 0 12px 28px -4px rgb(0 0 0 / 0.65);
   }
 }
 
@@ -538,8 +541,9 @@ main.wrap {
   overflow-wrap: anywhere;
 }
 
-.section-title {
-  margin-bottom: var(--space-md);
+/* a sentence under a section's heading, before its figures */
+.section-intro {
+  margin: var(--space-xs) 0 var(--space-md);
 }
 
 /* --- cards --------------------------------------------------------------------------- */
@@ -1126,10 +1130,578 @@ main.wrap {
   margin-left: auto;
 }
 
+/* --- terms and their cards ------------------------------------------------------------
+   A defined term (the `term` macro) is a button that reads as text, with a
+   dotted underline like an abbreviation. Its card is a popover: in the top
+   layer, so no card or scrolling table clips it, but it still inherits from
+   where the term sits (a table header is small and uppercase), so it sets its
+   own type. Where it goes:
+   - phone: a sheet along the bottom of the screen;
+   - desktop: next to its term where the browser supports anchor positioning,
+     otherwise a card at the bottom of the screen. */
+
+.term {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--link);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.2em;
+  cursor: help;
+}
+
+.term:hover,
+.term:has(+ .definition:popover-open) {
+  color: var(--link);
+}
+
+.definition {
+  inset: auto 0 1rem;
+  width: min(24rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  color: var(--text-body);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.375rem;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+}
+
+.definition:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* a browser from before popovers (2024) would show the card inline; there
+   the term stays plain text, and a screen reader still hears the definition,
+   which is the button's description */
+@supports not selector(:popover-open) {
+  .definition {
+    display: none;
+  }
+}
+
+.definition-title {
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+.definition-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-xs);
+}
+
+.definition-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-weight: 600;
+}
+
+.definition-actions .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.definition-close {
+  min-height: 2rem;
+  padding: var(--space-xs) 0.625rem;
+  border: 1px solid var(--control);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  cursor: pointer;
+}
+
+.definition-close:hover {
+  background: var(--hover);
+}
+
+@media (max-width: 767px) {
+  .definition {
+    inset: auto 0 0;
+    width: 100%;
+    border-width: 1px 0 0;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Each term anchors its own card. The names are per term, which is why a page
+   defines each term once; tests/test_learn.py checks every glossary entry
+   has its pair of rules here. */
+@media (min-width: 768px) {
+  @supports (position-area: bottom) {
+    .definition {
+      inset: auto;
+      margin: var(--space-sm) 0 0;
+      position-area: bottom span-right;
+      position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+    }
+
+    .term-debit { anchor-name: --term-debit; }
+    .definition-debit { position-anchor: --term-debit; }
+    .term-credit { anchor-name: --term-credit; }
+    .definition-credit { position-anchor: --term-credit; }
+    .term-normal-side { anchor-name: --term-normal-side; }
+    .definition-normal-side { position-anchor: --term-normal-side; }
+    .term-balanced { anchor-name: --term-balanced; }
+    .definition-balanced { position-anchor: --term-balanced; }
+    .term-trial-balance { anchor-name: --term-trial-balance; }
+    .definition-trial-balance { position-anchor: --term-trial-balance; }
+    .term-asset { anchor-name: --term-asset; }
+    .definition-asset { position-anchor: --term-asset; }
+    .term-liability { anchor-name: --term-liability; }
+    .definition-liability { position-anchor: --term-liability; }
+    .term-equity { anchor-name: --term-equity; }
+    .definition-equity { position-anchor: --term-equity; }
+    .term-revenue { anchor-name: --term-revenue; }
+    .definition-revenue { position-anchor: --term-revenue; }
+    .term-expense { anchor-name: --term-expense; }
+    .definition-expense { position-anchor: --term-expense; }
+    .term-event { anchor-name: --term-event; }
+    .definition-event { position-anchor: --term-event; }
+  }
+}
+
+/* --- learn ---------------------------------------------------------------------------- */
+
+.toc ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-lg);
+  padding: 0;
+  list-style: none;
+}
+
+.toc a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  text-decoration: none;
+}
+
+.toc a:hover {
+  background: var(--hover);
+}
+
+.toc-number,
+.section-number {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.prose > * + * {
+  margin-top: var(--space-md);
+}
+
+.prose ul,
+.prose ol {
+  margin-bottom: 0;
+  padding-left: 1.25rem;
+}
+
+.prose li + li {
+  margin-top: 0.375rem;
+}
+
+.formula {
+  padding: 0.75rem var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.example {
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+}
+
+.example > * + * {
+  margin-top: 0.75rem;
+}
+
+.example h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+}
+
+.note {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+/* a journal entry is narrow enough for a phone; the equation table is not */
+.entry-table {
+  min-width: 0;
+}
+
+.entry-table .debit {
+  color: var(--debit);
+}
+
+.entry-table .credit {
+  color: var(--credit);
+}
+
+.ledger tbody th[scope="row"] {
+  padding: 0.75rem var(--space-md);
+  border-top: 1px solid var(--rule);
+  border-bottom: 0;
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+}
+
+ul.sides {
+  padding-left: 0;
+  list-style: none;
+}
+
+.sides li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+/* where a link to /learn#… lands: marked, so the eye finds it */
+.sides li:target,
+#trial-balance:target {
+  border-radius: var(--space-xs);
+  background: var(--hover);
+  box-shadow: 0 0 0 var(--space-sm) var(--hover);
+}
+
+.t-accounts {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+@media (min-width: 768px) {
+  .t-accounts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.t-account {
+  margin: 0;
+  padding: var(--space-md) 1.25rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.t-title {
+  padding-bottom: var(--space-sm);
+  color: var(--text);
+  font-weight: 700;
+  text-align: center;
+}
+
+.t-title .muted {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+
+/* the T: a heavy rule across, a heavy rule down the middle */
+.t-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 2px solid var(--text);
+}
+
+.t-side {
+  min-width: 0;
+  padding-top: var(--space-sm);
+}
+
+.t-side.debit {
+  padding-right: 0.75rem;
+}
+
+.t-side.credit {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--text);
+}
+
+.t-head {
+  margin-bottom: var(--space-xs);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.t-side.debit .t-head {
+  color: var(--debit);
+}
+
+.t-side.credit .t-head {
+  color: var(--credit);
+}
+
+.t-side ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.t-side li,
+.t-total {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+
+.t-side li {
+  padding-block: var(--space-xs);
+}
+
+.t-total {
+  margin-top: var(--space-xs);
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--text);
+  font-weight: 700;
+}
+
+.t-balance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: 0.75rem;
+  padding-top: var(--space-sm);
+  border-top: 3px double var(--text);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.t-note {
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.type-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--space-md);
+}
+
+.type-card {
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.type-card > * + * {
+  margin-top: var(--space-sm);
+}
+
+.type-card h3 {
+  font-size: 1.0625rem;
+}
+
+.type-card:hover {
+  box-shadow: var(--shadow-raise);
+}
+
+.type-card:target {
+  border-color: var(--focus);
+}
+
+.type-normal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.mnemonic {
+  display: grid;
+  gap: var(--space-md);
+}
+
+@media (min-width: 768px) {
+  .mnemonic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.mnemonic-side {
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid;
+  border-radius: var(--radius-card);
+  color: var(--text);
+}
+
+.mnemonic-side > * + * {
+  margin-top: var(--space-sm);
+}
+
+.mnemonic-side.debit {
+  background: var(--debit-bg);
+  border-color: var(--debit-border);
+}
+
+.mnemonic-side.credit {
+  background: var(--credit-bg);
+  border-color: var(--credit-border);
+}
+
+.mnemonic-word {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.mnemonic-side.debit .mnemonic-word {
+  color: var(--debit);
+}
+
+.mnemonic-side.credit .mnemonic-word {
+  color: var(--credit);
+}
+
+.quiz-question {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.quiz {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.quiz-option {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.quiz-option summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem var(--space-md);
+  border-radius: 0.75rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.quiz-option summary::-webkit-details-marker {
+  display: none;
+}
+
+/* the disclosure arrow, drawn: down when closed, up when open */
+.quiz-option summary::after {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.quiz-option[open] summary::after {
+  transform: rotate(-135deg);
+}
+
+.quiz-option summary:hover {
+  background: var(--hover);
+}
+
+.quiz-letter {
+  flex: none;
+  width: 1.25rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.quiz-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin: 0 var(--space-md) var(--space-md);
+  padding: 0.75rem var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  color: var(--text-body);
+}
+
+.quiz-feedback.right {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.quiz-feedback strong {
+  color: inherit;
+}
+
 /* --- motion ---------------------------------------------------------------------------
    Every animation in Keel is here, carried over from the Stitch designs:
    their colour fades on hover and focus, the hover lift on the posting
-   button, the pulsing status dot and the spinner while a post is in flight.
+   button, the pulsing status dot, the spinner while a post is in flight, a
+   term's card fading in, and the Learn page's hover shadows on its cards.
    Rules for this section:
    - nothing loops forever: the dot pulses three times, the spinner stops
      after twelve turns;
@@ -1144,11 +1716,42 @@ a,
 .site-nav a,
 .link-action,
 .input,
-.ledger tbody td {
+.ledger tbody td,
+.term,
+.definition-close,
+.toc a,
+.quiz-option summary {
   transition-property: color, background-color, border-color, text-decoration-color, fill,
     box-shadow;
   transition-duration: var(--fast);
   transition-timing-function: var(--ease);
+}
+
+/* the account-type cards lift their shadow under the pointer (Stitch's
+   transition-shadow) */
+.type-card {
+  transition: box-shadow var(--fast) var(--ease);
+}
+
+/* a term's card fades in, and out again before it goes (Stitch's
+   transition-opacity). @starting-style gives the fade its first frame; a
+   browser without it just shows the card. */
+.definition {
+  opacity: 0;
+  transition-property: opacity, overlay, display;
+  transition-duration: var(--fast);
+  transition-timing-function: var(--ease);
+  transition-behavior: allow-discrete;
+}
+
+.definition:popover-open {
+  opacity: 1;
+}
+
+@starting-style {
+  .definition:popover-open {
+    opacity: 0;
+  }
 }
 
 /* the posting button rises a little under the pointer, and settles when pressed */

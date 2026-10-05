@@ -29,6 +29,19 @@
 <span class="badge badge-ok">{{ icon("check-circle") }}Balanced</span>
 {%- endmacro %}
 
+{#- term("debit", "debits"): the word as a button that opens a short card
+    defining it (app/glossary.py), with a link to its section of /learn.
+
+    A native popover, so click, tap and keyboard need no script; Esc and a
+    click elsewhere close it. static/js/terms.js only adds opening on hover.
+    Screen readers hear the definition as the button's description, without
+    opening it. Use each term once per page: the ids are per term. One line
+    of markup, so no whitespace lands between "debits" and a full stop. -#}
+{% macro term(key, text) -%}
+{%- set entry = glossary[key] -%}
+<button type="button" class="term term-{{ key }}" popovertarget="def-{{ key }}" aria-describedby="def-{{ key }}-text">{{ text }}</button><span id="def-{{ key }}" class="definition definition-{{ key }}" popover><span class="definition-title">{{ entry.title }}</span><span class="definition-text" id="def-{{ key }}-text">{{ entry.definition }}</span><span class="definition-actions"><a href="/learn#{{ entry.learn }}">More about {{ entry.more }}{{ icon("arrow-forward") }}</a><button type="button" class="definition-close" popovertarget="def-{{ key }}" popovertargetaction="hide">Close</button></span></span>
+{%- endmacro %}
+
 {#- A timestamp in UTC, as every page shows them, with the exact instant
     machine-readable. -#}
 {% macro when(value, seconds=False) -%}

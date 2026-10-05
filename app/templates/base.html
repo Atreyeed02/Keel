@@ -30,6 +30,7 @@
           ("/", "Overview"),
           ("/transactions", "Transactions"),
           ("/event-log", "Event log"),
+          ("/learn", "Learn"),
           ("/accounts/new", "New account"),
         ] %}
         <li><a href="{{ href }}"{% if request.url.path == href %} aria-current="page"{% endif %}>{{ label }}</a></li>
@@ -43,5 +44,6 @@
 {% block content %}{% endblock %}
 </main>
 {% block scripts %}{% endblock %}
+<script src="/static/js/terms.js" defer></script>
 </body>
 </html>
