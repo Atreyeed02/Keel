@@ -1393,6 +1393,11 @@ lives to 30 days. The README's "Scheduled maintenance" section covers the
 setup, failure emails, GitHub's 60-day pause, and what a visitor sees
 during a reset.
 
+All three workflows, these two and "Cloudflare ranges" (§5.21), run on a
+pinned `ubuntu-24.04` image and pin `actions/checkout` and
+`actions/setup-python` to the same commits. A new runner image or action
+version reaches CI only through a pull request that changes them.
+
 ### 5.14 `app/domain/idempotency.py`
 
 `request_fingerprint()` and `post_transaction_once()`, both described in
