@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Ten PRs are merged into `main`, with regular merge commits, and their
+Eleven PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -25,12 +25,17 @@ branches deleted:
 | [#8](https://github.com/Atreyeed02/Keel/pull/8) | `fix/client-ip-cloudflare` (3 commits) | `0ce9bca` |
 | [#9](https://github.com/Atreyeed02/Keel/pull/9) | `docs/rate-limit-verified` | `d1cf9f3` |
 | [#10](https://github.com/Atreyeed02/Keel/pull/10) | `docs/contributing` | `66cd17d` |
+| [#11](https://github.com/Atreyeed02/Keel/pull/11) | `chore/scheduled-demo-reset` (2 commits) | `a083641` |
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
 connection, `sslmode=require`), with `ENVIRONMENT=demo` and
 `FORWARDED_ALLOW_IPS=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
 After #6 deployed, `/health` returned `{"status":"ok","db":"up"}`.
+Render's `DATABASE_URL` and the nightly reset's secret both name the
+direct endpoint, not Neon's connection pooler. The reset's first run (below)
+stopped on a pooler URL, and on 2026-10-05 both were set to the direct
+endpoint; Render redeployed with `/health` up.
 
 **Rate limit verified on the live service** (2026-10-03, on `0ce9bca`). The
 README's forged-header check passed. A write sent with forged
@@ -49,18 +54,20 @@ So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
 **#11, `chore/scheduled-demo-reset`**, schedules that reset daily on GitHub
-Actions (§2, "The demo itself"). Checked on that branch; it changes no app
-code and adds no migration:
+Actions (§2, "The demo itself"). Checked on that branch, then on the live
+database after merging; it changes no app code and adds no migration:
 
 | Check | Result |
 |---|---|
 | `ruff check .` | clean |
 | `pytest` collection | **312 tests** |
 | `pytest` (no database available) | 211 passed, 101 skipped |
-| `pytest` (Postgres) | not run locally; CI's `lint-and-test` runs the full suite. The change touches no database code |
+| `pytest` (Postgres) | 312 passed in CI's `lint-and-test`; not run locally. The change touches no database code |
 | New tests fail without their change | 22 deliberate breaks, one at a time, each failed a test: a `push` or `pull_request` trigger, `contents: write`, `cancel-in-progress: true`, another environment, `ENVIRONMENT=production`, the default timeout, `shell: sh`, the secret at job level, in a `run:` line or given to `pip install`, the host check removed or allowed to fail, the reset under `if: always()`, an unpinned action, another Python; and in the host check, each of its four refusals removed, the host printed unmasked, the URL printed |
 | `python -m scripts.check_database_host` with `ENVIRONMENT=demo` and made-up URLs | the expected host passes and is printed with its endpoint id masked; a `-pooler` host is refused; an empty secret and `channel_binding=require` are refused by the settings guard; no password or endpoint id is printed |
-| The workflow on GitHub | not run yet. It needs the `production-demo` environment and its secret (README, "Scheduled maintenance"); one manual run after merging is the check |
+| "Demo maintenance" run #1, manual, on `a083641` | **refused at the host check:** the environment secret named Neon's connection pooler (`-pooler`), so the reset step was skipped. The secret and Render's `DATABASE_URL` were then set to the direct endpoint |
+| Run #2, manual | passed in about 40 seconds. The host check printed the direct endpoint, masked, and the reset deleted 8 accounts, 10 transactions and 18 events, then restored 8 accounts and 10 transactions |
+| Run #3, the first scheduled one | passed the same way. It started at 00:10 UTC, 2 h 27 min after its 21:43 slot: GitHub's scheduling delay (README, "Why daily") |
 
 **#8, `fix/client-ip-cloudflare`**, made the client address the visitor's
 own behind Render and Cloudflare (§2, "Behind a proxy"), and removed #7's
@@ -317,10 +324,9 @@ Ordered so that earlier items unblock or de-risk later ones.
 **1. Finish the live deployment**
 Keel is live on Render + Neon (§1). What is left:
 
-- create the `production-demo` environment and its secret, and check one
-  manual run of the "Demo maintenance" workflow (README, "Scheduled
-  maintenance"). After that, keep the repository active, or GitHub pauses
-  the schedule after 60 days;
+- keep the repository active, or GitHub pauses the nightly reset after 60
+  days without activity (README, "Scheduled maintenance"). The reset itself
+  is set up and verified on the live database (§1);
 - try `sslmode=verify-full` with Neon, which needs a CA bundle both drivers
   can find in `python:3.12-slim`;
 - optionally, a `render.yaml` blueprint matching the live settings;
