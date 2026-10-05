@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- A write refused before the app read it: the write limit (429) or the body
+    limit (413). Rendered by app/main.py's _refusal_page for the middleware;
+    the JSON API answers these in its own shape instead. -#}
+{% block title %}Not saved{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Not saved</p>
+  <h1>{{ problem.title }}</h1>
+</div>
+<div role="alert" class="alert alert-error">
+  {{ ui.icon("error") }}
+  <p>{{ problem.detail }}</p>
+</div>
+{% endblock %}

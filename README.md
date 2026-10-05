@@ -493,7 +493,7 @@ pytest -v
 ruff check .
 ```
 
-327 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+354 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -501,8 +501,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 103 database-backed tests are **skipped,
-not failed**. A green run of the remaining 224 is partial coverage:
+Without `TEST_DATABASE_URL`, the 110 database-backed tests are **skipped,
+not failed**. A green run of the remaining 244 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -520,7 +520,10 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
 | `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
 | `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command |
-| `test_hardening.py` | the body size limit, security headers, the posting form's CSP nonce |
+| `test_hardening.py` | the body size limit (a page for a form, JSON for the API), security headers, the page CSP with no nonce, no inline scripts or styles on any page, static file types |
+| `test_stylesheet.py` | every animation stops by itself; reduced motion stops all of them |
+| `test_learn.py` | `/learn` without a database, every term's section there, the quiz, the `term` macro, each page's terms defined once |
+| `test_posting_form.py` | every refusal of the posting form worded by its rule, the balance panel as the server draws it, add and remove without JavaScript, the resubmission notice, typed values never logged |
 | `test_proxy_headers.py` | which forwarded headers are believed; the Render chain behind Cloudflare, with `CF-Connecting-IP` believed only when it can be; forged headers, including around Cloudflare, change neither the client nor the write limit |
 | `test_rate_limit.py` | the write rate limit: 429 and an exact `Retry-After`, forms and API sharing one allowance, reads unlimited, IPv6 per /64 |
 | `test_capacity.py` | the account and transaction caps through both interfaces, replays at the cap, uncapped scripts |
@@ -572,18 +575,23 @@ passes `WRITE_RATE_LIMIT`. Details:
 |---|---|---|
 | `GET` | `/` | balances per account (normal-side signed), totals per currency, recent transactions |
 | `GET` | `/transactions` | all transactions; `q` (description search), `date_from`, `date_to`, `page` |
-| `GET` | `/transaction-detail/{id}` | one transaction's debits and credits, and its event |
+| `GET` | `/transaction-detail/{id}` | one transaction's debits and credits, and its event; `?already=1` after a resubmission says it was already posted |
 | `GET` | `/event-log` | the raw event log, newest first, paginated |
 | `GET` | `/learn` | how double-entry works, with worked examples from the demo's data; needs no database |
 | `GET` / `POST` | `/accounts/new`, `/accounts` | create an account: `name`, `account_type`, `currency` |
-| `GET` / `POST` | `/post-transaction` | post a transaction: repeated `account_id` / `entry_type` / `amount` / `currency` fields, plus `description` and `submission_key` |
+| `GET` / `POST` | `/post-transaction` | post a transaction: repeated `account_id` / `entry_type` / `amount` / `currency` fields, plus `description` and `submission_key`. `GET` takes the same fields, plus `add_line` or `remove_line`, to draw the form again with a line more or fewer: "Add line" and "Remove" without JavaScript |
 | `GET` | `/health` | `{"status":"ok","db":"up"}`, or `degraded`/`down` (never raises) |
 
 `POST /post-transaction` answers `302` to the transaction's detail page on
-success *and* on an idempotent retry, `422` with the form re-rendered and
-an inline error on invalid input, and `409` when a `submission_key` is
-reused with a different request. Both forms re-render with an inline error
-and a `409` when the ledger is at `MAX_ACCOUNTS` or `MAX_TRANSACTIONS`.
+success, and on an idempotent retry to the same page with `?already=1`. On
+invalid input it is a `422`, the form re-rendered with what was typed and
+every problem worded by its rule and marked on its line. When a
+`submission_key` is reused with a different request it is a `409`, the form
+explaining what happened and carrying a new key. Both forms re-render with
+an explanation and a `409` when the ledger is at `MAX_ACCOUNTS` or
+`MAX_TRANSACTIONS`, and a form refused by the write limit or the body limit
+gets a page saying so (`429`, `413`); the JSON API keeps its JSON for all of
+these.
 
 For example:
 
@@ -629,13 +637,14 @@ app/
 ├── ratelimit.py          per-client write rate limit
 ├── client_address.py     who the client is, behind Render and Cloudflare
 ├── glossary.py           the terms the pages define in place, each linked to /learn
+├── posting_messages.py   the posting form's wording: each refusal, the live balance panel
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages; the stylesheet, self-hosted fonts and icons
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    327 tests; see above
+tests/                    354 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 

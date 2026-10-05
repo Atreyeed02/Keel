@@ -42,6 +42,18 @@
 <button type="button" class="term term-{{ key }}" popovertarget="def-{{ key }}" aria-describedby="def-{{ key }}-text">{{ text }}</button><span id="def-{{ key }}" class="definition definition-{{ key }}" popover><span class="definition-title">{{ entry.title }}</span><span class="definition-text" id="def-{{ key }}-text">{{ entry.definition }}</span><span class="definition-actions"><a href="/learn#{{ entry.learn }}">More about {{ entry.more }}{{ icon("arrow-forward") }}</a><button type="button" class="definition-close" popovertarget="def-{{ key }}" popovertargetaction="hide">Close</button></span></span>
 {%- endmacro %}
 
+{#- One thing to fix, or a notice (app/posting_messages.Problem): what went
+    wrong in bold, then why and how to fix it, then its links. With `href`,
+    the bold part links there, as the summary at the top of a form does to
+    the line it is about. -#}
+{% macro problem(p, href=none) -%}
+<strong>{% if href %}<a href="{{ href }}">{{ p.title }}</a>{% else %}{{ p.title }}{% endif %}</strong>
+{%- if p.detail %} {{ p.detail }}{% endif %}
+{%- if p.link %} <a href="{{ p.link[0] }}">{{ p.link[1] }}</a>.{% endif %}
+{%- if p.more %} {{ p.more }}{% endif %}
+{%- if p.learn %} <a class="learn-link" href="/learn#{{ p.learn[0] }}">{{ p.learn[1] }}{{ icon("arrow-forward") }}</a>{% endif %}
+{%- endmacro %}
+
 {#- A timestamp in UTC, as every page shows them, with the exact instant
     machine-readable. -#}
 {% macro when(value, seconds=False) -%}

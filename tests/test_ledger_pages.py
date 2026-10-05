@@ -1,3 +1,4 @@
+import html
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,11 @@ async def database(monkeypatch):
     await test_engine.dispose()
 
 
+def _page(response) -> str:
+    """A page's text with Jinja's escaping undone, to match messages as written."""
+    return html.unescape(response.text)
+
+
 def _submission(cash_id, revenue_id, amount="100.00"):
     return {
         "description": "Test sale",
@@ -58,7 +64,8 @@ async def test_idempotent_retry_returns_same_transaction_id(database):
         first = await client.post("/post-transaction", data=_submission(cash_id, revenue_id))
         retry = await client.post("/post-transaction", data=_submission(cash_id, revenue_id))
     assert first.status_code == retry.status_code == 302
-    assert first.headers["location"] == retry.headers["location"]
+    # the same transaction, which then says it was already posted
+    assert retry.headers["location"] == first.headers["location"] + "?already=1"
 
 
 async def test_unbalanced_submission_renders_inline_error(database):
@@ -69,8 +76,11 @@ async def test_unbalanced_submission_renders_inline_error(database):
             "/post-transaction", data=_submission(cash_id, revenue_id, "101.00")
         )
     assert response.status_code == 422
-    assert "Cannot post transaction" in response.text
-    assert "does not balance" in response.text
+    page = _page(response)
+    assert "Nothing was posted. Fix this one thing and post again:" in page
+    assert "USD is out of balance by 1.00: debits 101.00, credits 100.00." in page
+    assert "Add 1.00 USD of credits, or correct an amount." in page
+    assert 'href="/learn#balanced"' in response.text
 
 
 async def test_created_account_appears_in_overview(database):
@@ -185,10 +195,9 @@ async def test_unknown_account_renders_inline_error(database):
         response = await client.post("/post-transaction", data=submission)
         overview = await client.get("/")
     assert response.status_code == 422
-    assert "Cannot post transaction" in response.text
-    assert "no account exists with id" in response.text
-    # the offending id is named, so the message is actionable
-    assert str(ghost_id) in response.text
+    # the line is named, so the message is actionable
+    assert "Line 2: that account doesn't exist." in _page(response)
+    assert 'id="line-2-problems"' in response.text
     # and the transaction was rolled back, not half-written
     assert "Test sale" not in overview.text
 
@@ -205,11 +214,11 @@ async def test_currency_mismatch_renders_inline_error(database):
         response = await client.post("/post-transaction", data=submission)
         overview = await client.get("/")
     assert response.status_code == 422
-    assert "Cannot post transaction" in response.text
-    # the message names the account, its currency, and what was submitted
-    assert "is USD" in response.text
-    assert "submitted as EUR" in response.text
-    assert "Cash" in response.text
+    # the message names the line, the account, its currency, and what was submitted
+    page = _page(response)
+    assert "Line 1: Cash is a USD account, but this line says EUR." in page
+    assert "Line 2: Revenue is a USD account, but this line says EUR." in page
+    assert "Change this line's currency to USD, or choose a EUR account." in page
     # crucially: it did not silently succeed
     assert "Test sale" not in overview.text
 
@@ -251,11 +260,11 @@ async def test_multi_currency_transaction_still_posts(database, eur_accounts):
 
 async def test_malformed_amount_renders_a_readable_message(database):
     """
-    A raw pydantic ValidationError must not reach the form alert.
+    A raw pydantic ValidationError must not reach the form.
 
     `str(ValidationError)` is a multi-line dump — "1 validation error for
-    EntryInput", a "[type=..., input_value=...]" block and a docs URL. The
-    handler flattens it instead, so the alert gets one sentence.
+    EntryInput", a "[type=..., input_value=...]" block and a docs URL.
+    app/posting_messages.py words the error instead, by its line.
     """
     cash_id, revenue_id = database
     submission = _submission(cash_id, revenue_id)
@@ -264,10 +273,9 @@ async def test_malformed_amount_renders_a_readable_message(database):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/post-transaction", data=submission)
     assert response.status_code == 422
-    assert "Cannot post transaction" in response.text
-    # the readable form: names the field, says what was wrong
-    assert "amount" in response.text
-    assert "input should be a valid decimal" in response.text
+    # the readable form: names the line, says what was wrong and how to fix it
+    assert 'Line 1: "abc" isn\'t an amount.' in _page(response)
+    assert "Type it like 1250.00" in _page(response)
     # and none of pydantic's machinery leaks through
     for dump_marker in (
         "validation error for",
@@ -280,16 +288,30 @@ async def test_malformed_amount_renders_a_readable_message(database):
         assert dump_marker not in response.text, f"pydantic dump leaked: {dump_marker!r}"
 
 
-async def test_unbalanced_message_is_unchanged_by_the_flattener(database):
-    """The other two exception types still render str(exc), as before."""
-    cash_id, revenue_id = database
+async def test_two_currencies_off_in_opposite_directions_say_keel_cannot_convert(
+    database, eur_accounts
+):
+    """100 USD out and 100 EUR in: one total says zero; per currency, both are off."""
+    cash_id, _revenue_id = database
+    _eur_bank_id, eur_revenue_id = eur_accounts
+    submission = {
+        "description": "An exchange",
+        "submission_key": "exchange-key",
+        "account_id": [str(cash_id), str(eur_revenue_id)],
+        "entry_type": ["debit", "credit"],
+        "amount": ["100.00", "100.00"],
+        "currency": ["USD", "EUR"],
+    }
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/post-transaction", data=_submission(cash_id, revenue_id, "101.00")
-        )
+        response = await client.post("/post-transaction", data=submission)
     assert response.status_code == 422
-    assert "does not balance per currency" in response.text
+    page = _page(response)
+    assert "USD is out of balance by 100.00: debits 100.00, credits 0.00." in page
+    assert "EUR is out of balance by 100.00: debits 0.00, credits 100.00." in page
+    assert "Keel can't convert between currencies inside one transaction" in page
+    # and the panel says the same
+    assert "Out of balance in 2 currencies." in page
 
 
 async def test_missing_account_and_currency_mismatch_report_together(database, eur_accounts):
@@ -316,14 +338,14 @@ async def test_missing_account_and_currency_mismatch_report_together(database, e
         response = await client.post("/post-transaction", data=submission)
         overview = await client.get("/")
     assert response.status_code == 422
-    # problem 1: the nonexistent account, named
-    assert "no account exists with id" in response.text
-    assert str(ghost_id) in response.text
+    page = _page(response)
+    assert "Fix these 2 things and post again:" in page
+    # problem 1: the nonexistent account, by its line
+    assert "Line 1: that account doesn't exist." in page
     # problem 2: the currency mismatch on the OTHER line, in the same response.
     # Matched as one phrase: the bare account name also appears in the form's
     # account dropdown, so asserting on it alone would pass without the fix.
-    # Jinja escapes the apostrophes the message wraps the name in.
-    assert "&#39;EUR bank&#39; is EUR, but an entry was submitted as USD" in response.text
+    assert "Line 2: EUR bank is a EUR account, but this line says USD." in page
     # nothing was written
     assert "Two problems at once" not in overview.text
 
@@ -632,7 +654,8 @@ async def test_an_amount_with_a_third_decimal_place_is_refused_not_rounded(datab
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/post-transaction", data=submission)
     assert response.status_code == 422
-    assert "no more than 2 decimal places" in response.text
+    assert "Line 1: 100.005 has more than two decimal places." in _page(response)
+    assert "Line 2: 100.005 has more than two decimal places." in _page(response)
     assert await _ledger_is_empty()
 
 
@@ -661,5 +684,5 @@ async def test_an_overlong_description_is_a_422_not_a_500(database):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/post-transaction", data=submission)
     assert response.status_code == 422
-    assert "description must be at most 512 characters" in response.text
+    assert "The description is 513 characters; the limit is 512." in _page(response)
     assert await _ledger_is_empty()

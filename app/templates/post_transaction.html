@@ -2,24 +2,39 @@
 {% import "_ui.html" as ui %}
 {% block title %}Post transaction{% endblock %}
 
-{#- One entry line. The form starts with the lines it was given; "Add line"
-    clones the empty one in #line-template. -#}
-{% macro entry_line(accounts, entry=none) -%}
-<div class="line">
-  <select name="account_id" required class="input line-account" aria-label="Account">
+{#- One entry line, numbered from 1, with whatever this line got wrong.
+    "Remove" is a submit button that, without JavaScript, asks for the form
+    again without this line (formmethod="get"); with JavaScript,
+    static/js/post-transaction.js does it in the page. -#}
+{% macro entry_line(accounts, n, entry=none, problems=[]) -%}
+{%- set mine = problems|selectattr("line", "equalto", n)|list -%}
+{%- set bad = mine|map(attribute="field")|list -%}
+{%- set described = 'aria-invalid="true" aria-describedby="line-%d-problems"'|format(n) -%}
+<fieldset class="line{% if mine %} has-problem{% endif %}" id="line-{{ n }}">
+  <legend class="sr-only">Line {{ n }}</legend>
+  <span class="line-number" aria-hidden="true">{{ "%02d"|format(n) }}</span>
+  <select name="account_id" required class="input line-account" aria-label="Account"{% if "account_id" in bad %} {{ described|safe }}{% endif %}>
     <option value="">Select account</option>
     {%- for account in accounts %}
-    <option value="{{ account.id }}"{% if entry and entry.account_id == account.id|string %} selected{% endif %}>{{ account.name }} ({{ account.account_type }} / {{ account.currency }})</option>
+    <option value="{{ account.id }}" data-currency="{{ account.currency }}" data-name="{{ account.name }}"{% if entry and entry.account_id == account.id|string %} selected{% endif %}>{{ account.name }} ({{ account.account_type }} / {{ account.currency }})</option>
     {%- endfor %}
   </select>
-  <select name="entry_type" class="input" aria-label="Debit or credit">
+  <select name="entry_type" class="input line-side" aria-label="Debit or credit"{% if "entry_type" in bad %} {{ described|safe }}{% endif %}>
     <option value="debit"{% if entry and entry.entry_type == 'debit' %} selected{% endif %}>Debit</option>
     <option value="credit"{% if entry and entry.entry_type == 'credit' %} selected{% endif %}>Credit</option>
   </select>
-  <input name="amount" type="number" min="0.01" step="0.01" required inputmode="decimal" class="input input-mono amount" value="{{ entry.amount if entry else '' }}" placeholder="0.00" aria-label="Amount">
-  <input name="currency" maxlength="3" required class="input input-mono currency" value="{{ entry.currency if entry else 'USD' }}" placeholder="USD" aria-label="Currency">
-  <button type="button" class="btn btn-ghost remove">Remove</button>
-</div>
+  <input name="amount" type="number" min="0.01" step="0.01" required inputmode="decimal" class="input input-mono amount" value="{{ entry.amount if entry else '' }}" placeholder="0.00" aria-label="Amount"{% if "amount" in bad %} {{ described|safe }}{% endif %}>
+  <input name="currency" maxlength="3" required class="input input-mono currency" value="{{ entry.currency if entry else 'USD' }}" placeholder="USD" aria-label="Currency"{% if "currency" in bad %} {{ described|safe }}{% endif %}>
+  <button type="submit" class="btn btn-ghost remove" name="remove_line" value="{{ n }}" formmethod="get" formaction="/post-transaction#lines" formnovalidate>Remove<span class="sr-only"> line {{ n }}</span></button>
+  {%- if mine %}
+  <div class="line-problems" id="line-{{ n }}-problems">
+    {%- for p in mine %}
+    <p>{{ ui.problem(p) }}</p>
+    {%- endfor %}
+  </div>
+  {%- endif %}
+  <p class="line-hint" id="line-{{ n }}-hint" hidden></p>
+</fieldset>
 {%- endmacro %}
 
 {% block content %}
@@ -29,43 +44,81 @@
   <p class="lede">Each line {{ ui.term("debit", "debits") }} or {{ ui.term("credit", "credits") }} one account. The transaction posts only if it is {{ ui.term("balanced", "balanced") }}: its debits equal its credits in each currency.</p>
 </div>
 
-{% if error %}
-<div role="alert" class="alert alert-error">
+{% if problems %}
+{%- set summary = problems|unique(attribute="title")|list %}
+<div role="alert" class="alert alert-error problem-summary" id="problems" tabindex="-1">
   {{ ui.icon("error") }}
-  <p><strong>Cannot post transaction:</strong> {{ error }}</p>
+  <div>
+    <h2>Nothing was posted. Fix {{ "this one thing" if summary|length == 1 else "these %d things"|format(summary|length) }} and post again:</h2>
+    <ul>
+      {%- for p in summary %}
+      <li>{{ ui.problem(p, href="#line-%d"|format(p.line) if p.line else none) }}</li>
+      {%- endfor %}
+    </ul>
+  </div>
 </div>
 {% endif %}
 
-<form action="/post-transaction" method="post" class="card card-body">
+<form action="/post-transaction" method="post" class="card card-body posting-form">
+  {#- Enter in a field submits with the form's first submit button, which would
+      otherwise be line 1's "Remove": this one comes first, and posts. -#}
+  <button type="submit" class="default-submit" tabindex="-1" aria-hidden="true">Post transaction</button>
   <input type="hidden" name="submission_key" value="{{ submission_key }}">
   <label class="field">
     <span class="field-label">Description</span>
-    <input class="input" name="description" value="{{ description or '' }}">
+    <input class="input" name="description" maxlength="512" value="{{ description or '' }}">
   </label>
 
-  <div class="lines-head" aria-hidden="true"><span>Account</span><span>Side</span><span>Amount</span><span>Currency</span><span></span></div>
+  <div class="lines-head" aria-hidden="true"><span>#</span><span>Account</span><span>Side</span><span>Amount</span><span>Currency</span><span></span></div>
   <div id="lines" class="lines">
     {%- for entry in entries %}
-    {{ entry_line(accounts, entry) }}
+    {{ entry_line(accounts, loop.index, entry, problems or []) }}
     {%- endfor %}
   </div>
 
   <div class="form-actions">
-    <button id="add" type="button" class="btn btn-secondary">{{ ui.icon("add") }}Add line</button>
-    <p class="totals">
-      <span>Debits: <strong id="debits">0.00</strong></span>
-      <span>Credits: <strong id="credits">0.00</strong></span>
-      <span>Difference: <strong id="difference">0.00</strong></span>
-    </p>
+    <button id="add" type="submit" class="btn btn-secondary" name="add_line" value="1" formmethod="get" formaction="/post-transaction#line-{{ entries|length + 1 }}" formnovalidate>{{ ui.icon("add") }}Add line</button>
   </div>
-  <div class="form-actions">
-    <button type="submit" class="btn btn-primary btn-lift">Post transaction</button>
+
+  {#- The live balance: the server's view of the lines as the page is drawn;
+      static/js/post-transaction.js keeps it current, with the same sentences
+      (data-text, from app/posting_messages.PANEL_TEXT). -#}
+  <section class="balance" aria-labelledby="balance-heading" data-text='{{ panel_text|tojson }}'>
+    <h2 id="balance-heading" class="balance-heading">Balance</h2>
+    <div class="balance-banner is-{{ panel.state }}" id="balance-status" tabindex="-1">
+      <span class="balance-icon" aria-hidden="true">{{ ui.icon("check-circle" if panel.state == "balanced" else "error" if panel.state == "off" else "info") }}</span>
+      <p><strong class="balance-title">{{ panel.title }}</strong>{% if panel.detail %} <span class="balance-detail">{{ panel.detail }}</span>{% endif %}</p>
+    </div>
+    <p class="sr-only" id="balance-announce" aria-live="polite"></p>
+    <div class="table-scroll">
+      <table class="ledger balance-table"{% if not panel.currencies %} hidden{% endif %}>
+        <caption class="sr-only">Totals by currency</caption>
+        <thead>
+          <tr><th scope="col">Currency</th><th scope="col" class="num debit">Debits</th><th scope="col" class="num credit">Credits</th><th scope="col" class="num">Difference</th><th scope="col"><span class="sr-only">Status</span></th></tr>
+        </thead>
+        <tbody>
+          {%- for row in panel.currencies %}
+          <tr>
+            <th scope="row" class="mono">{{ row.currency }}</th>
+            <td class="num debit">{{ row.debits }}</td>
+            <td class="num credit">{{ row.credits }}</td>
+            <td class="num">{{ row.difference }}</td>
+            <td><span class="badge {{ 'badge-ok' if row.balanced else 'badge-off' }}">{{ row.chip }}</span></td>
+          </tr>
+          {%- endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="form-actions post-actions">
+    <button id="post-button" type="submit" class="btn btn-primary btn-lift">Post transaction</button>
+    <p class="post-hint" id="post-hint" hidden>{{ panel_text.post_blocked }}</p>
   </div>
 </form>
 {% endblock %}
 
 {% block scripts %}
-<template id="line-template">{{ entry_line(accounts) }}</template>
-<script nonce="{{ request.state.csp_nonce }}">const lines=document.querySelector('#lines');function total(){let d=0,c=0;document.querySelectorAll('.line').forEach(row=>{const n=Number(row.querySelector('.amount').value)||0;if(row.querySelector('[name=entry_type]').value==='debit')d+=n;else c+=n});document.querySelector('#debits').textContent=d.toFixed(2);document.querySelector('#credits').textContent=c.toFixed(2);document.querySelector('#difference').textContent=(d-c).toFixed(2)}lines.addEventListener('input',total);lines.addEventListener('change',total);lines.addEventListener('click',e=>{if(e.target.classList.contains('remove')&&document.querySelectorAll('.line').length>2){e.target.closest('.line').remove();total()}});document.querySelector('#add').onclick=()=>{lines.append(document.querySelector('#line-template').content.cloneNode(true));total()};total();</script>
+<template id="line-template">{{ entry_line(accounts, 0) }}</template>
 <script src="/static/js/post-transaction.js" defer></script>
 {% endblock %}

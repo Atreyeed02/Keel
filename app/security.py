@@ -6,7 +6,8 @@ limit and security headers. Both are plain ASGI middleware.
 lines is a few kilobytes. A request declaring a body over the limit is
 answered 413 before the app reads a byte, and one that does not declare its
 length (chunked) is cut off with a 413 as soon as it passes the limit. Under
-`/api/` the 413 uses the API's error shape.
+`/api/` the 413 uses the API's error shape; anywhere else it is a page that
+says so in words (`page`, given by app/main.py).
 
 **Security headers**, on every response:
 
@@ -17,16 +18,16 @@ length (chunked) is cut off with a 413 as soon as it passes the limit. Under
   a visitor came from;
 - a `Content-Security-Policy`. Pages load everything from Keel itself: the
   stylesheet, fonts and icons are under /static, and nothing comes from
-  another origin. Inline scripts run only when they carry this request's
-  nonce (`request.state.csp_nonce`), which the posting form's script does.
-  Styles are `'self'` only, so a style attribute or a `<style>` element in a
-  page is refused. FastAPI's `/docs` and `/redoc` pages load their UI from a
+  another origin. Scripts are `'self'` only: every script a page runs is a
+  file under /static/js, and no page has an inline one. Styles are `'self'`
+  only too, so a style attribute or a `<style>` element in a page is
+  refused. FastAPI's `/docs` and `/redoc` pages load their UI from a
   CDN and bootstrap it with an inline script they generate, so they get a
   policy of their own.
 """
 
 import json
-import secrets
+from collections.abc import Callable
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -34,7 +35,7 @@ from app.api.errors import API_PREFIX, error_body
 
 PAGE_CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'nonce-{nonce}'; "
+    "script-src 'self'; "
     "style-src 'self'; "
     "img-src 'self' data:; "
     "connect-src 'self'; "
@@ -76,11 +77,7 @@ class SecurityHeadersMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        nonce = secrets.token_urlsafe(16)
-        # Starlette's request.state is this dict, so templates can read it.
-        scope.setdefault("state", {})["csp_nonce"] = nonce
-        path = scope["path"]
-        policy = DOCS_CSP if path.startswith(DOCS_PATHS) else PAGE_CSP.format(nonce=nonce)
+        policy = DOCS_CSP if scope["path"].startswith(DOCS_PATHS) else PAGE_CSP
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -102,15 +99,23 @@ class _BodyTooLarge(Exception):
     pass
 
 
+# Draws a refusal as an HTML page: (scope, what was refused, its numbers).
+RefusalPage = Callable[[Scope, str, dict[str, float]], bytes]
+
+
 class BodySizeLimitMiddleware:
-    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, max_bytes: int, page: RefusalPage | None = None) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.page = page
 
     async def _reject(self, scope: Scope, send: Send, status: int, message: str) -> None:
         if scope["path"].startswith(API_PREFIX):
             code = "payload_too_large" if status == 413 else "bad_request"
             body, content_type = json.dumps(error_body(code, message)).encode(), b"application/json"
+        elif status == 413 and self.page is not None:
+            body = self.page(scope, "too_large", {"limit": self.max_bytes})
+            content_type = b"text/html; charset=utf-8"
         else:
             body, content_type = message.encode(), b"text/plain; charset=utf-8"
         await send(

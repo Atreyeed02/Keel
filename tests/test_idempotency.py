@@ -15,7 +15,9 @@ integration tests.
 """
 
 import asyncio
+import html
 import os
+import re
 import uuid
 from datetime import timedelta
 
@@ -114,7 +116,8 @@ async def test_retry_writes_the_ledger_exactly_once(database):
         ]
     assert first.status_code == 302
     assert {r.status_code for r in retries} == {302}
-    assert {r.headers["location"] for r in retries} == {first.headers["location"]}
+    # each retry lands on the same transaction, which says it was already posted
+    assert {r.headers["location"] for r in retries} == {first.headers["location"] + "?already=1"}
     assert await _ledger_counts() == ONE_POSTING
 
 
@@ -128,7 +131,14 @@ async def test_same_key_with_a_different_payload_is_a_409(database):
         )
     assert first.status_code == 302
     assert reused.status_code == 409
-    assert reused.json() == {"detail": "submission key was used for another request"}
+    # the form, saying so, with a link to what the key already posted
+    page = html.unescape(reused.text)
+    assert "This form already posted a transaction, and you've changed it since." in page
+    assert f'href="{first.headers["location"]}"' in reused.text
+    assert "it will be recorded as a separate, second transaction" in page
+    # and a new key, so posting it again is a second transaction, not a conflict
+    (key,) = re.findall(r'name="submission_key" value="([^"]+)"', reused.text)
+    assert key != "same-key"
     assert await _ledger_counts() == ONE_POSTING
     # and the stored result is still the first request's, untouched
     async with main_module.engine.connect() as conn:
@@ -171,7 +181,13 @@ async def test_concurrent_duplicates_commit_one_effect(database, monkeypatch):
         )
     # every duplicate gets the original result — no 500s, no second posting
     assert [r.status_code for r in responses] == [302] * parties
-    assert len({r.headers["location"] for r in responses}) == 1
+    # one transaction: the first posted it, the rest were told it was already posted
+    locations = [r.headers["location"] for r in responses]
+    assert len({location.removesuffix("?already=1") for location in locations}) == 1
+    assert sorted(location.endswith("?already=1") for location in locations) == [
+        False,
+        *[True] * (parties - 1),
+    ]
     assert await _ledger_counts() == ONE_POSTING
 
 

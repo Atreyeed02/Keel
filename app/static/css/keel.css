@@ -312,6 +312,12 @@ main:focus {
   color: var(--text-muted);
 }
 
+/* a sum written out in a sentence: figures, but free to wrap on a phone */
+.sum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 /* figures: tabular, so decimal points line up down a column */
 .num {
   font-family: var(--font-mono);
@@ -548,7 +554,11 @@ main.wrap {
 
 /* --- cards --------------------------------------------------------------------------- */
 
+/* position: relative, so text hidden for screen readers (.sr-only, which is
+   absolutely positioned) stays inside the card and is clipped with it,
+   instead of widening the page on a phone */
 .card {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -732,6 +742,7 @@ main.wrap {
 /* --- tables -------------------------------------------------------------------------- */
 
 .table-scroll {
+  position: relative;
   overflow-x: auto;
 }
 
@@ -1009,39 +1020,103 @@ main.wrap {
   margin-top: var(--space-lg);
 }
 
-/* posting form: one row per entry line; stacked on a phone */
+/* posting form: one fieldset per entry line, numbered; stacked on a phone.
+   Problems and hints flow into rows of their own under the line. */
 .lines-head {
   display: none;
 }
 
 .lines {
   display: grid;
-  gap: 0.75rem;
+  gap: var(--space-xs);
   margin-top: var(--space-lg);
 }
 
 .line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 1.75rem minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "num account account"
+    ". side amount"
+    ". currency remove";
+  align-items: center;
   gap: var(--space-sm);
-  padding-bottom: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-sm) var(--space-sm) 0.75rem;
+  border: 0;
   border-bottom: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+}
+
+.line:hover {
+  background: var(--bg);
+}
+
+.line-number {
+  grid-area: num;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .line .line-account {
-  grid-column: 1 / -1;
+  grid-area: account;
+}
+
+.line .line-side {
+  grid-area: side;
+}
+
+.line .amount {
+  grid-area: amount;
+}
+
+.line .currency {
+  grid-area: currency;
+}
+
+.line .remove {
+  grid-area: remove;
+}
+
+.line-problems,
+.line-hint {
+  grid-column: 2 / -1;
+  color: var(--err);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.line-problems p + p {
+  margin-top: var(--space-xs);
+}
+
+.line-problems a {
+  color: inherit;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--err-border);
 }
 
 @media (min-width: 768px) {
   .lines-head,
   .line {
-    grid-template-columns: minmax(0, 3fr) minmax(7rem, 1fr) minmax(8rem, 1.25fr) 5.5rem 6rem;
+    grid-template-columns:
+      1.75rem minmax(0, 3fr) minmax(7rem, 1fr) minmax(8rem, 1.25fr) 5.5rem 6rem;
+  }
+
+  .line {
+    grid-template-areas: "num account side amount currency remove";
   }
 
   .lines-head {
     display: grid;
     gap: var(--space-sm);
     margin-top: var(--space-lg);
+    padding-inline: var(--space-sm);
     color: var(--text-muted);
     font-size: 0.75rem;
     font-weight: 600;
@@ -1052,14 +1127,6 @@ main.wrap {
 
   .lines-head + .lines {
     margin-top: var(--space-sm);
-  }
-
-  .line {
-    align-items: center;
-  }
-
-  .line .line-account {
-    grid-column: auto;
   }
 }
 
@@ -1077,16 +1144,106 @@ main.wrap {
   color: var(--err);
 }
 
-.totals {
+/* Enter in a field posts: this copy of Post is the form's first submit
+   button, out of sight and out of the tab order */
+.default-submit {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* the live balance: a banner for the state, a row per currency */
+.balance {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.balance > * + * {
+  margin-top: var(--space-md);
+}
+
+.balance-heading {
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+
+.balance-banner {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm) var(--space-lg);
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--sunken);
   color: var(--text-body);
 }
 
-.totals strong {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
+.balance-banner .icon {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.balance-banner strong {
+  color: inherit;
+}
+
+.balance-banner.is-balanced {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok);
+}
+
+.balance-banner.is-off {
+  background: var(--err-bg);
+  border-color: var(--err-border);
+  color: var(--err);
+}
+
+.balance-table {
+  min-width: 0;
+}
+
+.balance-table .debit {
+  color: var(--debit);
+}
+
+.balance-table .credit {
+  color: var(--credit);
+}
+
+.badge-off {
+  background: var(--err-bg);
+  border-color: var(--err-border);
+  color: var(--err);
+}
+
+.post-actions {
+  justify-content: flex-start;
+}
+
+.post-hint {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+/* Post while anything is out of balance: looks disabled, stays focusable,
+   so a screen reader can still reach it and hear why */
+.btn.is-blocked,
+.btn.is-blocked:hover {
+  background: var(--sunken);
+  border-color: var(--border);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* --- alerts -------------------------------------------------------------------------- */
@@ -1112,8 +1269,44 @@ main.wrap {
   color: var(--err);
 }
 
-.alert-error strong {
+.alert-error strong,
+.alert-error a {
   color: inherit;
+}
+
+/* a notice, not a problem: "Already posted." */
+.alert-note {
+  background: var(--sunken);
+  color: var(--text-body);
+}
+
+/* what a refused form lists at the top, each item linking to its line */
+.problem-summary h2 {
+  font-size: 1rem;
+  line-height: 1.5rem;
+  color: inherit;
+}
+
+.problem-summary ul {
+  margin: var(--space-sm) 0 0;
+  padding-left: 1.25rem;
+}
+
+.problem-summary li + li {
+  margin-top: var(--space-sm);
+}
+
+.learn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.learn-link .icon {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* --- pagination ---------------------------------------------------------------------- */
@@ -1701,14 +1894,16 @@ ul.sides {
    Every animation in Keel is here, carried over from the Stitch designs:
    their colour fades on hover and focus, the hover lift on the posting
    button, the pulsing status dot, the spinner while a post is in flight, a
-   term's card fading in, and the Learn page's hover shadows on its cards.
+   term's card fading in, the Learn page's hover shadows on its cards, and
+   the posting form's balance banner fading between its states.
    Rules for this section:
    - nothing loops forever: the dot pulses three times, the spinner stops
      after twelve turns;
    - nothing flashes: the fastest change is a 150 ms fade;
    - with prefers-reduced-motion: reduce, all of it stops (the last block);
-   - CSS only, except the "Posting…" state, which static/js/post-transaction.js
-     switches on. Without JavaScript the pages work the same, just without it. */
+   - CSS only, except what static/js switches on: "Posting…", a term's card
+     opening on hover, the balance banner's state. Without JavaScript the
+     pages work the same, just without those. */
 
 /* colour fades on hover and focus (Tailwind's transition-colors, 150 ms) */
 a,
@@ -1725,6 +1920,14 @@ a,
     box-shadow;
   transition-duration: var(--fast);
   transition-timing-function: var(--ease);
+}
+
+/* the balance banner fades between its states, as Stitch's status banner and
+   variance card do; a line's row fades in its hover background */
+.balance-banner,
+.line {
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
 
 /* the account-type cards lift their shadow under the pointer (Stitch's
