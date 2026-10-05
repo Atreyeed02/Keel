@@ -1,5 +1,91 @@
-{% extends "base.html" %}{% set body_class = "bg-slate-50 text-slate-900" %}{% block title %}Overview{% endblock %}{% block content %}
-<h1 class="text-3xl font-bold">General ledger</h1><section class="my-6 space-y-4">{% for total in totals_by_currency %}<div class="grid md:grid-cols-3 gap-4"><div class="p-4 bg-white border">Total debits <span class="text-slate-500">{{ total.currency }}</span> <strong>{{ total.debits|money }}</strong></div><div class="p-4 bg-white border">Total credits <span class="text-slate-500">{{ total.currency }}</span> <strong>{{ total.credits|money }}</strong></div><div class="p-4 bg-white border">Invariant delta <span class="text-slate-500">{{ total.currency }}</span> <strong>{{ total.delta|money }}</strong> {% if total.delta == 0 %}<span class="text-emerald-700">Balanced</span>{% endif %}</div></div>{% else %}<div class="p-4 bg-white border text-slate-500">No entries yet.</div>{% endfor %}</section>
-<section class="bg-white border p-4"><h2 class="text-xl font-semibold mb-3">Chart of accounts</h2><table class="w-full text-left"><thead><tr><th>Account</th><th>Type</th><th>Currency</th><th>Normal side</th><th class="text-right">Balance</th></tr></thead><tbody>{% for account_type, rows in accounts_by_type.items() %}<tr class="bg-slate-100"><td colspan="5" class="font-bold uppercase p-2">{{ account_type }}</td></tr>{% for account in rows %}<tr class="border-t"><td class="p-2">{{ account.name }}</td><td>{{ account.account_type }}</td><td>{{ account.currency }}</td><td>{{ account.normal_side }}</td><td class="text-right">{{ account.balance|money }}</td></tr>{% endfor %}{% else %}<tr><td colspan="5" class="p-3">No accounts yet.</td></tr>{% endfor %}</tbody></table></section>
-<section class="bg-white border p-4 mt-6"><div class="flex items-baseline justify-between mb-3"><h2 class="text-xl font-semibold">Recent transactions</h2><a class="underline text-sm" href="/transactions">View all</a></div><table class="w-full text-left"><thead><tr><th>Description</th><th>Created</th><th>Entries</th><th class="text-right">Volume</th></tr></thead><tbody>{% for transaction in recent_transactions %}<tr class="border-t"><td class="p-2"><a class="underline" href="/transaction-detail/{{ transaction.id }}">{{ transaction.description or "Untitled transaction" }}</a></td><td>{{ transaction.created_at }}</td><td>{{ transaction.entry_count }}</td><td class="text-right">{{ transaction.entry_volume|money }}</td></tr>{% else %}<tr><td colspan="4" class="p-3">No posted transactions.</td></tr>{% endfor %}</tbody></table></section>
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Ledger</p>
+  <h1>General ledger</h1>
+  <p class="lede">Every posted transaction has equal debits and credits in each currency, so in every currency the two totals below match.</p>
+</div>
+
+<div class="stack">
+  <section aria-labelledby="totals-heading">
+    <h2 id="totals-heading" class="section-title">Trial balance</h2>
+    {% for total in totals_by_currency %}
+    <div class="stats">
+      <div class="stat">
+        <p class="stat-label">Total debits {{ ui.side("debit") }}</p>
+        <p class="stat-value debit"><span class="muted">{{ total.currency }}</span> {{ total.debits|money }}</p>
+      </div>
+      <div class="stat">
+        <p class="stat-label">Total credits {{ ui.side("credit") }}</p>
+        <p class="stat-value credit"><span class="muted">{{ total.currency }}</span> {{ total.credits|money }}</p>
+      </div>
+      <div class="stat">
+        <p class="stat-label">Difference {% if total.delta == 0 %}{{ ui.balanced() }}{% endif %}</p>
+        <p class="stat-value"><span class="muted">{{ total.currency }}</span> {{ total.delta|money }}</p>
+        <p class="stat-note">Total debits minus total credits</p>
+      </div>
+    </div>
+    {% else %}
+    <p class="card empty">No entries yet.</p>
+    {% endfor %}
+  </section>
+
+  <section class="card" aria-labelledby="accounts-heading">
+    <div class="card-head">
+      <h2 id="accounts-heading">Chart of accounts</h2>
+      <p>Each balance is shown on its account's normal side, the side that makes it grow.</p>
+    </div>
+    <div class="table-scroll" role="region" aria-labelledby="accounts-heading" tabindex="0">
+      <table class="ledger">
+        <thead>
+          <tr><th scope="col">Account</th><th scope="col">Type</th><th scope="col">Currency</th><th scope="col">Normal side</th><th scope="col" class="num">Balance</th></tr>
+        </thead>
+        {% for account_type, rows in accounts_by_type.items() %}
+        <tbody>
+          <tr><th scope="rowgroup" colspan="5">{{ account_type }}</th></tr>
+          {% for account in rows %}
+          <tr>
+            <td>{{ account.name }}</td>
+            <td>{{ account.account_type }}</td>
+            <td class="mono">{{ account.currency }}</td>
+            <td>{{ ui.side(account.normal_side, long=True) }}</td>
+            <td class="num">{{ account.balance|money }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% else %}
+        <tbody><tr><td colspan="5" class="empty">No accounts yet.</td></tr></tbody>
+        {% endfor %}
+      </table>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="recent-heading">
+    <div class="card-head">
+      <h2 id="recent-heading">Recent transactions</h2>
+      <a class="link-action" href="/transactions">View all{{ ui.icon("arrow-forward") }}</a>
+    </div>
+    <div class="table-scroll" role="region" aria-labelledby="recent-heading" tabindex="0">
+      <table class="ledger">
+        <thead>
+          <tr><th scope="col">Description</th><th scope="col">Created</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Volume</th></tr>
+        </thead>
+        <tbody>
+          {% for transaction in recent_transactions %}
+          <tr>
+            <td><a href="/transaction-detail/{{ transaction.id }}">{{ transaction.description or "Untitled transaction" }}</a></td>
+            <td class="muted">{{ ui.when(transaction.created_at) }}</td>
+            <td class="num">{{ transaction.entry_count }}</td>
+            <td class="num">{{ transaction.entry_volume|money }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="empty">No posted transactions.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
 {% endblock %}

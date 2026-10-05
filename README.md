@@ -260,7 +260,7 @@ check the status code, know that it will not notice a lost database.
 | Variable | Required | What it does |
 |---|---|---|
 | `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. The only query parameters accepted are `sslmode` and `channel_binding`, and `channel_binding` only as `prefer` or `disable`. The app's driver, asyncpg, can't do channel binding, so `channel_binding=require`, which Neon puts in the URLs it gives you, stops startup: remove it or change it to `prefer`. Any other parameter (`application_name`, `connect_timeout`, `options`, ...) also stops startup, because asyncpg would fail on every connection. |
-| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets periodically, and is the only environment `scripts.reset_demo_data` will run in. |
+| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets nightly, and is the only environment `scripts.reset_demo_data` will run in. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
 | `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
 | `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
@@ -493,7 +493,7 @@ pytest -v
 ruff check .
 ```
 
-312 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+319 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -501,8 +501,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 101 database-backed tests are **skipped,
-not failed**. A green run of the remaining 211 is partial coverage:
+Without `TEST_DATABASE_URL`, the 102 database-backed tests are **skipped,
+not failed**. A green run of the remaining 217 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -628,12 +628,12 @@ app/
 ├── ratelimit.py          per-client write rate limit
 ├── client_address.py     who the client is, behind Render and Cloudflare
 ├── main.py               routes and wiring
-└── templates/, static/   Jinja2 pages
+└── templates/, static/   Jinja2 pages; the stylesheet, self-hosted fonts and icons
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    312 tests; see above
+tests/                    319 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 

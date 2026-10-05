@@ -1,0 +1,36 @@
+{#-
+  Markup the pages share. Import with {% import "_ui.html" as ui %}.
+
+  Debit and credit are never shown by colour alone: side() pairs the colour
+  with an arrow and "Dr"/"Cr" (or the full word), and screen readers hear
+  the full word either way.
+-#}
+
+{% macro icon(name) -%}
+<svg class="icon" aria-hidden="true" focusable="false"><use href="/static/icons/icons.svg#{{ name }}"></use></svg>
+{%- endmacro %}
+
+{#- side("debit") is a "Dr" badge, side("credit") a "Cr" one. long=True spells
+    the word out; hidden=True is for a badge beside text that already says it. -#}
+{% macro side(entry_type, long=False, hidden=False) -%}
+{%- set debit = entry_type == "debit" -%}
+<span class="badge {{ 'badge-debit' if debit else 'badge-credit' }}"{% if hidden %} aria-hidden="true"{% endif %}>
+  {{- icon("south-west" if debit else "north-east") -}}
+  {%- if long -%}
+    {{ "Debit" if debit else "Credit" }}
+  {%- else -%}
+    <span aria-hidden="true">{{ "Dr" if debit else "Cr" }}</span>
+    {%- if not hidden %}<span class="sr-only">{{ "Debit" if debit else "Credit" }}</span>{% endif -%}
+  {%- endif -%}
+</span>
+{%- endmacro %}
+
+{% macro balanced() -%}
+<span class="badge badge-ok">{{ icon("check-circle") }}Balanced</span>
+{%- endmacro %}
+
+{#- A timestamp in UTC, as every page shows them, with the exact instant
+    machine-readable. -#}
+{% macro when(value, seconds=False) -%}
+<time datetime="{{ value.isoformat() }}">{{ value|utc(seconds) }}</time>
+{%- endmacro %}
