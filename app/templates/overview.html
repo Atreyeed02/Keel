@@ -5,12 +5,13 @@
 <div class="page-head">
   <p class="eyebrow">Ledger</p>
   <h1>General ledger</h1>
-  <p class="lede">Every posted transaction has equal debits and credits in each currency, so in every currency the two totals below match.</p>
+  <p class="lede">Every posted transaction has equal {{ ui.term("debit", "debits") }} and {{ ui.term("credit", "credits") }} in each currency, so in every currency the two totals below match.</p>
 </div>
 
 <div class="stack">
   <section aria-labelledby="totals-heading">
-    <h2 id="totals-heading" class="section-title">Trial balance</h2>
+    <h2 id="totals-heading">Trial balance</h2>
+    <p class="section-intro">This {{ ui.term("trial-balance", "trial balance") }} adds up every debit and credit entry, per currency.</p>
     {% for total in totals_by_currency %}
     <div class="stats">
       <div class="stat">
@@ -35,7 +36,7 @@
   <section class="card" aria-labelledby="accounts-heading">
     <div class="card-head">
       <h2 id="accounts-heading">Chart of accounts</h2>
-      <p>Each balance is shown on its account's normal side, the side that makes it grow.</p>
+      <p>Each balance is shown on its account's {{ ui.term("normal-side", "normal side") }}, the side that makes it grow.</p>
     </div>
     <div class="table-scroll" role="region" aria-labelledby="accounts-heading" tabindex="0">
       <table class="ledger">
@@ -44,7 +45,7 @@
         </thead>
         {% for account_type, rows in accounts_by_type.items() %}
         <tbody>
-          <tr><th scope="rowgroup" colspan="5">{{ account_type }}</th></tr>
+          <tr><th scope="rowgroup" colspan="5">{{ ui.term(account_type, account_type) if account_type in glossary else account_type }}</th></tr>
           {% for account in rows %}
           <tr>
             <td>{{ account.name }}</td>

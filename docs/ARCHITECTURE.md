@@ -109,13 +109,13 @@ same statement as the equation staying true.
 
 **In the code**, this lives in two places:
 
-`app/main.py` declares which types are debit-normal:
+`app/domain/reads.py` declares which types are debit-normal:
 
 ```python
 NORMAL_DEBIT_TYPES = {"asset", "expense"}
 ```
 
-and the overview handler uses it to flip the sign so every account
+and `account_balances` uses it to flip the sign so every account
 displays a positive balance when it is in its expected state:
 
 ```python
@@ -1049,6 +1049,12 @@ paging does not drop them. `date_to` is compared half-open against the
 following day, because `created_at` is a timestamp and a bare `<= date_to`
 would exclude everything after midnight on the closing day.
 
+**`GET /learn`** — how double-entry works: the accounting equation,
+debits and credits, normal sides and T-accounts, the five account types,
+DEAD CLIC, when a transaction balances, how Keel records it, and a
+one-question check, with worked examples from the demo's own data. Fixed
+text: it never touches the database.
+
 **`GET /accounts/new` / `POST /accounts`** — the form and its handler.
 Validates via `validate_account`, inserts with a server-generated UUID,
 redirects `302` to `/`. On `InvalidAccountError`, re-renders the form
@@ -1119,13 +1125,31 @@ fades on links, buttons, nav links, fields and table rows; the posting
 button's hover lift; a status dot in the demo notice that pulses three times
 (Stitch's pulses forever); the amount field taking its line's colour on
 focus, through `:has()` on the line's own select; and a spinner on the
-posting button while the post is in flight. That last one is the only
-motion a script switches on, `static/js/post-transaction.js`, which also
-ignores a second click; without it the form posts the same. On desktops the
+posting button while the post is in flight. Phase 2 added a term's card
+fading in, hover fades on the Learn page's contents and quiz, and hover
+shadows on its account-type cards. The spinner is the only motion a
+script switches on, `static/js/post-transaction.js`, which also ignores
+a second click; without it the form posts the same. On desktops the
 header stays at the top with a frosted backdrop. Nothing loops forever or
 flashes, and under `prefers-reduced-motion: reduce` every animation and
 transition stops and the spinner is hidden. `tests/test_stylesheet.py`
 holds the stylesheet to both rules.
+
+**Terms are defined where the pages use them.** `{{ ui.term("debit",
+"debits") }}` renders the word as a button, dotted-underlined like an
+abbreviation, that opens a short card: the definition from
+`app/glossary.py`, a link to its section of `/learn`, and Close. The card
+is a native popover, so click, tap, keyboard and Esc need no script, and
+it sits in the top layer, where no card or scrolling table clips it.
+`static/js/terms.js` only adds opening on a 300 ms mouse hover, and
+closing 200 ms after the pointer leaves both term and card, unless the
+card was opened by a click or holds the focus. The button's
+`aria-describedby` is the definition, so a screen reader hears it
+without opening the card. On a desktop the card sits under its term
+where CSS anchor positioning is supported (each term names its own
+anchor, which is why a page defines a term once); otherwise it is a card
+at the bottom of the screen, and on a phone a full-width sheet there. A
+browser without popovers shows the term as plain text.
 
 **`{% block scripts %}` exists for a specific reason.** On
 `post_transaction.html`, the `<template id="line-template">` and the
@@ -1278,6 +1302,7 @@ workflow runs it every night (§5.13).
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
 | `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
 | `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the page CSP naming no other origin and no inline styles; the posting form's CSP nonce; every page, error re-renders included, referencing only Keel's own files, each of which exists, and having no inline styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
+| `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
@@ -1593,8 +1618,9 @@ is outermost):
 | `Referrer-Policy` | `same-origin` | other sites never see which Keel URL a visitor came from |
 | `Content-Security-Policy` | below | limits what a page may load and run |
 
-The page policy names no other origin. Scripts come from Keel itself (the
-posting form's `/static/js/post-transaction.js`), or inline only with this
+The page policy names no other origin. Scripts come from Keel itself
+(`/static/js/post-transaction.js` on the posting form, `/static/js/terms.js`
+on every page), or inline only with this
 response's nonce: a fresh nonce is made per request,
 stored in `request.state.csp_nonce`, and put on the posting form's one
 inline script. Styles are `'self'` only. The stylesheet, fonts and icons
@@ -1857,11 +1883,12 @@ that writes the event log alongside the read model, account validation
 and creation (which also writes an event), and `rebuild_read_model()`,
 which replays the log into a fresh read model.
 
-**HTTP layer** — health check, and six server-rendered pages: overview
+**HTTP layer** — health check, and seven server-rendered pages: overview
 with per-account balances and normal-side signs, event log with
 pagination, the filterable paginated transaction list, transaction posting
 form with live client-side totals, transaction detail with debit/credit
-columns, and account creation.
+columns, account creation, and a Learn page that explains double-entry,
+with key terms defined where the pages use them.
 
 **JSON API** — `POST`/`GET /api/accounts`, `POST /api/transactions` with a
 required `Idempotency-Key` (201 first post, 200 replay marked
@@ -1924,14 +1951,14 @@ fonts and icons, so they load nothing from another origin (§5.8, §5.18).
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 319 tests (§5.11). 217 run with no database at all: the
+**Testing** — 327 tests (§5.11). 224 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
 before the database is touched, the deployment configuration, the body
 limit and security headers, the proxy headers, the write rate limit, the
 demo notice's absence, the reset script's refusals, the database host
-check and the nightly reset's workflow. The other 102 are
+check and the nightly reset's workflow. The other 103 are
 Postgres-backed. They cover the pages, filters and pagination; idempotency,
 including concurrent duplicates and key retention; the database triggers
 against writes that bypass the app; atomic rollback; agreement between the
@@ -1943,7 +1970,7 @@ behaviour it covers broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"217 passed, 102 skipped" and is not a passing build. See the README for
+"224 passed, 103 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
