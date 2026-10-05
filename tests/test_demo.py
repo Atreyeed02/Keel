@@ -135,7 +135,7 @@ async def test_the_notice_is_only_on_the_demo(monkeypatch):
         monkeypatch.setattr(settings, "environment", "Demo")
         page = (await client.get("/accounts/new")).text
     assert NOTICE in page
-    assert "reset to the demo set periodically" in page
+    assert "the data resets nightly" in page
 
 
 async def test_every_page_carries_the_notice_on_the_demo(database, demo):

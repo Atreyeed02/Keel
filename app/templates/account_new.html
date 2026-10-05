@@ -1,1 +1,40 @@
-{% extends "base.html" %}{% set main_class = "max-w-5xl mx-auto p-8" %}{% block title %}New account{% endblock %}{% block content %}<h1 class="text-3xl font-bold">New account</h1>{% if error %}<div role="alert" class="my-4 border border-red-600 bg-red-50 p-4 text-red-900"><strong>Cannot create account:</strong> {{ error }}</div>{% endif %}<form action="/accounts" method="post" class="mt-6 bg-white border p-5"><label class="block mb-4">Name<input class="block w-full border p-2 mt-1" name="name" required value="{{ account.name }}"></label><label class="block mb-4">Account type<select class="block w-full border p-2 mt-1" name="account_type" required>{% for type in account_types %}<option value="{{ type }}" {% if account.account_type == type %}selected{% endif %}>{{ type|capitalize }}</option>{% endfor %}</select></label><label class="block mb-4">Currency<input class="block w-full border p-2 mt-1" name="currency" maxlength="3" required value="{{ account.currency }}" placeholder="USD"></label><button type="submit" class="mt-5 bg-slate-900 text-white px-4 py-2">Create account</button></form>{% endblock %}
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}New account{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Chart of accounts</p>
+  <h1>New account</h1>
+  <p class="lede">An account's type decides its normal side. Assets and expenses grow with debits; liabilities, equity and revenue grow with credits.</p>
+</div>
+
+{% if error %}
+<div role="alert" class="alert alert-error">
+  {{ ui.icon("error") }}
+  <p><strong>Cannot create account:</strong> {{ error }}</p>
+</div>
+{% endif %}
+
+<form action="/accounts" method="post" class="card card-body">
+  <label class="field">
+    <span class="field-label">Name</span>
+    <input class="input" name="name" required value="{{ account.name }}">
+  </label>
+  <label class="field">
+    <span class="field-label">Account type</span>
+    <select class="input" name="account_type" required>
+      {%- for type in account_types %}
+      <option value="{{ type }}"{% if account.account_type == type %} selected{% endif %}>{{ type|capitalize }}</option>
+      {%- endfor %}
+    </select>
+  </label>
+  <label class="field">
+    <span class="field-label">Currency</span>
+    <input class="input input-mono" name="currency" maxlength="3" required value="{{ account.currency }}" placeholder="USD">
+    <span class="field-hint">A three-letter code such as USD or EUR. Every entry posted to this account must use it.</span>
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create account</button>
+  </div>
+</form>
+{% endblock %}

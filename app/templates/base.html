@@ -1,1 +1,47 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Keel — {% block title %}{% endblock %}</title><script src="https://cdn.tailwindcss.com"></script></head><body class="{{ body_class|default('bg-slate-50') }}"><main class="{{ main_class|default('max-w-6xl mx-auto p-8') }}">{% if is_demo() %}<p role="note" class="mb-6 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"><strong>Public demo.</strong> Anyone can create accounts and post transactions here, and the data is reset to the demo set periodically, so don't enter anything real.</p>{% endif %}<nav class="mb-8 flex gap-5"><a href="/">Overview</a><a href="/transactions">Transactions</a><a href="/post-transaction">Post transaction</a><a href="/event-log">Event log</a><a href="/accounts/new">New account</a></nav>{% block content %}{% endblock %}</main>{% block scripts %}{% endblock %}</body></html>
+{% import "_ui.html" as ui -%}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Keel — {% block title %}{% endblock %}</title>
+<link rel="preload" href="/static/fonts/plus-jakarta-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/css/keel.css">
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+{% if is_demo() %}
+<div class="demo-notice" role="note">
+  <div class="wrap">
+    <span class="pulse-dot" aria-hidden="true"></span>
+    <p><strong>Public demo.</strong> Anyone can create accounts and post transactions here, and the data resets nightly, so don't enter anything real.</p>
+  </div>
+</div>
+{% endif %}
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="28" height="28">Keel</a>
+    <span class="brand-tag">Educational ledger</span>
+    <nav class="site-nav" aria-label="Main">
+      <ul>
+        {%- for href, label in [
+          ("/", "Overview"),
+          ("/transactions", "Transactions"),
+          ("/event-log", "Event log"),
+          ("/accounts/new", "New account"),
+        ] %}
+        <li><a href="{{ href }}"{% if request.url.path == href %} aria-current="page"{% endif %}>{{ label }}</a></li>
+        {%- endfor %}
+        <li><a class="nav-cta" href="/post-transaction"{% if request.url.path == "/post-transaction" %} aria-current="page"{% endif %}>{{ ui.icon("add") }}Post transaction</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+<main id="main" class="wrap" tabindex="-1">
+{% block content %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

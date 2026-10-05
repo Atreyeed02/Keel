@@ -1,9 +1,10 @@
 """
 HTTP hardening (app/security.py): the request body size limit and the
-security headers, including the posting form's CSP nonce.
+security headers, including the posting form's CSP nonce, and the pages'
+side of that policy: nothing loaded from another origin, no inline styles.
 
-All but the last test need no database: every request they make is answered,
-or refused, before one is touched.
+All but the last two tests need no database: every request they make is
+answered, or refused, before one is touched.
 """
 
 import json
@@ -13,15 +14,18 @@ import re
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.main as main_module
 from app.config import settings
-from app.db.schema import metadata
-from app.main import app
+from app.db.schema import accounts, metadata
+from app.main import BASE_DIR, app
 from app.observability import JsonFormatter, log
 from tests.support import reset_schema
 
 LIMIT = settings.max_request_body_bytes
+STATIC = BASE_DIR / "static"
 
 
 def _client():
@@ -164,21 +168,49 @@ async def test_a_413_carries_them_too(no_database):
     assert response.headers["x-frame-options"] == "DENY"
 
 
-async def test_pages_allow_only_their_own_scripts_tailwind_and_the_nonce(no_database):
+async def test_pages_allow_only_their_own_scripts_and_styles_and_the_nonce(no_database):
     async with _client() as client:
         first = await client.get("/accounts/new")
         second = await client.get("/accounts/new")
     csp = first.headers["content-security-policy"]
-    (script_src,) = (d for d in csp.split("; ") if d.startswith("script-src"))
-    nonce = re.fullmatch(
-        r"script-src 'self' 'nonce-([\w-]+)' https://cdn\.tailwindcss\.com", script_src
-    ).group(1)
+    directives = dict(d.split(" ", 1) for d in csp.split("; "))
+    nonce = re.fullmatch(r"'self' 'nonce-([\w-]+)'", directives["script-src"]).group(1)
     assert len(nonce) >= 16
-    # 'unsafe-inline' for styles only: the Tailwind Play CDN injects <style>
-    assert "'unsafe-inline'" not in script_src
-    assert "style-src 'self' 'unsafe-inline'" in csp
+    # keel.css is the only stylesheet: no style attributes, no <style> elements
+    assert directives["style-src"] == "'self'"
+    # nothing from another origin, and nothing inline without the nonce
+    assert "https:" not in csp
+    assert "'unsafe-inline'" not in csp
     # a new nonce per response
     assert second.headers["content-security-policy"] != csp
+
+
+@pytest.mark.parametrize(
+    "path, content_type",
+    [
+        ("/static/fonts/plus-jakarta-sans-latin.woff2", "font/woff2"),
+        ("/static/css/keel.css", "text/css; charset=utf-8"),
+        ("/static/js/post-transaction.js", "text/javascript; charset=utf-8"),
+    ],
+)
+async def test_static_files_are_served_with_their_types(no_database, path, content_type):
+    """Under nosniff a browser refuses a stylesheet or script served as anything else."""
+    async with _client() as client:
+        response = await client.get(path)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == content_type
+
+
+def test_the_stylesheet_points_only_at_files_keel_ships():
+    stylesheet = STATIC / "css" / "keel.css"
+    css = stylesheet.read_text(encoding="utf-8")
+    urls = re.findall(r"url\(([^)]*)\)", css)
+    assert urls, "keel.css should load the self-hosted fonts"
+    for url in urls:
+        url = url.strip("'\"")
+        assert "//" not in url and not url.startswith("data:"), url
+        assert (stylesheet.parent / url).resolve().is_file(), url
+    assert "@import" not in css
 
 
 async def test_the_api_docs_get_their_own_policy(no_database):
@@ -217,3 +249,62 @@ async def test_the_posting_forms_inline_script_carries_this_responses_nonce(data
     nonce = re.search(r"'nonce-([\w-]+)'", response.headers["content-security-policy"]).group(1)
     inline_scripts = re.findall(r"<script(?![^>]*\bsrc=)([^>]*)>", response.text)
     assert inline_scripts == [f' nonce="{nonce}"']
+
+
+async def test_pages_load_nothing_from_elsewhere_and_have_no_inline_styles(database):
+    """
+    The pages' half of the policy above. Every URL a page names is Keel's
+    own, and none has a style attribute or a <style> element, which
+    style-src 'self' would refuse. Every /static file a page names exists,
+    down to the icon's id in the sprite, so a typo cannot ship as a blank.
+    """
+    async with _client() as client:
+        for name, account_type in (("Cash", "asset"), ("Sales", "revenue")):
+            await client.post(
+                "/accounts", data={"name": name, "account_type": account_type, "currency": "USD"}
+            )
+        async with main_module.engine.connect() as conn:
+            ids = dict((await conn.execute(select(accounts.c.name, accounts.c.id))).all())
+        sale = {
+            "description": "Cash sale",
+            "account_id": [str(ids["Cash"]), str(ids["Sales"])],
+            "entry_type": ["debit", "credit"],
+            "amount": ["10.00", "10.00"],
+            "currency": ["USD", "USD"],
+        }
+        posted = await client.post("/post-transaction", data=sale)
+        assert posted.status_code == 302
+        pages = {
+            path: await client.get(path)
+            for path in (
+                "/",
+                "/transactions",
+                "/event-log",
+                "/post-transaction",
+                "/accounts/new",
+                posted.headers["location"],
+            )
+        }
+        # forms re-rendered with an error are pages too
+        pages["POST /accounts"] = await client.post("/accounts", data={"name": ""})
+        pages["POST /post-transaction"] = await client.post(
+            "/post-transaction", data={**sale, "amount": ["10.00", "9.00"]}
+        )
+
+    assert {path: r.status_code for path, r in pages.items()} == {
+        **{path: 200 for path in pages},
+        "POST /accounts": 422,
+        "POST /post-transaction": 422,
+    }
+    for path, response in pages.items():
+        html = response.text
+        assert not re.search(r"<style\b", html, re.IGNORECASE), path
+        assert not re.search(r"\sstyle\s*=", html, re.IGNORECASE), path
+        for url in re.findall(r"\s(?:src|href)=\"([^\"]*)\"", html):
+            assert url.startswith(("/", "#")) and not url.startswith("//"), (path, url)
+            if url.startswith("/static/"):
+                file, _, fragment = url.removeprefix("/static/").partition("#")
+                assert (STATIC / file).is_file(), (path, url)
+                if fragment:
+                    sprite = (STATIC / file).read_text(encoding="utf-8")
+                    assert f'id="{fragment}"' in sprite, (path, url)

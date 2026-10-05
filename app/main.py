@@ -1,3 +1,4 @@
+import mimetypes
 import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
@@ -85,12 +86,22 @@ app.include_router(accounts_api_router)
 app.include_router(transactions_api_router)
 register_api_error_handlers(app)
 BASE_DIR = Path(__file__).resolve().parent
+# StaticFiles takes types from the mimetypes module, which may not know .woff2
+# (python:3.12-slim ships no /etc/mime.types). The pages' fonts are woff2.
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 def _money(value: Decimal | None) -> str:
     return f"{(value or Decimal('0')):,.2f}"
+
+
+def _utc(value: datetime, seconds: bool = False) -> str:
+    """A timestamp as the pages show it: in UTC, e.g. "Oct 5, 2026 · 14:02 UTC"."""
+    value = value.astimezone(UTC)
+    clock = f"{value:%H:%M:%S}" if seconds else f"{value:%H:%M}"
+    return f"{value:%b} {value.day}, {value.year} · {clock} UTC"
 
 
 # Backslash is the conventional choice and what Postgres assumes by default,
@@ -157,6 +168,7 @@ def _transaction_rows():
 
 
 templates.env.filters["money"] = _money
+templates.env.filters["utc"] = _utc
 # A function, not a value, so the notice follows the setting at render time. The
 # pages get this one flag, never the settings object with its database URL.
 templates.env.globals["is_demo"] = lambda: settings.is_demo

@@ -1,1 +1,44 @@
-{% extends "base.html" %}{% block title %}Event log{% endblock %}{% block content %}<h1 class="text-3xl font-bold">Immutable event stream</h1><p class="my-4">{{ total }} events, newest first.</p><table class="w-full bg-white border text-left"><thead><tr><th>Created</th><th>Type</th><th>Aggregate</th><th>Event ID</th><th>Payload</th></tr></thead><tbody>{% for event in events %}<tr class="border-t align-top"><td class="p-2">{{ event.created_at }}</td><td>{{ event.event_type }}</td><td>{{ event.aggregate_type }} / {{ event.aggregate_id }}</td><td class="font-mono text-xs">{{ event.id }}</td><td><pre class="text-xs whitespace-pre-wrap">{{ event.payload|tojson(indent=2) }}</pre></td></tr>{% else %}<tr><td colspan="5" class="p-3">No events yet.</td></tr>{% endfor %}</tbody></table><nav class="mt-4 flex gap-4">{% if page > 1 %}<a class="underline" href="/event-log?page={{ page - 1 }}">Newer</a>{% endif %}{% if page * page_size < total %}<a class="underline" href="/event-log?page={{ page + 1 }}">Older</a>{% endif %}</nav>{% endblock %}
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Event log{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Event store</p>
+  <h1>Immutable event stream</h1>
+  <p class="lede">Every account and transaction is also recorded here as an event, in the same database transaction. The database refuses to change or delete an event, and the ledger's tables can be rebuilt from this history.</p>
+</div>
+
+<section class="card" aria-labelledby="events-heading">
+  <div class="card-head">
+    <h2 id="events-heading">Events</h2>
+    <p>{{ total }} events, newest first.</p>
+  </div>
+  <div class="table-scroll" role="region" aria-labelledby="events-heading" tabindex="0">
+    <table class="ledger">
+      <thead>
+        <tr><th scope="col">Created</th><th scope="col">Type</th><th scope="col">Aggregate</th><th scope="col">Event ID</th><th scope="col">Payload</th></tr>
+      </thead>
+      <tbody>
+        {% for event in events %}
+        <tr>
+          <td class="muted">{{ ui.when(event.created_at, seconds=True) }}</td>
+          <td><span class="badge badge-code">{{ event.event_type }}</span></td>
+          <td class="mono">{{ event.aggregate_type }} / {{ event.aggregate_id }}</td>
+          <td class="mono">{{ event.id }}</td>
+          <td><pre class="payload">{{ event.payload|tojson(indent=2) }}</pre></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">No events yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if page > 1 or page * page_size < total %}
+<nav class="pager" aria-label="Pages">
+  {% if page > 1 %}<a class="btn btn-secondary" href="/event-log?page={{ page - 1 }}">{{ ui.icon("arrow-back") }}Newer</a>{% endif %}
+  {% if page * page_size < total %}<a class="btn btn-secondary older" href="/event-log?page={{ page + 1 }}">Older{{ ui.icon("arrow-forward") }}</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

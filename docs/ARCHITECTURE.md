@@ -1089,22 +1089,43 @@ base.html
 └── {% block scripts %}   anything after </main>
 ```
 
-Three mechanics worth knowing:
+Mechanics worth knowing:
 
 **`{% block %}`** — a named hole a child fills.
 
-**`{% set %}` at child top level propagates to the parent.** Pages that
-need different chrome set a variable before the content block:
+**`_ui.html` holds the markup pages share**, as macros a page imports with
+`{% import "_ui.html" as ui %}`: an icon from the sprite, the debit/credit
+badge, the "Balanced" badge, and a UTC timestamp in a `<time>` element.
+`side("debit")` is the one place a debit or credit is drawn, and it never
+relies on colour alone: the badge carries an arrow and "Dr"/"Cr" (or the
+word), and screen readers hear "Debit" or "Credit".
 
-```jinja
-{% extends "base.html" %}{% set main_class = "max-w-5xl mx-auto p-8" %}
-```
+**The look is one hand-written stylesheet**, `static/css/keel.css`: design
+tokens as CSS custom properties, with a second set under
+`prefers-color-scheme: dark`, then base styles and a few components (card,
+badge, ledger table, button, field). It follows the "Academic Ledger"
+design from the Stitch project, re-stated as tokens; none of the generated
+markup is used. Every text/background pair meets WCAG AA in both themes.
+The fonts (Plus Jakarta Sans, JetBrains Mono; OFL 1.1, from Fontsource
+5.3.0, Latin and Latin Extended only) and the Material Symbols icons
+(Apache 2.0, one SVG sprite) are files under `static/`, with their
+licences beside them. **Templates may not use a `style` attribute or a
+`<style>` element**: the page CSP is `style-src 'self'` (§5.18), and a test
+checks every page for both.
 
-and `base.html` reads it with a fallback:
-
-```jinja
-<main class="{{ main_class|default('max-w-6xl mx-auto p-8') }}">
-```
+**Motion** carries over every animation the Stitch designs have on these
+pages, all in the "motion" section at the end of `keel.css`: 150 ms colour
+fades on links, buttons, nav links, fields and table rows; the posting
+button's hover lift; a status dot in the demo notice that pulses three times
+(Stitch's pulses forever); the amount field taking its line's colour on
+focus, through `:has()` on the line's own select; and a spinner on the
+posting button while the post is in flight. That last one is the only
+motion a script switches on, `static/js/post-transaction.js`, which also
+ignores a second click; without it the form posts the same. On desktops the
+header stays at the top with a frosted backdrop. Nothing loops forever or
+flashes, and under `prefers-reduced-motion: reduce` every animation and
+transition stops and the spinner is hidden. `tests/test_stylesheet.py`
+holds the stylesheet to both rules.
 
 **`{% block scripts %}` exists for a specific reason.** On
 `post_transaction.html`, the `<template id="line-template">` and the
@@ -1119,7 +1140,7 @@ sequence was empty. Used for "No accounts yet." fallbacks.
 
 **The demo notice.** With `ENVIRONMENT=demo`, `base.html` puts one line
 above the navigation on every page, a re-rendered form included: this is a
-public demo, anyone can write to it, and it resets periodically. The
+public demo, anyone can write to it, and the data resets nightly. The
 template calls `is_demo()`, a global `main.py` registers, rather than
 reading a value fixed at import, so the page follows the setting. It is
 given that one flag rather than the settings object, which holds the
@@ -1256,7 +1277,8 @@ workflow runs it every night (§5.13).
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
 | `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
-| `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the posting form's CSP nonce (§5.18) |
+| `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the page CSP naming no other origin and no inline styles; the posting form's CSP nonce; every page, error re-renders included, referencing only Keel's own files, each of which exists, and having no inline styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
+| `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
 | `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |
@@ -1571,28 +1593,32 @@ is outermost):
 | `Referrer-Policy` | `same-origin` | other sites never see which Keel URL a visitor came from |
 | `Content-Security-Policy` | below | limits what a page may load and run |
 
-The page policy allows scripts from Keel itself, from
-`https://cdn.tailwindcss.com`, and inline only with this response's nonce.
-A fresh nonce is made per request, stored in `request.state.csp_nonce`, and
-put on the posting form's one inline script. Styles need `'unsafe-inline'`,
-because the Tailwind Play CDN builds its CSS in the browser and injects it
-as `<style>` elements; without it the pages lose their styling. FastAPI's
-`/docs` (Swagger UI) and `/redoc` load their UI from jsDelivr and bootstrap
-it with an inline script FastAPI writes, so those two paths get a separate
-policy that allows that CDN and inline scripts.
+The page policy names no other origin. Scripts come from Keel itself (the
+posting form's `/static/js/post-transaction.js`), or inline only with this
+response's nonce: a fresh nonce is made per request,
+stored in `request.state.csp_nonce`, and put on the posting form's one
+inline script. Styles are `'self'` only. The stylesheet, fonts and icons
+are files under `/static` (§5.8), so the pages need nothing inline, and a
+`style` attribute or `<style>` element in a page would be refused. Fonts
+and the icon sprite are covered by `default-src 'self'`. FastAPI's `/docs`
+(Swagger UI) and `/redoc` load their UI from jsDelivr and bootstrap it with
+an inline script FastAPI writes, so those two paths get a separate policy
+that allows that CDN and inline scripts.
 
-Checked in headless Chrome, against the branch running on real data, over
-the DevTools protocol: every page (overview, transactions, event log, both
-forms, a transaction's detail, `/docs`, `/redoc`) loaded with no CSP
-violation, the Tailwind styles applied, Swagger UI and ReDoc rendered, and
-typing an amount into the posting form updated its live total. As a
-control, removing the nonce from the form's script made Chrome block it and
-the total stay at `0.00`.
+`main.py` registers `font/woff2` with `mimetypes` before mounting
+`/static`: StaticFiles takes its types from that module, which does not
+know `.woff2` without a system `mime.types`, and `python:3.12-slim` ships
+none.
 
-The Tailwind Play CDN is meant for development, not production: it ships
-the whole compiler to every visitor and is the reason styles need
-`'unsafe-inline'`. Building the CSS at image build time would remove both
-(§8).
+Checked in headless Chrome, over the DevTools protocol, against the branch
+running on seeded demo data: every page (overview, transactions, event log,
+both forms, a transaction's detail) in light and dark, at desktop and phone
+width, loaded with no CSP violation, console error or failed request, with
+both fonts loaded. Typing an amount into the posting form updated its live
+total, and the posting script's busy state ran. As controls, a style
+attribute, a `<style>` element and an un-nonced script injected into a page
+were all refused. With JavaScript turned off, the posting form still posted
+and redirected to the new transaction.
 
 ### 5.19 `app/ratelimit.py` — the write rate limit
 
@@ -1891,19 +1917,21 @@ scheduled workflow runs it every night (§5.13).
 
 **Templates** — shared `base.html`; the four original pages were
 refactored onto it with rendered output verified byte-identical, and
-every page added since was built on it directly.
+every page added since was built on it directly. The pages are styled by
+one hand-written stylesheet with light and dark themes and self-hosted
+fonts and icons, so they load nothing from another origin (§5.8, §5.18).
 
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 312 tests (§5.11). 211 run with no database at all: the
+**Testing** — 319 tests (§5.11). 217 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
 before the database is touched, the deployment configuration, the body
 limit and security headers, the proxy headers, the write rate limit, the
 demo notice's absence, the reset script's refusals, the database host
-check and the nightly reset's workflow. The other 101 are
+check and the nightly reset's workflow. The other 102 are
 Postgres-backed. They cover the pages, filters and pagination; idempotency,
 including concurrent duplicates and key retention; the database triggers
 against writes that bypass the app; atomic rollback; agreement between the
@@ -1915,7 +1943,7 @@ behaviour it covers broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"211 passed, 101 skipped" and is not a passing build. See the README for
+"217 passed, 102 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
@@ -1968,13 +1996,9 @@ snapshots, and no incremental catch-up of a projection from a known
 position. Fine at this size, and the first thing to change if it grows.
 While a rebuild runs, postings wait on its lock (§3.3).
 
-**7. The pages load Tailwind's Play CDN.** It ships the whole compiler to
-every visitor, is meant for development, and is why the CSP allows inline
-styles (§5.18). Building the CSS when the image is built would remove both.
-
 ### Missing interfaces
 
-**8. The JSON API is minimal.** It has what a client needs to create
+**7. The JSON API is minimal.** It has what a client needs to create
 accounts, post transactions safely and read one back (§5.16). It has no
 single-account read, no transaction listing, and no pagination:
 `GET /api/accounts` returns every account at once. There is no event-log

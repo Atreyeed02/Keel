@@ -1,1 +1,50 @@
-{% extends "base.html" %}{% block title %}Transaction{% endblock %}{% block content %}<h1 class="text-3xl font-bold">Transaction detail</h1><p class="my-2">{{ transaction.description or "Untitled transaction" }}</p><p class="font-mono text-sm">{{ transaction.id }} · {{ transaction.created_at }}</p><section class="grid md:grid-cols-2 gap-4 mt-6"><div class="bg-white border"><h2 class="p-3 bg-slate-100 font-bold">Debit entries</h2>{% for entry in debits %}<div class="p-3 border-t flex justify-between"><span>{{ entry.name }} <small>({{ entry.currency }})</small></span><strong>{{ entry.amount|money }}</strong></div>{% else %}<p class="p-3">No debit entries.</p>{% endfor %}<div class="p-3 font-bold text-right">Total {{ debit_total|money }}</div></div><div class="bg-white border"><h2 class="p-3 bg-slate-100 font-bold">Credit entries</h2>{% for entry in credits %}<div class="p-3 border-t flex justify-between"><span>{{ entry.name }} <small>({{ entry.currency }})</small></span><strong>{{ entry.amount|money }}</strong></div>{% else %}<p class="p-3">No credit entries.</p>{% endfor %}<div class="p-3 font-bold text-right">Total {{ credit_total|money }}</div></div></section><section class="mt-6 bg-white border p-4"><h2 class="font-bold">Linked event</h2>{% if event %}<p class="font-mono text-sm">{{ event.id }}</p><p>{{ event.event_type }} · {{ event.created_at }}</p>{% else %}<p>No event was found for this transaction.</p>{% endif %}</section>{% endblock %}
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Transaction{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Journal entry</p>
+  <h1>Transaction detail</h1>
+  <p class="lede">{{ transaction.description or "Untitled transaction" }}</p>
+  <p class="meta">{{ transaction.id }} · {{ ui.when(transaction.created_at) }}</p>
+</div>
+
+<div class="stack">
+  <div class="columns">
+    <section class="card" aria-labelledby="debits-heading">
+      <div class="card-head"><h2 id="debits-heading">{{ ui.side("debit", hidden=True) }}Debit entries</h2></div>
+      <ul class="entries">
+        {%- for entry in debits %}
+        <li><span>{{ entry.name }} <small class="mono muted">{{ entry.currency }}</small></span><strong>{{ entry.amount|money }}</strong></li>
+        {%- else %}
+        <li class="empty">No debit entries.</li>
+        {%- endfor %}
+      </ul>
+      <p class="entries-total"><span>Total</span><span class="num">{{ debit_total|money }}</span></p>
+    </section>
+    <section class="card" aria-labelledby="credits-heading">
+      <div class="card-head"><h2 id="credits-heading">{{ ui.side("credit", hidden=True) }}Credit entries</h2></div>
+      <ul class="entries">
+        {%- for entry in credits %}
+        <li><span>{{ entry.name }} <small class="mono muted">{{ entry.currency }}</small></span><strong>{{ entry.amount|money }}</strong></li>
+        {%- else %}
+        <li class="empty">No credit entries.</li>
+        {%- endfor %}
+      </ul>
+      <p class="entries-total"><span>Total</span><span class="num">{{ credit_total|money }}</span></p>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="event-heading">
+    <div class="card-head"><h2 id="event-heading">Linked event</h2></div>
+    <div class="card-body">
+      {% if event %}
+      <p class="mono">{{ event.id }}</p>
+      <p class="meta"><span class="badge badge-code">{{ event.event_type }}</span> · {{ ui.when(event.created_at, seconds=True) }}</p>
+      {% else %}
+      <p>No event was found for this transaction.</p>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

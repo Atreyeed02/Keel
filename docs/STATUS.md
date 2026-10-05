@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Eleven PRs are merged into `main`, with regular merge commits, and their
+Thirteen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -26,6 +26,8 @@ branches deleted:
 | [#9](https://github.com/Atreyeed02/Keel/pull/9) | `docs/rate-limit-verified` | `d1cf9f3` |
 | [#10](https://github.com/Atreyeed02/Keel/pull/10) | `docs/contributing` | `66cd17d` |
 | [#11](https://github.com/Atreyeed02/Keel/pull/11) | `chore/scheduled-demo-reset` (2 commits) | `a083641` |
+| [#12](https://github.com/Atreyeed02/Keel/pull/12) | `docs/status-scheduled-reset` | `2cfdc49` |
+| [#13](https://github.com/Atreyeed02/Keel/pull/13) | `chore/pin-workflow-actions` | `deb637e` |
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
@@ -52,6 +54,34 @@ taken. The dry run counted an empty ledger, `--yes` restored 8 accounts
 and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
+
+**`feat/ui-foundation`**, the first phase of the UI redesign, replaces the
+Tailwind CDN with Keel's own stylesheet (light and dark themes,
+self-hosted fonts and icons) and tightens the page CSP to name no other
+origin and allow no inline styles (§2, "HTTP"). Checked on that branch; it
+adds no migration and no dependency:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **319 tests** |
+| `pytest` (no database available) | 217 passed, 102 skipped |
+| `pytest` (local Postgres 16) | 319 passed |
+| Headless Chrome over the DevTools protocol, seeded demo data | all six pages, in light and dark, at 1280 px and 390 px: no CSP violation, console error, failed request or horizontal page scroll, and both fonts loaded. Typing an amount into the posting form updated its live total. Injected into a page, a style attribute, a `<style>` element and an un-nonced script were all refused |
+| Keyboard | the first Tab shows the skip link; focus rings visible on links, buttons and fields in both themes |
+| Contrast | every text/background pair in both themes at least 4.5:1, control borders and the focus ring at least 3:1 |
+| Motion, read from computed styles | normal: 150 ms fades on links, buttons, fields and table rows; the posting button lifts 2 px on hover; the status dot pulses 3 times; the busy spinner turns 12 times, then the button resets on back navigation; the amount field takes its line's colour on focus in both themes. `prefers-reduced-motion: reduce`: every duration 0 s, no pulse, no lift, no spinner |
+| JavaScript off | every page renders, and the posting form still posts and redirects to the new transaction |
+
+**#13, `chore/pin-workflow-actions`**, pins every action by commit
+(checkout v7.0.1, setup-python v7.0.0) and runs every job on
+`ubuntu-24.04` (§2, "CI"). Checked on that branch and on `main`:
+
+| Check | Result |
+|---|---|
+| CI on the PR | passed on `ubuntu-24.04`, 312 tests, 0 annotations on both jobs: the Node 20 warning and the Ubuntu 26 notice are gone |
+| "Cloudflare ranges" run #1, dispatched on the branch (`dc210ec`) | passed, 0 annotations. It was the workflow's first-ever run: its Monday 03:17 UTC slot on 2026-10-05 had not fired by 03:54 UTC |
+| Run #2, dispatched on `main` (`deb637e`) after the merge | passed in 22 s, 0 annotations, matching Cloudflare's 22 published ranges |
 
 **#11, `chore/scheduled-demo-reset`**, schedules that reset daily on GitHub
 Actions (§2, "The demo itself"). Checked on that branch, then on the live
@@ -94,8 +124,8 @@ Checked for #5 (deploy readiness), at migration head `c2e8f4a61b07`:
 | Storage per write, Postgres 16 | account ≈ 1.1 KB; two-entry transaction ≈ 1.7 KB; largest transaction the body limit admits (470 entries) ≈ 91 KB. The source of the default caps. |
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
-The 101 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 211 tests
+The 102 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 217 tests
 means about a third of the suite never executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -170,13 +200,23 @@ and `alembic check` finds no difference in CI.
 
 ### HTTP — six server-rendered pages
 
-All in `app/main.py`, Jinja2 + Tailwind (CDN) on a shared `base.html`:
+All in `app/main.py`, Jinja2 on a shared `base.html`:
 overview with per-account balances and normal-side signs, paginated
 event log, filterable + paginated transaction list, posting form,
 transaction detail with debit/credit columns, account creation. Plus
 `/health`, which reports `degraded` rather than raising. The
 `/transactions` date filters are UTC days, matching the UTC timestamps
 the pages show, whatever time zone the database session uses.
+
+The pages are styled by one hand-written stylesheet,
+`app/static/css/keel.css`, with light and dark themes that follow the
+visitor's system setting, and self-hosted fonts and icons. Nothing loads
+from another origin, so the page CSP is `style-src 'self'` with no CDN
+(`ARCHITECTURE.md` §5.8, §5.18). Debits and credits are never shown by
+colour alone. The Stitch designs' animations are kept, in CSS, and all
+stop for visitors who ask their system for reduced motion. This is the
+first phase of a redesign, one PR per phase;
+§6 has the rest.
 
 ### JSON API — four endpoints
 
@@ -241,12 +281,14 @@ account-creation → posting → overview flow through the container. It
 pins `COMPOSE_FILE` so it cannot accidentally pick up the dev bind-mount
 and test host code instead of the image. The dev bind mount itself sets
 `create_host_path: false`, so a checkout without `./app` refuses to start
-instead of mounting an empty directory over the image. On the
+instead of mounting an empty directory over the image.
 Since #5, `lint-and-test` also runs `pip-audit --strict`, and `docker-smoke`
 fails if the container runs as root. A third, scheduled workflow, "Cloudflare
 ranges", compares `app/client_address.py`'s copy of Cloudflare's address
 ranges with the published lists every Monday. A fourth, "Demo
-maintenance", resets the public demo every night (below).
+maintenance", resets the public demo every night (below). Since #13, all
+three workflow files pin their actions by commit and run every job on
+`ubuntu-24.04`.
 
 ### Deploy readiness — merged (#5), live on Render
 
@@ -283,7 +325,7 @@ What a public demo on a container host needs, with the README's
   database from filling however many clients write. The defaults were sized
   from measured bytes per write.
 - **The demo itself.** With `ENVIRONMENT=demo`, every page says it is a
-  public demo that resets periodically, and
+  public demo whose data resets nightly, and
   `python -m scripts.reset_demo_data --yes` restores the demo data. It
   refuses in any other environment and counts only without `--yes`. It is
   the one sanctioned exception to the append-only log, done in a single
@@ -338,7 +380,12 @@ Every route is public. Fine for a demo, disqualifying otherwise.
 
 **3. Round out the JSON API**
 No single-account read, no transaction listing, no pagination and no
-event-log endpoint yet (`ARCHITECTURE.md` §8 item 8).
+event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
+
+**4. The UI redesign, phases 2–7**
+One PR each, in the order §6 lists. Each keeps every page working, is
+checked in light and dark at desktop and phone width, and claims nothing
+the ledger does not do.
 
 **Done since the previous version of this list:** deploy readiness
 (host-style configuration, a migrate-then-serve start command, a non-root
@@ -377,7 +424,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 211 of 312 tests:
+you are running 217 of 319 tests:
 
 ```bash
 docker compose up -d db
@@ -416,13 +463,38 @@ python -m scripts.reset_demo_data --yes
 
 ## 6. Design assets
 
-`stitch_keel_ledger_audit_console/` holds a generated design kit —
-`DESIGN.md` (a full Material-style colour and typography token set,
-"Audit Ledger Protocol") plus per-screen `code.html` and `screen.png`
-mockups for the overview, event log, posting voucher, T-account detail
-and logo.
+The design reference is kept outside the repository: the Stitch project
+"Keel Educational Accounting Ledger", whose design system ("Academic
+Ledger") and screens for the overview, transactions, posting form,
+account detail, event log, a Learn page and the logo set the look.
+`keel.css` re-states its palette, type and spacing as tokens; none of its
+generated markup, Tailwind classes, Google Fonts or remote images is used.
+An earlier generated kit ("Audit Ledger Protocol") is also kept outside
+the repository and is superseded.
 
-**The live templates do not use these tokens.** They are plain Tailwind
-utility classes. The kit is a reference for a future visual pass, not a
-system the app currently implements — worth knowing before assuming the
-mockups describe what renders.
+**The mockups are a visual reference, not a specification.** They show
+things Keel does not have and will not claim: hashes and hash chains,
+actors with email addresses, account codes, sub-accounts, exports, and an
+unbalanced transaction in the event log, which Keel's invariant makes
+impossible. Every figure on a page comes from the database.
+
+The redesign ships one PR per phase:
+
+1. **Foundation** (`feat/ui-foundation`): the stylesheet, light and dark
+   tokens, fonts, icons, logo, header, motion, and all six pages
+   restyled.
+2. **Learn** (`/learn`) and inline definitions of debit, credit, normal
+   side and the account types, linking to it.
+3. **Posting form**: live totals, "out of balance by X" until they match,
+   rejections that explain the rule broken, the script moved to a file and
+   the CSP nonce removed.
+4. **Overview**: the accounting equation per currency, and a guided "try
+   it" path from the demo notice.
+5. **Transactions list and detail.**
+6. **Event log** as a timeline.
+7. **Account detail**, a T-account per account.
+
+Each phase brings the Stitch animations of the elements it builds (the
+definition popovers' fade, card hovers, the balance banner's change of
+state, bar widths), under the same rules: CSS first, nothing endless, all
+of it off under reduced motion, and every page working without JavaScript.

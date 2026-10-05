@@ -15,13 +15,14 @@ length (chunked) is cut off with a 413 as soon as it passes the limit. Under
   framed, so none can be used for clickjacking;
 - `Referrer-Policy: same-origin`: another site never learns which Keel URL
   a visitor came from;
-- a `Content-Security-Policy`. Pages may load scripts only from Keel itself,
-  from the Tailwind CDN they use, and inline when the script carries this
-  request's nonce (`request.state.csp_nonce`), which the posting form's
-  script does. Styles allow `'unsafe-inline'`, because the Tailwind Play CDN
-  builds its CSS in the browser and injects it as `<style>` elements. FastAPI's
-  `/docs` and `/redoc` pages load their UI from a CDN and bootstrap it with an
-  inline script they generate, so they get a policy of their own.
+- a `Content-Security-Policy`. Pages load everything from Keel itself: the
+  stylesheet, fonts and icons are under /static, and nothing comes from
+  another origin. Inline scripts run only when they carry this request's
+  nonce (`request.state.csp_nonce`), which the posting form's script does.
+  Styles are `'self'` only, so a style attribute or a `<style>` element in a
+  page is refused. FastAPI's `/docs` and `/redoc` pages load their UI from a
+  CDN and bootstrap it with an inline script they generate, so they get a
+  policy of their own.
 """
 
 import json
@@ -33,8 +34,8 @@ from app.api.errors import API_PREFIX, error_body
 
 PAGE_CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com; "
-    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'nonce-{nonce}'; "
+    "style-src 'self'; "
     "img-src 'self' data:; "
     "connect-src 'self'; "
     "object-src 'none'; "
