@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: ["main"]
 
+# The runner image and the actions are pinned, so neither changes under
+# these jobs except through a change to this file.
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,10 +26,10 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -70,7 +72,7 @@ jobs:
   # nothing verified it. Deliberately a separate job from lint-and-test:
   # a red build here means "the image is broken", not "a test failed".
   docker-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # This job exists to prove the IMAGE is self-contained, so it must not
     # pick up docker-compose.override.yml — that file bind-mounts the host's
@@ -81,7 +83,7 @@ jobs:
     env:
       COMPOSE_FILE: docker-compose.yml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build images
         run: docker compose build
