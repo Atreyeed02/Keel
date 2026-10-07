@@ -134,8 +134,9 @@ async def test_each_page_defines_its_terms_once_and_every_reference_resolves(dat
         }
 
     expected = {
-        # every term but two: debit, credit, trial balance, normal side, the five types
-        "/": set(GLOSSARY) - {"balanced", "event"},
+        # every term but "event", which only the demo's "try it" steps use
+        # (tests/test_overview.py)
+        "/": set(GLOSSARY) - {"event"},
         "/transactions": {"debit", "credit"},
         "/post-transaction": {"debit", "credit", "balanced"},
         "/event-log": {"event"},

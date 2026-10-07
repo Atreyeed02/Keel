@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-05.** A snapshot of what is actually built, what is
+**As of 2026-10-08.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Fifteen PRs are merged into `main`, with regular merge commits, and their
+Sixteen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -30,6 +30,17 @@ branches deleted:
 | [#13](https://github.com/Atreyeed02/Keel/pull/13) | `chore/pin-workflow-actions` | `deb637e` |
 | [#14](https://github.com/Atreyeed02/Keel/pull/14) | `feat/ui-foundation` | `16006d3` |
 | [#15](https://github.com/Atreyeed02/Keel/pull/15) | `feat/ui-learn` | `4484adc` |
+| [#16](https://github.com/Atreyeed02/Keel/pull/16) | `feat/ui-posting-form` | `370e904` |
+
+One commit reached `main` without a PR: `7bf196e`, "Update README.md"
+(2026-10-07), an edit saved in GitHub's web editor that changed no file.
+Its tree is identical to its parent's, `4484adc`.
+
+**`main` is protected** by a repository ruleset, "Protect main", with no
+bypass for anyone: every change arrives by pull request, CI's
+`lint-and-test` and `docker-smoke` must both pass first, and the branch
+cannot be force-pushed or deleted. The ruleset requires no approving
+review; the owner approves each merge.
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
@@ -57,12 +68,33 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-posting-form`**, the redesign's third phase, rebuilds the posting
+**`feat/ui-overview`**, the redesign's fourth phase, opens the overview with
+the accounting equation in each currency, and on the demo adds three "try
+it" steps, linked from the demo notice, that open the posting form filled
+in (§2, "HTTP"). Checked on that branch; it adds no migration and no
+dependency:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **370 tests** |
+| `pytest` (no database available) | 252 passed, 118 skipped |
+| `pytest` (local Postgres 16) | 370 passed |
+| New tests fail without their change | 9 deliberate breaks, one at a time, each failed a test: the steps or the notes shown outside the demo (on the overview, the form's GET, its refusal), the hidden `try` field dropped, the notice's link dropped, currencies in reverse order, a currency without entries shown, the newest account of a name used, `holds` always true |
+| Headless Chrome, seeded demo data | all seven pages, in light and dark, at 1280 px and 390 px: no CSP violation, console error, failed request, or page wider than the screen. An injected style attribute, `<style>` and inline script were refused |
+| The equation | EUR, then USD: `1,800.00 = 0.00 + 0.00 + (1,800.00 − 0.00)` and `43,643.50 = 10,500.00 + 25,000.00 + (14,450.00 − 6,306.50)`, both "Holds", the same sums `/learn` writes out. Four cards to a row on a desktop; stacked on a phone, the operators between them |
+| The steps | each opens the form filled in, with its note and the panel as expected: 1, "Balanced ✓"; 2, "Out of balance by 2.00 USD.", Post `aria-disabled`; 3, "Out of balance in 2 currencies." with the no-conversion sentence. The notice's link lands on the steps. Without JavaScript, "Add line" keeps the note. Posting step 1 lowers Assets and Revenue − Expenses by 12.00, and both currencies still hold |
+| Terms | the demo's overview defines every glossary term once, the five types in the formula; outside the demo, all but "event" |
+| Contrast | the new pairs at least 4.97:1 in both themes |
+| Motion | the equation cards fade in a background under the pointer in 150 ms; under reduced motion, 0 s |
+
+**#16, `feat/ui-posting-form`**, the redesign's third phase, rebuilds the posting
 form: every refusal explains the rule broken and how to fix it, linked to
 `/learn`; a live balance panel per currency; add and remove without
 JavaScript; the script moved to a file and the CSP nonce removed; uvicorn's
 access log off so query strings are never logged (§2, "HTTP"). Checked on
-that branch; it adds no migration and no dependency:
+that branch, then on the live site after merging; it adds no migration and no
+dependency:
 
 | Check | Result |
 |---|---|
@@ -76,6 +108,7 @@ that branch; it adds no migration and no dependency:
 | JavaScript off | add and remove redraw the form with what was typed; a rejected post shows the summary and the panel |
 | Refusals before the app | the write limit gives a form a page with the wait in seconds and `Retry-After`; the API's 429 body is unchanged |
 | Motion | the banner fades between its states in 150 ms; under reduced motion, 0 s |
+| Live, on `370e904`, read-only (GET requests only; the browser failed any other request before sending it, and none was attempted) | all seven pages and `/health` send exactly `script-src 'self'`, with no nonce, and `style-src 'self'`, `nosniff`, `DENY` and `same-origin`; no page has an inline script, `<style>` or style attribute. The 12 static files are byte-identical to the commit, and the panel's sentences match `PANEL_TEXT`. 7 pages in light and dark at 1280 px and 390 px (28 renders): no CSP violation, console error or failed request, fonts and theme applied, no page wider than the screen; an injected style attribute, `<style>` and inline script were refused. The panel behaves as on the branch: out of balance, Post `aria-disabled`, focusable and described by the reason; pressing it or Enter while out of balance sends nothing, moves the focus to the banner and announces it; 0.10 + 0.20 against 0.30 balances; the EUR fill, the no-conversion sentence, the line hints, add and remove, with and without JavaScript; a 150 ms fade, 0 s under reduced motion. Not checked live, because each needs a POST: the server's refusals (the form's problem summary, 409, 429, 413) |
 
 **#15, `feat/ui-learn`**, the redesign's second phase, adds `/learn` (how
 double-entry works, with worked examples from the demo's own data) and
@@ -165,8 +198,8 @@ Checked for #5 (deploy readiness), at migration head `c2e8f4a61b07`:
 | Storage per write, Postgres 16 | account ≈ 1.1 KB; two-entry transaction ≈ 1.7 KB; largest transaction the body limit admits (470 entries) ≈ 91 KB. The source of the default caps. |
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
-The 110 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 244 tests
+The 118 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 252 tests
 means about a third of the suite never executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -242,8 +275,8 @@ and `alembic check` finds no difference in CI.
 ### HTTP — seven server-rendered pages
 
 All in `app/main.py`, Jinja2 on a shared `base.html`:
-overview with per-account balances and normal-side signs, paginated
-event log, filterable + paginated transaction list, posting form,
+overview with the accounting equation per currency, per-account balances
+and normal-side signs, paginated event log, filterable + paginated transaction list, posting form,
 transaction detail with debit/credit columns, account creation, and
 `/learn`, which explains double-entry with the demo's own data and needs
 no database. Plus
@@ -264,7 +297,10 @@ form shows a live balance per currency, and when it refuses a transaction it
 says what went wrong, why the rule exists and how to fix it, by line
 (`app/posting_messages.py`); without JavaScript, "Add line" and "Remove"
 redraw the form. Every script is a file under `/static/js`, so the CSP is
-`script-src 'self'` with no nonce, and no log records a query string. This is
+`script-src 'self'` with no nonce, and no log records a query string. The
+overview opens with the accounting equation in each currency
+(`app/overview.py`); on the demo, three "try it" steps, linked from the
+demo notice, open the posting form filled in, with a note for each. This is
 a redesign done one PR per phase; §6 has the rest.
 
 ### JSON API — four endpoints
@@ -338,6 +374,8 @@ ranges with the published lists every Monday. A fourth, "Demo
 maintenance", resets the public demo every night (below). Since #13, all
 three workflow files pin their actions by commit and run every job on
 `ubuntu-24.04`.
+Both jobs are required checks: the "Protect main" ruleset (§1) merges
+nothing into `main` until they pass.
 
 ### Deploy readiness — merged (#5), live on Render
 
@@ -536,12 +574,12 @@ The redesign ships one PR per phase:
 2. **Learn** (#15, merged): `/learn`, and inline definitions of
    debit, credit, normal side, balanced, trial balance, the account types
    and event, each linking to its section.
-3. **Posting form** (`feat/ui-posting-form`): a live balance panel per
+3. **Posting form** (#16, merged): a live balance panel per
    currency, "out of balance by X" until it balances, refusals that
    explain the rule broken, add and remove without JavaScript, the script
    moved to a file and the CSP nonce removed.
-4. **Overview**: the accounting equation per currency, and a guided "try
-   it" path from the demo notice.
+4. **Overview** (`feat/ui-overview`): the accounting equation per
+   currency, and a guided "try it" path from the demo notice.
 5. **Transactions list and detail.**
 6. **Event log** as a timeline.
 7. **Account detail**, a T-account per account.

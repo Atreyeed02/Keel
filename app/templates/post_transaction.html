@@ -44,6 +44,14 @@
   <p class="lede">Each line {{ ui.term("debit", "debits") }} or {{ ui.term("credit", "credits") }} one account. The transaction posts only if it is {{ ui.term("balanced", "balanced") }}: its debits equal its credits in each currency.</p>
 </div>
 
+{% if try_note %}
+{#- One of the overview's "try it" steps (app/overview.try_note). -#}
+<div class="alert alert-note try-note" id="try-note">
+  {{ ui.icon("info") }}
+  <p>{{ try_note.text }} <a class="learn-link" href="/#try-it">Back to the steps{{ ui.icon("arrow-forward") }}</a></p>
+</div>
+{% endif %}
+
 {% if problems %}
 {%- set summary = problems|unique(attribute="title")|list %}
 <div role="alert" class="alert alert-error problem-summary" id="problems" tabindex="-1">
@@ -64,6 +72,9 @@
       otherwise be line 1's "Remove": this one comes first, and posts. -#}
   <button type="submit" class="default-submit" tabindex="-1" aria-hidden="true">Post transaction</button>
   <input type="hidden" name="submission_key" value="{{ submission_key }}">
+  {%- if try_note %}
+  <input type="hidden" name="try" value="{{ try_note.number }}">
+  {%- endif %}
   <label class="field">
     <span class="field-label">Description</span>
     <input class="input" name="description" maxlength="512" value="{{ description or '' }}">

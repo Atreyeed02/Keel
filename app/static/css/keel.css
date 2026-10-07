@@ -1890,12 +1890,174 @@ ul.sides {
   color: inherit;
 }
 
+/* --- overview ------------------------------------------------------------------------ */
+
+/* the demo notice's "Try it" link, in the notice's own colour */
+.try-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.try-link .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* the accounting equation, one row of cards per currency */
+.equation > * + * {
+  margin-top: var(--space-md);
+}
+
+.eq-currency {
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+.eq-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.eq-head h3 {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+}
+
+/* on a phone the cards stack, each operator on its own line between them */
+.eq-row {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+@media (min-width: 900px) {
+  .eq-row {
+    grid-template-columns:
+      minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+}
+
+.eq-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+}
+
+/* a card takes a background under the pointer (see "motion") */
+.eq-card:hover {
+  background: var(--hover);
+}
+
+.eq-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs) var(--space-sm);
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+}
+
+.eq-value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.75rem;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.eq-caption {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.eq-op {
+  align-self: center;
+  justify-self: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.75rem;
+}
+
+.eq-sum {
+  margin-top: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.eq-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: 0.75rem var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.eq-note > .icon {
+  flex: none;
+  color: var(--primary);
+}
+
+/* the demo's "try it" steps */
+.try-steps {
+  margin: var(--space-md) 0 0;
+  padding-left: 1.25rem;
+}
+
+.try-steps li + li {
+  margin-top: var(--space-md);
+}
+
+.try-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.try-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+  margin-top: var(--space-md);
+}
+
 /* --- motion ---------------------------------------------------------------------------
    Every animation in Keel is here, carried over from the Stitch designs:
    their colour fades on hover and focus, the hover lift on the posting
    button, the pulsing status dot, the spinner while a post is in flight, a
    term's card fading in, the Learn page's hover shadows on its cards, and
-   the posting form's balance banner fading between its states.
+   the posting form's balance banner fading between its states, and the
+   overview's equation cards fading in a background under the pointer.
    Rules for this section:
    - nothing loops forever: the dot pulses three times, the spinner stops
      after twelve turns;
@@ -1928,6 +2090,12 @@ a,
 .line {
   transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease),
     color var(--fast) var(--ease);
+}
+
+/* the equation's cards fade in a background under the pointer, as Stitch's
+   equation cards do (transition-colors) */
+.eq-card {
+  transition: background-color var(--fast) var(--ease);
 }
 
 /* the account-type cards lift their shadow under the pointer (Stitch's

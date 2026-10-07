@@ -53,6 +53,7 @@ from app.observability import (
     log_transaction_rejected,
     request_context_middleware,
 )
+from app.overview import equations, try_note, try_steps
 from app.posting_messages import (
     ALREADY_POSTED,
     PANEL_TEXT,
@@ -285,6 +286,9 @@ async def read_overview(request: Request):
         request=request,
         name="overview.html",
         context={
+            "equations": equations(balances),
+            # only the demo invites visitors to post its examples
+            "try_steps": try_steps(balances) if settings.is_demo else None,
             "accounts_by_type": grouped,
             "totals_by_currency": totals,
             "recent_transactions": recent,
@@ -455,6 +459,7 @@ async def read_post_transaction(
     currency: list[str] = Query([]),
     add_line: str | None = Query(None),
     remove_line: int | None = Query(None),
+    try_step: str | None = Query(None, alias="try"),
 ):
     """
     The posting form. With JavaScript, "Add line" and "Remove" work in the
@@ -464,6 +469,10 @@ async def read_post_transaction(
     limit. The typed values ride in the query string, which no log records:
     request.completed logs the path (app/observability.py), and uvicorn's
     access log is off (app/serve.py).
+
+    On the demo, `?try=1`, 2 or 3 is one of the overview's "try it" steps
+    (app/overview.py): the form shows its note, and keeps it while the form
+    is redrawn or refused.
     """
     lines, _ = _form_lines(account_id, entry_type, amount, currency)
     if add_line is not None:
@@ -472,7 +481,11 @@ async def read_post_transaction(
         del lines[remove_line - 1]
     context = await _form_context(lines)
     context.update(
-        {"description": description, "submission_key": submission_key or str(uuid.uuid4())}
+        {
+            "description": description,
+            "submission_key": submission_key or str(uuid.uuid4()),
+            "try_note": try_note(try_step) if settings.is_demo else None,
+        }
     )
     return templates.TemplateResponse(
         request=request, name="post_transaction.html", context=context
@@ -488,6 +501,7 @@ async def submit_post_transaction(
     entry_type: list[str] = Form([]),
     amount: list[str] = Form([]),
     currency: list[str] = Form([]),
+    try_step: str | None = Form(None, alias="try"),
 ):
     """
     Post a transaction from the form. The domain decides: EntryInput per
@@ -505,7 +519,14 @@ async def submit_post_transaction(
         context: dict[str, Any] | None = None,
     ):
         context = context or await _form_context(lines)
-        context.update({"problems": problems, "description": description, "submission_key": key})
+        context.update(
+            {
+                "problems": problems,
+                "description": description,
+                "submission_key": key,
+                "try_note": try_note(try_step) if settings.is_demo else None,
+            }
+        )
         return templates.TemplateResponse(
             request=request, name="post_transaction.html", context=context, status_code=status_code
         )
