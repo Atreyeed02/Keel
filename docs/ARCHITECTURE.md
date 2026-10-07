@@ -1061,22 +1061,38 @@ redirects `302` to `/`. On `InvalidAccountError`, re-renders the form
 with the submitted values preserved and status **422**.
 
 **`GET /post-transaction` / `POST /post-transaction`** — the posting form.
-FastAPI receives repeated form fields as lists:
+FastAPI receives repeated form fields as lists, each defaulting to empty:
 
 ```python
-account_id: list[str] = Form(...),
-entry_type: list[str] = Form(...),
-amount:     list[str] = Form(...),
-currency:   list[str] = Form(...),
+account_id: list[str] = Form([]),
+entry_type: list[str] = Form([]),
+amount:     list[str] = Form([]),
+currency:   list[str] = Form([]),
 ```
 
-zipped with `strict=True` (Python 3.10+) so mismatched lengths raise
-rather than silently truncating. Then validation, then
-`post_transaction_once` (§4) inside `engine.begin()`. The handler maps
-its outcomes to HTTP: `EntryAccountError` becomes the 422 form,
-`IdempotencyConflictError` a 409, and success a 302. After the commit it
-logs `transaction.posted` or `transaction.replayed` through the shared
-helpers (§5.15).
+`_form_lines` pairs them into one dict per line with `zip_longest`, so a
+request whose lists don't line up comes back as the form saying "Some
+lines arrived incomplete" (a 422) rather than a 500. The domain decides:
+`EntryInput` per line, `validate_description`, `assert_balanced`, then
+`post_transaction_once` (§4) inside `engine.begin()`. Every line is checked
+before anything is refused, so the form reports all its problems at once.
+`app/posting_messages.py` words each refusal for a person (what went
+wrong, why the rule exists, how to fix it, and the `/learn` section that
+explains it) and nothing else: it decides nothing. `EntryAccountError`
+becomes a 422 naming the line and the account; `LedgerFullError` a 409;
+`IdempotencyConflictError` a 409 form linking to what the key already
+posted and carrying a new key, so posting again records a second
+transaction. Success is a 302 to the transaction, with `?already=1` on a
+replay, which the detail page turns into an "Already posted." notice.
+After the commit it logs `transaction.posted` or `transaction.replayed`
+through the shared helpers (§5.15).
+
+`GET` draws the form, and takes the same fields plus `add_line` or
+`remove_line`: without JavaScript, "Add line" and "Remove" are submit
+buttons with `formmethod="get"` that come back here with what was typed,
+and the form is drawn with a line more or fewer, never fewer than two.
+Nothing is posted, and a GET is not counted by the write limit. The typed
+values travel in the query string, which no log records (§5.15).
 
 **`GET /transaction-detail/{id}`** — loads the transaction and its
 entries with their account names through `transaction_with_entries`
@@ -1134,6 +1150,33 @@ header stays at the top with a frosted backdrop. Nothing loops forever or
 flashes, and under `prefers-reduced-motion: reduce` every animation and
 transition stops and the spinner is hidden. `tests/test_stylesheet.py`
 holds the stylesheet to both rules.
+
+**The posting form** (`post_transaction.html`, `static/js/post-transaction.js`).
+Each line is a `<fieldset>` with a visually hidden legend ("Line 2") and
+a visible number; a problem is marked on its field (`aria-invalid`,
+`aria-describedby` to the message under the line) and listed in the
+summary at the top, which links to the line. The balance panel is drawn
+by the server from the lines (`posting_messages.balance_panel`): a
+banner, and debits, credits and difference per currency. The page hands
+the same sentences (`PANEL_TEXT`) to the script as a data attribute, so the
+panel says the same things as it follows every keystroke. The script
+counts in whole cents with `BigInt`, never floating point; fills in a
+line's currency when its account is chosen; hints at a line whose
+currency differs from its account's, or whose amount the server would
+refuse; and while anything is out of balance gives Post
+`aria-disabled` and the reason as its description, so it stays
+focusable and pressing it moves the focus to the banner instead of
+posting. Screen readers hear the banner's state through a polite live
+region, 750 ms after typing stops and only when it changed. A hidden copy
+of Post is the form's first submit button, so Enter in a field posts
+rather than pressing line 1's "Remove". New motion, under the same
+rules: the banner fades between its states, as Stitch's status banner
+does, and a line's row fades in its hover background.
+
+**Text hidden for screen readers stays inside its card.** `.sr-only` is
+absolutely positioned, and with no positioned ancestor it escaped the
+card's `overflow: hidden` and widened the page on a phone; `.card` and
+`.table-scroll` are `position: relative` for that reason.
 
 **Terms are defined where the pages use them.** `{{ ui.term("debit",
 "debits") }}` renders the word as a button, dotted-underlined like an
@@ -1301,8 +1344,9 @@ workflow runs it every night (§5.13).
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
 | `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
-| `test_hardening.py` | mostly no | the body size limit, declared and chunked; security headers; the page CSP naming no other origin and no inline styles; the posting form's CSP nonce; every page, error re-renders included, referencing only Keel's own files, each of which exists, and having no inline styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
+| `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
 | `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
+| `test_posting_form.py` | partly | every refusal of the posting form worded by its rule, from the domain's own errors; the balance panel as the server draws it, per currency; uneven or missing lines a 422; all of a form's problems at once, each marked on its line; the demo's wording; a resubmission landing on the transaction with "Already posted."; add and remove without JavaScript, not counted as writes; typed values never logged (§5.7, §5.8, §5.15) |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
@@ -1476,6 +1520,12 @@ no metrics, no tracing.
 - `configure_logging()` attaches the handler to the `keel` logger only,
   with `propagate = False` so the lines stay out of uvicorn's own
   handlers. Level comes from `LOG_LEVEL` (default `INFO`).
+- `request.completed` is the one line per request: `app/serve.py` runs
+  uvicorn with `access_log=False`. It logs the path and never the query
+  string; uvicorn's access line would log the whole request line, and the
+  posting form's no-JavaScript "Add line" and "Remove" carry what was
+  typed in theirs, as the transactions search carries its terms. A test
+  checks that a typed description never reaches the log.
 
 What gets logged, always after the commit, so a line never describes a
 write that rolled back. The ledger events go through `log_account_created`,
@@ -1618,12 +1668,11 @@ is outermost):
 | `Referrer-Policy` | `same-origin` | other sites never see which Keel URL a visitor came from |
 | `Content-Security-Policy` | below | limits what a page may load and run |
 
-The page policy names no other origin. Scripts come from Keel itself
-(`/static/js/post-transaction.js` on the posting form, `/static/js/terms.js`
-on every page), or inline only with this
-response's nonce: a fresh nonce is made per request,
-stored in `request.state.csp_nonce`, and put on the posting form's one
-inline script. Styles are `'self'` only. The stylesheet, fonts and icons
+The page policy names no other origin. Scripts are `'self'` only: every
+script a page runs is a file under `/static/js` (`post-transaction.js` on
+the posting form, `terms.js` on every page), no page has an inline script,
+and so there is no nonce; a test checks every page for inline scripts.
+Styles are `'self'` only. The stylesheet, fonts and icons
 are files under `/static` (§5.8), so the pages need nothing inline, and a
 `style` attribute or `<style>` element in a page would be refused. Fonts
 and the icon sprite are covered by `default-src 'self'`. FastAPI's `/docs`
@@ -1642,7 +1691,7 @@ both forms, a transaction's detail) in light and dark, at desktop and phone
 width, loaded with no CSP violation, console error or failed request, with
 both fonts loaded. Typing an amount into the posting form updated its live
 total, and the posting script's busy state ran. As controls, a style
-attribute, a `<style>` element and an un-nonced script injected into a page
+attribute, a `<style>` element and an inline script injected into a page
 were all refused. With JavaScript turned off, the posting form still posted
 and redirected to the new transaction.
 
@@ -1672,8 +1721,10 @@ one window: once a window, any client idle for a whole window is forgotten.
 **The answer.** `429 Too Many Requests` with `Retry-After`: the whole
 seconds, rounded up, until the oldest write in the window leaves it, which
 is exactly when a write is next allowed. Under `/api/` the body is
-`{"error": {"code": "rate_limited", ...}}`; for the forms it is one line of
-plain text, like the 413. The middleware answers before the app runs, so a
+`{"error": {"code": "rate_limited", ...}}`; for the forms it is a page
+with the site's header saying, in `app/posting_messages.py`'s words, what
+the limit is, how long to wait, and that the browser's Back button usually
+keeps what was typed. The 413 is the same for a form. The middleware answers before the app runs, so a
 refused write never reads its body or opens a connection. It sits inside the
 request log, so the 429 is logged as an ordinary `request.completed` with the
 `client` it applied to, and inside the security headers, so the 429 has them.
@@ -1721,8 +1772,9 @@ scripts pass nothing, so seeding, backfilling and rebuilding are never
 capped. `0` means no cap, which is what a real ledger wants.
 
 **The answer.** A `409` with code `ledger_full` from the API, and the form
-re-rendered with an inline error and a `409` from the pages, both saying
-which maximum was reached, plus a `ledger.full` warning in the log, which is
+re-rendered with an explanation and a `409` from the pages, both saying
+which maximum was reached (the posting form also says, on the demo, that
+the nightly reset empties it), plus a `ledger.full` warning in the log, which is
 the signal that the demo wants resetting. 409 rather than 507 Insufficient
 Storage because nothing is wrong with the server: the ledger is in a state
 that refuses the write, and retrying will not help until that state changes.
@@ -1843,17 +1895,17 @@ Browser form
 
 ```
 Browser form (repeated fields → lists)
-  → zip(..., strict=True) into raw entry dicts
-  → EntryInput.model_validate per row   (types, side, amount > 0)
-  → assert_balanced(entries)            (per-currency netting)
-  → require >= 2 entries
-      → any failure: re-render with values + inline error, HTTP 422
+  → _form_lines(): zip_longest into one dict per line (uneven → 422)
+  → EntryInput.model_validate per line  (types, side, amount > 0), all of them
+  → validate_description, then >= 2 entries, then assert_balanced
+      → any failure: re-render with values, each problem worded by
+        app/posting_messages.py and marked on its line, HTTP 422
   → request_fingerprint(): sha256 of the canonical request JSON
   → engine.begin(): post_transaction_once(...)
         INSERT idempotency_keys ... ON CONFLICT (key) DO NOTHING
           ├─ conflict (waits for any in-flight holder of the key to finish)
-          │    ├─ hash matches  → reuse stored transaction id
-          │    └─ hash differs  → IdempotencyConflictError → HTTP 409
+          │    ├─ hash matches  → reuse stored transaction id (302 ?already=1)
+          │    └─ hash differs  → IdempotencyConflictError → HTTP 409 form, new key
           └─ claimed → post_transaction(conn, entries, description)
                           ├─ assert_accounts_valid   (→ 422 on failure,
                           │                            claim rolls back)
@@ -1886,7 +1938,8 @@ which replays the log into a fresh read model.
 **HTTP layer** — health check, and seven server-rendered pages: overview
 with per-account balances and normal-side signs, event log with
 pagination, the filterable paginated transaction list, transaction posting
-form with live client-side totals, transaction detail with debit/credit
+form with a live per-currency balance panel and refusals that explain the
+rule broken, transaction detail with debit/credit
 columns, account creation, and a Learn page that explains double-entry,
 with key terms defined where the pages use them.
 
@@ -1929,7 +1982,7 @@ TLS to a managed Postgres, `PORT`, and a refusal to start a hosted
 environment on the development database (§5.1); `python -m app.serve`,
 which migrates then serves, in an image that runs as an unprivileged user
 (§5.12); forwarded headers believed only from `FORWARDED_ALLOW_IPS`, and
-`CF-Connecting-IP` only from Cloudflare via Render's proxy (§5.21); a request body limit and security headers with a nonce CSP
+`CF-Connecting-IP` only from Cloudflare via Render's proxy (§5.21); a request body limit and security headers with a CSP that allows no inline script
 (§5.18); `pip-audit` in CI (§5.13); and a Deploying section in the README.
 
 **Public writes, bounded** — a per-client write rate limit with `429` and
@@ -1951,14 +2004,14 @@ fonts and icons, so they load nothing from another origin (§5.8, §5.18).
 **Seed data** — `python -m scripts.seed_demo_data`, domain-layer-driven
 and idempotent.
 
-**Testing** — 327 tests (§5.11). 224 run with no database at all: the
+**Testing** — 354 tests (§5.11). 244 run with no database at all: the
 balance invariant, entry input validation, the error-aggregation helper,
 the idempotency fingerprints and retention floor, request ids and the JSON
 formatter, the health endpoint, every JSON API rejection that happens
 before the database is touched, the deployment configuration, the body
 limit and security headers, the proxy headers, the write rate limit, the
 demo notice's absence, the reset script's refusals, the database host
-check and the nightly reset's workflow. The other 103 are
+check and the nightly reset's workflow. The other 110 are
 Postgres-backed. They cover the pages, filters and pagination; idempotency,
 including concurrent duplicates and key retention; the database triggers
 against writes that bypass the app; atomic rollback; agreement between the
@@ -1970,7 +2023,7 @@ behaviour it covers broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"224 passed, 103 skipped" and is not a passing build. See the README for
+"244 passed, 110 skipped" and is not a passing build. See the README for
 the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that

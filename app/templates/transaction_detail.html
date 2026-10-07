@@ -2,6 +2,12 @@
 {% import "_ui.html" as ui %}
 {% block title %}Transaction{% endblock %}
 {% block content %}
+{% if notice %}
+<div role="status" class="alert alert-note">
+  {{ ui.icon("info") }}
+  <p>{{ ui.problem(notice) }}</p>
+</div>
+{% endif %}
 <div class="page-head">
   <p class="eyebrow">Journal entry</p>
   <h1>Transaction detail</h1>

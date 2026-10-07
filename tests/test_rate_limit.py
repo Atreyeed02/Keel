@@ -129,8 +129,10 @@ async def test_forms_and_the_api_share_one_allowance(clock, no_database):
     assert statuses == [422, 400, 422]
     assert refused.status_code == 429
     assert refused.headers["retry-after"] == "60"
-    assert refused.headers["content-type"] == "text/plain; charset=utf-8"
-    assert refused.text.startswith("too many writes from this address")
+    # a form gets a page that says so in words; the API keeps its JSON
+    assert refused.headers["content-type"] == "text/html; charset=utf-8"
+    assert "Too many changes from your connection." in refused.text
+    assert "Wait 60 seconds" in refused.text
 
 
 async def test_retry_after_is_honest(clock, no_database):

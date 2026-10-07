@@ -1,9 +1,9 @@
 """
 HTTP hardening (app/security.py): the request body size limit and the
-security headers, including the posting form's CSP nonce, and the pages'
-side of that policy: nothing loaded from another origin, no inline styles.
+security headers, and the pages' side of the page policy: nothing loaded
+from another origin, no inline scripts or styles.
 
-All but the last two tests need no database: every request they make is
+All but the last test need no database: every request they make is
 answered, or refused, before one is touched.
 """
 
@@ -96,7 +96,9 @@ async def test_a_declared_body_over_the_limit_is_a_413_before_the_app_reads_it(
         }
     }
     assert form.status_code == 413
-    assert form.text == f"request body exceeds the {LIMIT}-byte limit"
+    # a form gets a page that says so in words; the API keeps its JSON
+    assert form.headers["content-type"] == "text/html; charset=utf-8"
+    assert f"That&#39;s more than Keel accepts in one request ({LIMIT} bytes)." in form.text
     # A route that never reads its body can only be protected by the declared
     # length: this is refused before the app runs at all.
     async with _client() as client:
@@ -168,21 +170,19 @@ async def test_a_413_carries_them_too(no_database):
     assert response.headers["x-frame-options"] == "DENY"
 
 
-async def test_pages_allow_only_their_own_scripts_and_styles_and_the_nonce(no_database):
+async def test_pages_allow_only_their_own_scripts_and_styles(no_database):
     async with _client() as client:
-        first = await client.get("/accounts/new")
-        second = await client.get("/accounts/new")
-    csp = first.headers["content-security-policy"]
+        page = await client.get("/accounts/new")
+    csp = page.headers["content-security-policy"]
     directives = dict(d.split(" ", 1) for d in csp.split("; "))
-    nonce = re.fullmatch(r"'self' 'nonce-([\w-]+)'", directives["script-src"]).group(1)
-    assert len(nonce) >= 16
+    # every script is a file under /static/js: no nonce, nothing inline
+    assert directives["script-src"] == "'self'"
     # keel.css is the only stylesheet: no style attributes, no <style> elements
     assert directives["style-src"] == "'self'"
-    # nothing from another origin, and nothing inline without the nonce
+    # nothing from another origin
     assert "https:" not in csp
     assert "'unsafe-inline'" not in csp
-    # a new nonce per response
-    assert second.headers["content-security-policy"] != csp
+    assert "nonce" not in csp
 
 
 @pytest.mark.parametrize(
@@ -223,7 +223,7 @@ async def test_the_api_docs_get_their_own_policy(no_database):
     assert "cdn.jsdelivr.net" not in page.headers["content-security-policy"]
 
 
-# --- the posting form's script runs under the policy (Postgres-backed) ---------------
+# --- the pages under the policy (Postgres-backed) -----------------------------------
 
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -243,21 +243,13 @@ async def database(monkeypatch):
     await test_engine.dispose()
 
 
-async def test_the_posting_forms_inline_script_carries_this_responses_nonce(database):
-    async with _client() as client:
-        response = await client.get("/post-transaction")
-    assert response.status_code == 200
-    nonce = re.search(r"'nonce-([\w-]+)'", response.headers["content-security-policy"]).group(1)
-    inline_scripts = re.findall(r"<script(?![^>]*\bsrc=)([^>]*)>", response.text)
-    assert inline_scripts == [f' nonce="{nonce}"']
-
-
-async def test_pages_load_nothing_from_elsewhere_and_have_no_inline_styles(database):
+async def test_pages_load_nothing_from_elsewhere_and_have_nothing_inline(database):
     """
     The pages' half of the policy above. Every URL a page names is Keel's
-    own, and none has a style attribute or a <style> element, which
-    style-src 'self' would refuse. Every /static file a page names exists,
-    down to the icon's id in the sprite, so a typo cannot ship as a blank.
+    own, and none has an inline script, a style attribute or a <style>
+    element, which script-src and style-src 'self' would refuse. Every
+    /static file a page names exists, down to the icon's id in the sprite,
+    so a typo cannot ship as a blank.
     """
     async with _client() as client:
         for name, account_type in (("Cash", "asset"), ("Sales", "revenue")):
@@ -292,6 +284,8 @@ async def test_pages_load_nothing_from_elsewhere_and_have_no_inline_styles(datab
         pages["POST /post-transaction"] = await client.post(
             "/post-transaction", data={**sale, "amount": ["10.00", "9.00"]}
         )
+        # and so is the form drawn again for a line more, without JavaScript
+        pages["GET add_line"] = await client.get("/post-transaction", params={"add_line": "1"})
 
     assert {path: r.status_code for path, r in pages.items()} == {
         **{path: 200 for path in pages},
@@ -302,6 +296,7 @@ async def test_pages_load_nothing_from_elsewhere_and_have_no_inline_styles(datab
         html = response.text
         assert not re.search(r"<style\b", html, re.IGNORECASE), path
         assert not re.search(r"\sstyle\s*=", html, re.IGNORECASE), path
+        assert not re.search(r"<script(?![^>]*\bsrc=)", html, re.IGNORECASE), path
         for url in re.findall(r"\s(?:src|href)=\"([^\"]*)\"", html):
             assert url.startswith(("/", "#")) and not url.startswith("//"), (path, url)
             if url.startswith("/static/"):

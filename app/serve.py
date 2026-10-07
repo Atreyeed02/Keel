@@ -48,6 +48,11 @@ def serve(reload: bool = False) -> None:
         # needs the peer as it connected, so uvicorn's own handling, on by
         # default, is off: left on, it would rewrite the peer first.
         proxy_headers=False,
+        # One line per request is Keel's own request.completed, which logs the
+        # path but never the query string. uvicorn's access line would log the
+        # full request line, query string included, and the posting form's
+        # no-JavaScript "Add line" and "Remove" carry what was typed there.
+        access_log=False,
         **development,
     )
 

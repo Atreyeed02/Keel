@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Fourteen PRs are merged into `main`, with regular merge commits, and their
+Fifteen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -29,6 +29,7 @@ branches deleted:
 | [#12](https://github.com/Atreyeed02/Keel/pull/12) | `docs/status-scheduled-reset` | `2cfdc49` |
 | [#13](https://github.com/Atreyeed02/Keel/pull/13) | `chore/pin-workflow-actions` | `deb637e` |
 | [#14](https://github.com/Atreyeed02/Keel/pull/14) | `feat/ui-foundation` | `16006d3` |
+| [#15](https://github.com/Atreyeed02/Keel/pull/15) | `feat/ui-learn` | `4484adc` |
 
 **Live.** Keel runs on Render (free tier, Singapore) from `main`, with
 Auto-Deploy on every commit, against Neon Postgres (Singapore, direct
@@ -56,11 +57,32 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-learn`**, the redesign's second phase, adds `/learn` (how
+**`feat/ui-posting-form`**, the redesign's third phase, rebuilds the posting
+form: every refusal explains the rule broken and how to fix it, linked to
+`/learn`; a live balance panel per currency; add and remove without
+JavaScript; the script moved to a file and the CSP nonce removed; uvicorn's
+access log off so query strings are never logged (§2, "HTTP"). Checked on
+that branch; it adds no migration and no dependency:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **354 tests** |
+| `pytest` (no database available) | 244 passed, 110 skipped |
+| `pytest` (local Postgres 16) | 354 passed |
+| Headless Chrome, seeded demo data | all seven pages, in light and dark, at 1280 px and 390 px: no CSP violation, console error, failed request, or page wider than the screen. An injected style attribute, `<style>` and inline script were refused |
+| The panel, from computed styles and the accessibility tree | 650.00 against 500.00: "Out of balance by 150.00 USD.", Post `aria-disabled` but focusable, described by the reason; pressing it or Enter in a field posts nothing and moves the focus to the banner, which is announced. 0.10 + 0.20 against 0.30: balanced. An EUR account fills in EUR; two currencies off in opposite directions get the no-conversion sentence. Line hints for a wrong currency, a negative amount and a third decimal place. Add and remove in the page, renumbered. Balanced, Enter posts and lands on the transaction |
+| Resubmissions | the same values again land on the transaction with "Already posted."; changed values come back as the form, linking to what was posted, with a new key and what was typed |
+| JavaScript off | add and remove redraw the form with what was typed; a rejected post shows the summary and the panel |
+| Refusals before the app | the write limit gives a form a page with the wait in seconds and `Retry-After`; the API's 429 body is unchanged |
+| Motion | the banner fades between its states in 150 ms; under reduced motion, 0 s |
+
+**#15, `feat/ui-learn`**, the redesign's second phase, adds `/learn` (how
 double-entry works, with worked examples from the demo's own data) and
 defines terms where the pages use them: debit, credit, normal side,
 balanced, trial balance, the five account types and event (§2, "HTTP").
-Checked on that branch; it adds no migration and no dependency:
+Checked on that branch, then on the live site after merging; it adds no
+migration and no dependency:
 
 | Check | Result |
 |---|---|
@@ -71,6 +93,7 @@ Checked on that branch; it adds no migration and no dependency:
 | Headless Chrome, seeded demo data | all seven pages, in light and dark, at 1280 px and 390 px: no CSP violation, console error, failed request or horizontal page scroll |
 | A term's card, from the accessibility tree and computed styles | the term is a button named by its word and described by its definition, `expanded` false, then true when open. Desktop: a click opens the card 8 px under its term; Esc closes it and focus returns to the term; hovering opens it after 300 ms (not at 150 ms), it stays while the pointer is over the card and closes after leaving; one opened by a click stays when the pointer leaves, and a click elsewhere closes it. Keyboard: Enter opens, Tab reaches "More about …", Esc closes and returns focus. Phone: a tap opens a full-width sheet along the bottom; Close closes it. JavaScript off: a click still opens it, hover does not. Reduced motion: no fade |
 | Learn | the quiz's answers open without JavaScript; a `/learn#…` link marks where it lands |
+| Live, on `4484adc`, read-only (GET requests; the browser checks submitted nothing) | all seven pages, `/learn` and a transaction's detail included, send the CSP; static files are byte-identical to the commit. 7 pages in light and dark at 1280 px and 390 px (28 renders): no CSP violation, console error or failed request, fonts and theme applied. The term cards behave as on the branch, and each page has exactly its planned terms, every reference and Learn link resolving |
 
 **#14, `feat/ui-foundation`**, the first phase of the UI redesign, replaces the
 Tailwind CDN with Keel's own stylesheet (light and dark themes,
@@ -142,8 +165,8 @@ Checked for #5 (deploy readiness), at migration head `c2e8f4a61b07`:
 | Storage per write, Postgres 16 | account ≈ 1.1 KB; two-entry transaction ≈ 1.7 KB; largest transaction the body limit admits (470 entries) ≈ 91 KB. The source of the default caps. |
 | `pip-audit`, Docker image build and smoke test | not run locally; CI's `lint-and-test` (ruff, `pip-audit --strict`, `alembic check`, the full suite on Postgres) and `docker-smoke` run them on the PR |
 
-The 103 skips are not failures. Every database-backed test skips itself
-unless `TEST_DATABASE_URL` is set, so **a green local run of 224 tests
+The 110 skips are not failures. Every database-backed test skips itself
+unless `TEST_DATABASE_URL` is set, so **a green local run of 244 tests
 means about a third of the suite never executed.** Do not read it as a
 passing build. See §5 for the command that runs the real thing.
 
@@ -236,8 +259,13 @@ from another origin, so the page CSP is `style-src 'self'` with no CDN
 colour alone. The Stitch designs' animations are kept, in CSS, and all
 stop for visitors who ask their system for reduced motion. Key terms
 are defined where they appear: a dotted-underlined term opens a short
-card that links to its section of `/learn` (`app/glossary.py`). This is a
-redesign done one PR per phase; §6 has the rest.
+card that links to its section of `/learn` (`app/glossary.py`). The posting
+form shows a live balance per currency, and when it refuses a transaction it
+says what went wrong, why the rule exists and how to fix it, by line
+(`app/posting_messages.py`); without JavaScript, "Add line" and "Remove"
+redraw the form. Every script is a file under `/static/js`, so the CSP is
+`script-src 'self'` with no nonce, and no log records a query string. This is
+a redesign done one PR per phase; §6 has the rest.
 
 ### JSON API — four endpoints
 
@@ -337,7 +365,8 @@ What a public demo on a container host needs, with the README's
   `app/client_address.py` has the rule, and `ARCHITECTURE.md` §5.21 says why
   no header can be forged and what risk is left.
 - **HTTP hardening.** A 64 KiB body limit (413) and security headers,
-  including a CSP whose nonce lets the posting form's one inline script run.
+  including a CSP that allows scripts and styles only from Keel's own
+  files: no page has an inline script, so there is no nonce.
 - **Public writes, bounded.** Every write, form or API, counts against a
   per-client allowance, 30 a minute by default. Past it the answer is a
   `429` with an exact `Retry-After`. Reads are not limited. The counts are
@@ -403,7 +432,7 @@ Every route is public. Fine for a demo, disqualifying otherwise.
 No single-account read, no transaction listing, no pagination and no
 event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
 
-**4. The UI redesign, phases 3–7**
+**4. The UI redesign, phases 4–7**
 One PR each, in the order §6 lists. Each keeps every page working, is
 checked in light and dark at desktop and phone width, and claims nothing
 the ledger does not do.
@@ -445,7 +474,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 224 of 327 tests:
+you are running 244 of 354 tests:
 
 ```bash
 docker compose up -d db
@@ -504,12 +533,13 @@ The redesign ships one PR per phase:
 1. **Foundation** (#14, merged): the stylesheet, light and dark
    tokens, fonts, icons, logo, header, motion, and all six pages
    restyled.
-2. **Learn** (`feat/ui-learn`): `/learn`, and inline definitions of
+2. **Learn** (#15, merged): `/learn`, and inline definitions of
    debit, credit, normal side, balanced, trial balance, the account types
    and event, each linking to its section.
-3. **Posting form**: live totals, "out of balance by X" until they match,
-   rejections that explain the rule broken, the script moved to a file and
-   the CSP nonce removed.
+3. **Posting form** (`feat/ui-posting-form`): a live balance panel per
+   currency, "out of balance by X" until it balances, refusals that
+   explain the rule broken, add and remove without JavaScript, the script
+   moved to a file and the CSP nonce removed.
 4. **Overview**: the accounting equation per currency, and a guided "try
    it" path from the demo notice.
 5. **Transactions list and detail.**

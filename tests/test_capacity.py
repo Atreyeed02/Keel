@@ -203,8 +203,8 @@ async def test_the_form_refuses_a_transaction_past_the_cap(database, monkeypatch
 
     assert first.status_code == 302
     assert refused.status_code == 409
-    assert "Cannot post transaction:" in refused.text
-    assert "the ledger already holds its maximum of 1 transaction" in refused.text
+    assert "The ledger is full: it holds its maximum of 1 transaction." in refused.text
+    assert "Nothing was posted" in refused.text
     assert 'value="77.00"' in refused.text
     counts = await _counts(database)
     assert (counts["transactions"], counts["idempotency_keys"]) == (1, 1)

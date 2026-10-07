@@ -370,6 +370,10 @@ def test_the_start_command_migrates_then_serves_on_port(monkeypatch):
     assert calls[0] == ("migrate", ["-m", "alembic", "upgrade", "head"], True)
     assert calls[1][0:2] == ("serve", "app.main:served")
     assert calls[1][2]["port"] == 10000 and calls[1][2]["host"] == "0.0.0.0"
+    # request.completed is the one request log; uvicorn's access line would
+    # log query strings, where the posting form's no-JavaScript reloads carry
+    # what was typed
+    assert calls[1][2]["access_log"] is False
 
 
 def test_a_failed_migration_means_no_server(monkeypatch):

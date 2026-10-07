@@ -3,6 +3,7 @@ import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -11,8 +12,8 @@ from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import ValidationError
 from sqlalchemy import func, select
+from starlette.types import Scope
 
 from app.api.accounts import router as accounts_api_router
 from app.api.errors import register_api_error_handlers
@@ -21,7 +22,7 @@ from app.api.transactions import router as transactions_api_router
 from app.client_address import ClientAddressMiddleware
 from app.config import settings
 from app.db.engine import engine
-from app.db.schema import accounts, events, ledger_entries, transactions
+from app.db.schema import accounts, events, idempotency_keys, ledger_entries, transactions
 from app.domain.accounts import (
     ACCOUNT_TYPES,
     InvalidAccountError,
@@ -29,7 +30,6 @@ from app.domain.accounts import (
     validate_account,
 )
 from app.domain.capacity import LedgerFullError
-from app.domain.errors import describe_validation_error
 from app.domain.idempotency import (
     IdempotencyConflictError,
     post_transaction_once,
@@ -53,6 +53,22 @@ from app.observability import (
     log_transaction_rejected,
     request_context_middleware,
 )
+from app.posting_messages import (
+    ALREADY_POSTED,
+    PANEL_TEXT,
+    Problem,
+    account_problems,
+    balance_panel,
+    changed_after_posting,
+    check_line,
+    description_too_long,
+    fewer_than_two,
+    incomplete,
+    ledger_full,
+    rate_limited,
+    too_large,
+    unbalanced,
+)
 from app.ratelimit import RateLimiter, WriteRateLimitMiddleware
 from app.security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 
@@ -65,13 +81,28 @@ app = FastAPI(
 )
 # One per process: the counts are in memory (app/ratelimit.py).
 write_limiter = RateLimiter(settings.write_rate_limit, settings.write_rate_window_seconds)
+
+
+def _refusal_page(scope: Scope, refused: str, numbers: dict[str, float]) -> bytes:
+    """
+    A refusal the write limit or the body limit makes before the app runs, as
+    a page with the site's header, for a form rather than the JSON API. The
+    words are app/posting_messages.py's.
+    """
+    problem = {"rate_limited": rate_limited, "too_large": too_large}[refused](**numbers)
+    page = templates.get_template("refused.html")
+    return page.render(request=Request(scope), problem=problem).encode()
+
+
 # Starlette runs the middleware added last first. The rate limit and the body
 # limit sit inside the request log, so a 429 or a 413 is logged like any other
 # response; the rate limit comes first, so a client over it is refused before
 # its body is looked at. The security headers sit outside everything, so every
 # response gets them, a 413 or a 429 included.
-app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
-app.add_middleware(WriteRateLimitMiddleware, limiter=write_limiter)
+app.add_middleware(
+    BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes, page=_refusal_page
+)
+app.add_middleware(WriteRateLimitMiddleware, limiter=write_limiter, page=_refusal_page)
 app.middleware("http")(request_context_middleware)
 app.add_middleware(SecurityHeadersMiddleware)
 # What `python -m app.serve` runs: the app behind the one place that turns
@@ -177,7 +208,32 @@ templates.env.globals["is_demo"] = lambda: settings.is_demo
 templates.env.globals["glossary"] = GLOSSARY
 
 
-async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str, Any]:
+# A new form's two lines: one each side.
+NEW_LINES = [
+    {"account_id": "", "entry_type": "debit", "amount": "", "currency": "USD"},
+    {"account_id": "", "entry_type": "credit", "amount": "", "currency": "USD"},
+]
+
+
+def _form_lines(
+    account_id: list[str], entry_type: list[str], amount: list[str], currency: list[str]
+) -> tuple[list[dict[str, str]], bool]:
+    """
+    The posting form's lines, one dict per line, and whether every line
+    arrived whole. A browser always sends all four fields for every line; a
+    request that doesn't is padded with blanks rather than refused outright,
+    so the form can come back with what did arrive.
+    """
+    columns = (account_id, entry_type, amount, currency)
+    complete = len({len(column) for column in columns}) == 1
+    lines = [
+        {"account_id": a, "entry_type": k, "amount": v, "currency": c.upper()}
+        for a, k, v, c in zip_longest(*columns, fillvalue="")
+    ]
+    return lines, complete
+
+
+async def _form_context(lines: list[dict[str, str]] | None = None) -> dict[str, Any]:
     async with engine.connect() as conn:
         account_rows = (
             (
@@ -188,14 +244,24 @@ async def _form_context(entries: list[dict[str, str]] | None = None) -> dict[str
             .mappings()
             .all()
         )
+    lines = lines or [dict(line) for line in NEW_LINES]
     return {
         "accounts": account_rows,
-        "entries": entries
-        or [
-            {"account_id": "", "entry_type": "debit", "amount": "", "currency": "USD"},
-            {"account_id": "", "entry_type": "credit", "amount": "", "currency": "USD"},
-        ],
+        "entries": lines,
+        # the live balance panel as the page first shows it, and the sentences
+        # the page hands static/js/post-transaction.js to keep it current
+        "panel": balance_panel(lines),
+        "panel_text": PANEL_TEXT,
     }
+
+
+async def _posted_under(key: str) -> uuid.UUID | None:
+    """The transaction a submission key has already posted, if any."""
+    async with engine.connect() as conn:
+        body = await conn.scalar(
+            select(idempotency_keys.c.response_body).where(idempotency_keys.c.key == key)
+        )
+    return uuid.UUID(body["transaction_id"]) if body and body.get("transaction_id") else None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -379,9 +445,35 @@ async def create_account(
 
 
 @app.get("/post-transaction", response_class=HTMLResponse)
-async def read_post_transaction(request: Request):
-    context = await _form_context()
-    context["submission_key"] = str(uuid.uuid4())
+async def read_post_transaction(
+    request: Request,
+    description: str = Query(""),
+    submission_key: str | None = Query(None),
+    account_id: list[str] = Query([]),
+    entry_type: list[str] = Query([]),
+    amount: list[str] = Query([]),
+    currency: list[str] = Query([]),
+    add_line: str | None = Query(None),
+    remove_line: int | None = Query(None),
+):
+    """
+    The posting form. With JavaScript, "Add line" and "Remove" work in the
+    page. Without it they are submit buttons with formmethod="get": they land
+    here carrying what has been typed, and the form comes back with a line
+    more or fewer. Nothing is posted, and a GET is not counted by the write
+    limit. The typed values ride in the query string, which no log records:
+    request.completed logs the path (app/observability.py), and uvicorn's
+    access log is off (app/serve.py).
+    """
+    lines, _ = _form_lines(account_id, entry_type, amount, currency)
+    if add_line is not None:
+        lines = (lines or [dict(line) for line in NEW_LINES]) + [dict(NEW_LINES[0])]
+    if remove_line is not None and len(lines) > 2 and 1 <= remove_line <= len(lines):
+        del lines[remove_line - 1]
+    context = await _form_context(lines)
+    context.update(
+        {"description": description, "submission_key": submission_key or str(uuid.uuid4())}
+    )
     return templates.TemplateResponse(
         request=request, name="post_transaction.html", context=context
     )
@@ -392,45 +484,61 @@ async def submit_post_transaction(
     request: Request,
     description: str = Form(""),
     submission_key: str | None = Form(None),
-    account_id: list[str] = Form(...),
-    entry_type: list[str] = Form(...),
-    amount: list[str] = Form(...),
-    currency: list[str] = Form(...),
+    account_id: list[str] = Form([]),
+    entry_type: list[str] = Form([]),
+    amount: list[str] = Form([]),
+    currency: list[str] = Form([]),
 ):
-    raw_entries = [
-        {"account_id": account, "entry_type": kind, "amount": value, "currency": ccy.upper()}
-        for account, kind, value, ccy in zip(account_id, entry_type, amount, currency, strict=True)
-    ]
+    """
+    Post a transaction from the form. The domain decides: EntryInput per
+    line, validate_description, assert_balanced, then post_transaction_once.
+    app/posting_messages.py words every refusal for a person, and the form
+    comes back with what was typed and each problem by its line.
+    """
+    lines, complete = _form_lines(account_id, entry_type, amount, currency)
     submission_key = submission_key or str(uuid.uuid4())
 
-    async def invalid(message: str, status_code: int = 422):
-        context = await _form_context(raw_entries)
-        context.update(
-            {"error": message, "description": description, "submission_key": submission_key}
-        )
+    async def refuse(
+        problems: list[Problem],
+        status_code: int = 422,
+        key: str = submission_key,
+        context: dict[str, Any] | None = None,
+    ):
+        context = context or await _form_context(lines)
+        context.update({"problems": problems, "description": description, "submission_key": key})
         return templates.TemplateResponse(
             request=request, name="post_transaction.html", context=context, status_code=status_code
         )
 
+    # Every line is checked, so the form reports all of them at once.
+    problems: list[Problem] = [] if complete else [incomplete()]
+    entries: list[EntryInput] = []
+    for line, row in enumerate(lines, start=1):
+        entry, found = check_line(line, row)
+        problems += found
+        if entry is not None:
+            entries.append(entry)
     try:
-        entries = [EntryInput.model_validate(row) for row in raw_entries]
-        assert_balanced(entries)
-        if len(entries) < 2:
-            raise ValueError("a transaction needs at least two entries")
         validate_description(description)
-    except (ValidationError, UnbalancedTransactionError, ValueError) as exc:
-        # UnbalancedTransactionError and the bare ValueError already carry a
-        # single readable sentence. A raw pydantic ValidationError does not —
-        # str() on one is a multi-line dump — so it gets flattened first.
-        return await invalid(
-            describe_validation_error(exc) if isinstance(exc, ValidationError) else str(exc)
-        )
-    fingerprint = request_fingerprint(description, raw_entries)
+    except ValueError:
+        problems.append(description_too_long(len(description)))
+    if not problems:
+        if len(entries) < 2:
+            problems.append(fewer_than_two())
+        else:
+            try:
+                assert_balanced(entries)
+            except UnbalancedTransactionError:
+                problems += unbalanced(entries)
+    if problems:
+        return await refuse(problems)
+
+    fingerprint = request_fingerprint(description, lines)
     # post_transaction validates entries against the accounts they name,
     # which needs a connection — so those failures surface here rather than
-    # in the pre-flight block above. The engine.begin() context rolls the
-    # whole thing back, idempotency claim included, before the error page
-    # is rendered — so the same key can be resubmitted once it is fixed.
+    # in the pre-flight checks above. The engine.begin() context rolls the
+    # whole thing back, idempotency claim included, before the form is
+    # rendered again — so the same key can be resubmitted once it is fixed.
     try:
         async with engine.begin() as conn:
             transaction_id, replayed = await post_transaction_once(
@@ -443,19 +551,28 @@ async def submit_post_transaction(
             )
     except LedgerFullError as exc:
         log_ledger_full(str(exc))
-        return await invalid(str(exc), 409)
+        return await refuse([ledger_full(settings.max_transactions, settings.is_demo)], 409)
     except EntryAccountError as exc:
         log_transaction_rejected(submission_key, str(exc))
-        return await invalid(str(exc))
-    except IdempotencyConflictError as exc:
+        context = await _form_context(lines)
+        by_id = {row["id"]: row for row in context["accounts"]}
+        found = account_problems(entries, by_id, settings.is_demo)
+        return await refuse(found or [Problem(f"{exc}.")], context=context)
+    except IdempotencyConflictError:
         log_idempotency_conflict(submission_key)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # A new key, so posting this form again records a second transaction.
+        posted = await _posted_under(submission_key)
+        return await refuse([changed_after_posting(posted)], 409, key=str(uuid.uuid4()))
     log_transaction(transaction_id, submission_key, entries, replayed=replayed)
-    return RedirectResponse(url=f"/transaction-detail/{transaction_id}", status_code=302)
+    # A replay lands on the transaction it already posted, which says so.
+    already = "?already=1" if replayed else ""
+    return RedirectResponse(url=f"/transaction-detail/{transaction_id}{already}", status_code=302)
 
 
 @app.get("/transaction-detail/{transaction_id}", response_class=HTMLResponse)
-async def read_transaction_detail(request: Request, transaction_id: uuid.UUID):
+async def read_transaction_detail(
+    request: Request, transaction_id: uuid.UUID, already: bool = Query(False)
+):
     async with engine.connect() as conn:
         transaction, entry_rows = await transaction_with_entries(conn, transaction_id)
         if transaction is None:
@@ -484,5 +601,7 @@ async def read_transaction_detail(request: Request, transaction_id: uuid.UUID):
             "debit_total": sum((row["amount"] for row in debits), Decimal()),
             "credit_total": sum((row["amount"] for row in credits), Decimal()),
             "event": event,
+            # the posting form sent a resubmission here instead of posting twice
+            "notice": ALREADY_POSTED if already else None,
         },
     )

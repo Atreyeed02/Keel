@@ -7,7 +7,8 @@ any `WRITE_RATE_WINDOW_SECONDS`, 30 a minute by default. Past that the
 request is answered `429 Too Many Requests` with a `Retry-After` header
 giving the whole seconds until the oldest write in the window expires,
 before the app reads the body or opens a connection. Under `/api/` the 429
-uses the API's error shape. A refused request does not count, so a client
+uses the API's error shape; anywhere else, a form, it is a page that says so
+in words (`page`, given by app/main.py). A refused request does not count, so a client
 that waits `Retry-After` seconds is let through. Reads are not limited.
 
 **Who the client is.** `scope["client"]`, which behind a host's proxy is
@@ -35,6 +36,7 @@ from collections.abc import Callable
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.errors import API_PREFIX, error_body
+from app.security import RefusalPage
 
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -100,9 +102,12 @@ class RateLimiter:
 
 
 class WriteRateLimitMiddleware:
-    def __init__(self, app: ASGIApp, limiter: RateLimiter) -> None:
+    def __init__(
+        self, app: ASGIApp, limiter: RateLimiter, page: RefusalPage | None = None
+    ) -> None:
         self.app = app
         self.limiter = limiter
+        self.page = page
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] in READ_METHODS:
@@ -122,6 +127,14 @@ class WriteRateLimitMiddleware:
         if scope["path"].startswith(API_PREFIX):
             body = json.dumps(error_body("rate_limited", message)).encode()
             content_type = b"application/json"
+        elif self.page is not None:
+            numbers = {
+                "limit": self.limiter.limit,
+                "window": self.limiter.window,
+                "retry_after": retry_after,
+            }
+            body = self.page(scope, "rate_limited", numbers)
+            content_type = b"text/html; charset=utf-8"
         else:
             body, content_type = message.encode(), b"text/plain; charset=utf-8"
         await send(
