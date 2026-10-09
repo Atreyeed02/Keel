@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-08.** A snapshot of what is actually built, what is
+**As of 2026-10-09.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Sixteen PRs are merged into `main`, with regular merge commits, and their
+Seventeen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -31,6 +31,7 @@ branches deleted:
 | [#14](https://github.com/Atreyeed02/Keel/pull/14) | `feat/ui-foundation` | `16006d3` |
 | [#15](https://github.com/Atreyeed02/Keel/pull/15) | `feat/ui-learn` | `4484adc` |
 | [#16](https://github.com/Atreyeed02/Keel/pull/16) | `feat/ui-posting-form` | `370e904` |
+| [#17](https://github.com/Atreyeed02/Keel/pull/17) | `feat/ui-overview` | `d1effe4` |
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -68,11 +69,36 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-overview`**, the redesign's fourth phase, opens the overview with
+**`feat/ui-transactions`**, the redesign's fifth phase, rebuilds the
+transaction list and a transaction's page (§2, "HTTP"), and fixes two
+things on the way. The list's "Volume" added every entry, so each amount
+counted twice and currencies were added together; it is now "Amount", the
+debit total in each currency, on the overview's recent table too. And a
+search by description alone, which the browser sends with both dates empty
+(`date_from=&date_to=`), was answered with a 422 instead of the list, on the
+live site too. Checked on that branch; it adds no migration and no
+dependency:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **397 tests** |
+| `pytest` (no database available) | 264 passed, 133 skipped |
+| `pytest` (local Postgres 16) | 397 passed |
+| Unchanged | the URLs and their query parameters, the pagination tests, the JSON API and its tests |
+| New tests fail without their change | 13 deliberate breaks, one at a time, each failed a test: both sides added, currencies added together, an account named twice, a chip dropping every filter, a page past the end not noticed, what an entry does ignoring the normal side, the uneven-sides note on every transaction, the event log's page off by one, the overview keeping "Volume", no two-currency note, no chips, a second detail link on a card (which also fails the existing pagination tests), empty dates refused |
+| Headless Chrome, seeded demo data and one local two-currency transaction | the list, a filtered list, three transactions' pages and the overview, in light and dark, at 1280 px and 390 px (24 renders): no CSP violation, console error, failed request, or page wider than the screen |
+| The list | January's costs: "Debits = credits USD 2,718.50", where "Volume" said 5,437.00; two currencies: "EUR 50.00 · USD 54.00". A click anywhere on a card opens it, and the focus ring goes round the card. Filtered by "invoice" from 2026-01-01: two chips, each a link without its filter |
+| JavaScript off | a search by description from the form: "1 transaction matching", one chip; its link goes back to all 10 |
+| A transaction's page | No. 5: "Expense: a debit increases it." twice, "Asset: a credit decreases it.", totals under a double rule, "USD 2,718.50 − 2,718.50 = 0.00", and the note on uneven sides. Two currencies: each side's totals per currency, a line per currency, the two-currency note. The event link lands on the event log's page holding the event |
+| Contrast | the new pairs at least 5.02:1 in both themes |
+| Motion | the transaction cards and the filter chips fade in a background under the pointer in 150 ms; under reduced motion, 0 s |
+
+**#17, `feat/ui-overview`**, the redesign's fourth phase, opens the overview with
 the accounting equation in each currency, and on the demo adds three "try
 it" steps, linked from the demo notice, that open the posting form filled
-in (§2, "HTTP"). Checked on that branch; it adds no migration and no
-dependency:
+in (§2, "HTTP"). Checked on that branch, then on the live site after
+merging; it adds no migration and no dependency:
 
 | Check | Result |
 |---|---|
@@ -87,6 +113,7 @@ dependency:
 | Terms | the demo's overview defines every glossary term once, the five types in the formula; outside the demo, all but "event" |
 | Contrast | the new pairs at least 4.97:1 in both themes |
 | Motion | the equation cards fade in a background under the pointer in 150 ms; under reduced motion, 0 s |
+| Live, on `d1effe4`, read-only (GET requests only; the browser failed any other request before sending it, and none was attempted) | all seven pages, `/health` and the three steps' forms send exactly `script-src 'self'`, with no nonce, and `style-src 'self'`, `nosniff`, `DENY` and `same-origin`; no page has an inline script, `<style>` or style attribute. The 12 static files are byte-identical to the commit, and the panel's sentences match `PANEL_TEXT`. 7 pages in light and dark at 1280 px and 390 px (28 renders): no CSP violation, console error or failed request, fonts and theme applied, no page wider than the screen; an injected style attribute, `<style>` and inline script were refused. The equation: EUR, then USD, both "Holds", every card, caption and sum line matching the chart of accounts on the same page; on a phone, in both themes, no figure cut off. The steps follow it, their "Why" links land on sections of `/learn`, and the notice's link, on every page, lands on them. Each step's form opens with its note and the panel as on the branch; pressing Post on steps 2 and 3 stays on the page, sends nothing and moves the focus to the banner. Step 1 was not posted. Without JavaScript, "Add line" keeps the note; `?try=` other than 1, 2 or 3 shows none. A 150 ms fade, 0 s under reduced motion |
 
 **#16, `feat/ui-posting-form`**, the redesign's third phase, rebuilds the posting
 form: every refusal explains the rule broken and how to fix it, linked to
@@ -300,7 +327,11 @@ redraw the form. Every script is a file under `/static/js`, so the CSP is
 `script-src 'self'` with no nonce, and no log records a query string. The
 overview opens with the accounting equation in each currency
 (`app/overview.py`); on the demo, three "try it" steps, linked from the
-demo notice, open the posting form filled in, with a note for each. This is
+demo notice, open the posting form filled in, with a note for each. The
+transaction list shows each transaction as a card with its accounts by side
+and its amount, the debit total in each currency, and a transaction's page
+says what each entry does to its account and shows the balance in each
+currency (`app/transactions_view.py`). This is
 a redesign done one PR per phase; §6 has the rest.
 
 ### JSON API — four endpoints
@@ -578,9 +609,12 @@ The redesign ships one PR per phase:
    currency, "out of balance by X" until it balances, refusals that
    explain the rule broken, add and remove without JavaScript, the script
    moved to a file and the CSP nonce removed.
-4. **Overview** (`feat/ui-overview`): the accounting equation per
+4. **Overview** (#17, merged): the accounting equation per
    currency, and a guided "try it" path from the demo notice.
-5. **Transactions list and detail.**
+5. **Transactions list and detail** (`feat/ui-transactions`): cards with
+   each transaction's accounts by side and its amount per currency, the
+   filters in force as chips, and a transaction's page saying what each
+   entry does, with the balance per currency.
 6. **Event log** as a timeline.
 7. **Account detail**, a T-account per account.
 

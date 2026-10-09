@@ -1056,13 +1056,26 @@ count for the pager.
 **`GET /transactions`** — the full transaction list, paginated on the same
 page/page_size/total shape as `/event-log`. Rows come from
 `_transaction_rows()`, the shared select the overview's "recent
-transactions" table also builds on, so the two cannot drift into showing
-different numbers for the same transaction. Optional `q` (description
+transactions" table also builds on, and `_entry_summaries` adds each row's
+accounts by side and its amount, with one query for the page's entries
+(`app/transactions_view.py`, `summaries`). Both tables use them, so the two
+cannot drift into showing different numbers for the same transaction. The
+amount is the transaction's debit total in each currency, which is also its
+credit total. The column it replaces, "Volume", added every entry: each
+amount counted twice, once per side, and currencies added together.
+`summaries` computes `balanced` rather than assuming it, as `equations`
+computes `holds`. Optional `q` (description
 `ILIKE`), `date_from` and `date_to` filters combine with AND, apply to the
 count as well as the page, and are re-encoded into the pager links so
-paging does not drop them. `date_to` is compared half-open against the
+paging does not drop them. A date left empty means no date filter
+(`OptionalDate`): the browser sends every field of the form, so a search by
+description alone arrives as `date_from=&date_to=`, which used to be a 422.
+`date_to` is compared half-open against the
 following day, because `created_at` is a timestamp and a bare `<= date_to`
-would exclude everything after midnight on the closing day.
+would exclude everything after midnight on the closing day. The filters in
+force are drawn as chips (`filter_chips`), each a link to the list without
+that one, from page 1; the pager says where the page sits (`pager`), and a
+page past the end says so and links to the last.
 
 **`GET /learn`** — how double-entry works: the accounting equation,
 debits and credits, normal sides and T-accounts, the five account types,
@@ -1115,8 +1128,13 @@ else in `try` is ignored, and outside the demo so is `try`.
 
 **`GET /transaction-detail/{id}`** — loads the transaction and its
 entries with their account names through `transaction_with_entries`
-(§5.17), splits them into debit and credit lists, totals each
-side, and finds the linked event. A `404` if the transaction is missing.
+(§5.17), splits them into debit and credit lists, totals each side per
+currency (`entry_totals`; a total never adds currencies together), and
+finds the linked event. Each entry says what it does to its account,
+from the account's type and normal side (`effect`: "Liability: a debit
+decreases it."). The page links to the event log's page that holds the
+event, counted from the events newer than it (`EVENT_LOG_PAGE_SIZE`, the
+event log's own page size). A `404` if the transaction is missing.
 
 ### 5.8 `app/templates/` — Jinja2 inheritance
 
@@ -1163,7 +1181,8 @@ focus, through `:has()` on the line's own select; and a spinner on the
 posting button while the post is in flight. Phase 2 added a term's card
 fading in, hover fades on the Learn page's contents and quiz, and hover
 shadows on its account-type cards. Phase 4 added the overview's equation
-cards fading in a background under the pointer, as Stitch's do. The spinner is the only motion a
+cards fading in a background under the pointer, as Stitch's do, and Phase 5
+the transaction cards and the filter chips doing the same. The spinner is the only motion a
 script switches on, `static/js/post-transaction.js`, which also ignores
 a second click; without it the form posts the same. On desktops the
 header stays at the top with a frosted backdrop. Nothing loops forever or
@@ -1200,6 +1219,21 @@ with "=" and "+" between them and a "Holds" badge, and the same sum
 written out on one line under them. The operators are hidden from screen
 readers, which hear "equals" and "plus" instead. On a phone the cards
 stack, with each operator on its own line.
+
+**The transaction list** (`transactions.html`) is a list of cards, each
+with its number (`sequence`, the posting order, which the nightly reset
+starts again from 1), its date, a "Balanced" badge, its accounts by side and
+its amount. The title is the card's only link, stretched over the card by
+a `::after`, so a click anywhere opens it, the focus ring goes round the
+whole card, and the list still has one link per transaction. No term sits
+inside a card, since a button can't sit inside a link. **A transaction's
+page** (`transaction_detail.html`) puts the debit and credit entries side by
+side, each line with what it does to its account, the totals per currency
+under a double rule, and under them debits minus credits in each currency.
+Notes appear when they apply: more than one entry on a side links to the
+January example on `/learn`, more than one currency to the two-currency one.
+It ends by saying a posted transaction is never edited, and how a mistake
+is put right.
 
 **Text hidden for screen readers stays inside its card.** `.sr-only` is
 absolutely positioned, and with no positioned ancestor it escaped the
@@ -1376,6 +1410,7 @@ workflow runs it every night (§5.13).
 | `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
 | `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
 | `test_posting_form.py` | partly | every refusal of the posting form worded by its rule, from the domain's own errors; the balance panel as the server draws it, per currency; uneven or missing lines a 422; all of a form's problems at once, each marked on its line; the demo's wording; a resubmission landing on the transaction with "Already posted."; add and remove without JavaScript, not counted as writes; typed values never logged (§5.7, §5.8, §5.15) |
+| `test_transactions_pages.py` | partly | the list's amount per currency, the debit total and never both sides added, in currency order; each account named once, then "and N more"; "Doesn't balance" if one didn't; the chips, each dropping only its filter; the pager's line, a page past the end, an empty filter; the form's empty dates; one detail link per card; a transaction's page: what each entry does by type and side, totals and the balance per currency, the notes only when they apply, its terms once, the event log's page holding its event; the overview's recent table showing the same amounts (§5.7, §5.8) |
 | `test_overview.py` | partly | the equation per currency, in currency order, without currencies that have no entries, with a loss negative and "Doesn't hold" if it didn't; the steps' links to the filled-in form, the oldest account of a name, none without every account; the notes, only for 1–3 and only on the demo; each step's form, its note kept through a redraw and a refusal; the first step posting, the equation still holding; every term on the demo's overview once (§5.7, §5.8) |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
@@ -1968,10 +2003,10 @@ which replays the log into a fresh read model.
 **HTTP layer** — health check, and seven server-rendered pages: overview
 with the accounting equation per currency, per-account balances and
 normal-side signs, and on the demo three guided "try it" steps, event log with
-pagination, the filterable paginated transaction list, transaction posting
+pagination, the filterable paginated transaction list with each one's amount per currency, transaction posting
 form with a live per-currency balance panel and refusals that explain the
 rule broken, transaction detail with debit/credit
-columns, account creation, and a Learn page that explains double-entry,
+columns, what each entry does and the balance per currency, account creation, and a Learn page that explains double-entry,
 with key terms defined where the pages use them.
 
 **JSON API** — `POST`/`GET /api/accounts`, `POST /api/transactions` with a

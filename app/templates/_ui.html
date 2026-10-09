@@ -54,6 +54,19 @@
 {%- if p.learn %} <a class="learn-link" href="/learn#{{ p.learn[0] }}">{{ p.learn[1] }}{{ icon("arrow-forward") }}</a>{% endif %}
 {%- endmacro %}
 
+{#- A transaction's amount (app/transactions_view.summaries): its debit total in
+    each currency, which is also its credit total, never added across
+    currencies. label=True says so in front of it, as the list's cards do. If a
+    transaction didn't balance, both sides are shown. -#}
+{% macro amount(summary, label=False) -%}
+{%- if summary.balanced -%}
+{%- if label %}<span class="muted">Debits = credits</span> {% endif -%}
+{%- for t in summary.totals %}<span class="num">{{ t.currency }} {{ t.debits|money }}</span>{% if not loop.last %} · {% endif %}{% endfor -%}
+{%- else -%}
+{%- for t in summary.totals %}<span class="num">Debits {{ t.currency }} {{ t.debits|money }}, credits {{ t.currency }} {{ t.credits|money }}</span>{% if not loop.last %} · {% endif %}{% endfor -%}
+{%- endif -%}
+{%- endmacro %}
+
 {#- A timestamp in UTC, as every page shows them, with the exact instant
     machine-readable. -#}
 {% macro when(value, seconds=False) -%}

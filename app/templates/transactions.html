@@ -1,54 +1,89 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
 {% block title %}Transactions{% endblock %}
+
+{#- The accounts on one side of a card: "Office rent, Software subscriptions". -#}
+{% macro accounts(side) -%}
+{{ side.shown|join(", ") }}{% if side.more %} and {{ side.more }} more{% endif %}
+{%- endmacro %}
+
 {% block content %}
-<div class="page-head">
-  <p class="eyebrow">Journal</p>
-  <h1>Transactions</h1>
-  <p class="lede">Every posted transaction. Open one to see its {{ ui.term("debit", "debit") }} and {{ ui.term("credit", "credit") }} entries side by side.</p>
+<div class="page-head page-head-action">
+  <div>
+    <p class="eyebrow">Journal</p>
+    <h1>Transactions</h1>
+    <p class="lede">Every posted transaction, newest first. Each one is {{ ui.term("balanced", "balanced") }}: its {{ ui.term("debit", "debits") }} equal its {{ ui.term("credit", "credits") }} in every currency. Open one to see its entries side by side.</p>
+  </div>
+  <a class="btn btn-primary" href="/post-transaction">{{ ui.icon("add") }}Post transaction</a>
 </div>
 
 <div class="stack">
-  <form method="get" action="/transactions" class="card card-body filters" role="search" aria-label="Filter transactions">
-    <label class="field"><span class="field-label">Description contains</span><input class="input" type="search" name="q" value="{{ q }}" placeholder="e.g. invoice"></label>
-    <label class="field"><span class="field-label">From</span><input class="input" type="date" name="date_from" value="{{ date_from }}"></label>
-    <label class="field"><span class="field-label">To</span><input class="input" type="date" name="date_to" value="{{ date_to }}"></label>
-    <div class="filter-actions">
-      <button class="btn btn-primary" type="submit">Filter</button>
-      {% if is_filtered %}<a href="/transactions">Clear</a>{% endif %}
+  <form method="get" action="/transactions" class="card card-body filters-card" role="search" aria-label="Filter transactions">
+    <div class="filters">
+      <label class="field"><span class="field-label">Description contains</span><span class="input-search">{{ ui.icon("search") }}<input class="input" type="search" name="q" value="{{ q }}" placeholder="e.g. invoice"></span></label>
+      <label class="field"><span class="field-label">From</span><input class="input" type="date" name="date_from" value="{{ date_from }}" aria-describedby="dates-hint"></label>
+      <label class="field"><span class="field-label">To</span><input class="input" type="date" name="date_to" value="{{ date_to }}" aria-describedby="dates-hint"></label>
+      <div class="filter-actions">
+        <button class="btn btn-primary" type="submit">Filter</button>
+      </div>
     </div>
+    <p class="field-hint" id="dates-hint">Dates are days in UTC, like every time on these pages.</p>
+    {%- if chips %}
+    <div class="chips">
+      <span class="chips-label">Showing only:</span>
+      <ul>
+        {%- for chip in chips %}
+        <li><a class="chip" href="{{ chip.href }}">{{ chip.label }}<span class="sr-only">, remove this filter</span>{{ ui.icon("close") }}</a></li>
+        {%- endfor %}
+      </ul>
+      <a class="link-action" href="/transactions">Clear all</a>
+    </div>
+    {%- endif %}
   </form>
 
-  <section class="card" aria-labelledby="list-heading">
-    <div class="card-head">
+  <section aria-labelledby="list-heading">
+    <div class="list-head">
       <h2 id="list-heading">Journal</h2>
       <p>{{ total }} transaction{{ '' if total == 1 else 's' }}{% if is_filtered %} matching{% endif %}, newest first.</p>
     </div>
-    <div class="table-scroll" role="region" aria-labelledby="list-heading" tabindex="0">
-      <table class="ledger">
-        <thead>
-          <tr><th scope="col">Description</th><th scope="col">Created</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Volume</th></tr>
-        </thead>
-        <tbody>
-          {% for transaction in transactions %}
-          <tr>
-            <td><a href="/transaction-detail/{{ transaction.id }}">{{ transaction.description or "Untitled transaction" }}</a></td>
-            <td class="muted">{{ ui.when(transaction.created_at) }}</td>
-            <td class="num">{{ transaction.entry_count }}</td>
-            <td class="num">{{ transaction.entry_volume|money }}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="4" class="empty">{% if is_filtered %}No transactions match that filter.{% else %}No posted transactions.{% endif %}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {%- if transactions %}
+    <p class="section-intro">Each amount is the transaction's total debits, which equal its total credits, per currency.</p>
+    <ol class="tx-list">
+      {%- for transaction in transactions %}
+      {%- set summary = summaries.get(transaction.id) %}
+      <li class="card tx-card">
+        <div class="tx-top">
+          <p class="tx-meta"><span class="tx-number">No. {{ transaction.sequence }}</span> · {{ ui.when(transaction.created_at) }}</p>
+          {%- if summary %}
+          {%- if summary.balanced %}{{ ui.balanced() }}{% else %}<span class="badge badge-off">{{ ui.icon("error") }}Doesn't balance</span>{% endif %}
+          {%- endif %}
+        </div>
+        <h3 class="tx-title"><a class="tx-link" href="/transaction-detail/{{ transaction.id }}">{{ transaction.description or "Untitled transaction" }}</a></h3>
+        <div class="tx-bottom">
+          {%- if summary %}
+          <p class="tx-sides">{{ ui.side("debit") }} {{ accounts(summary.debit) }}<span class="tx-swap" aria-hidden="true">⇄</span><span class="sr-only">, </span>{{ ui.side("credit") }} {{ accounts(summary.credit) }}</p>
+          <p class="tx-amount">{{ ui.amount(summary, label=True) }}</p>
+          {%- else %}
+          <p class="tx-sides muted">No entries.</p>
+          {%- endif %}
+        </div>
+      </li>
+      {%- endfor %}
+    </ol>
+    {%- elif pager.past_the_end %}
+    <p class="card empty">{{ pager.past_the_end_text }} <a href="/transactions?page={{ pager.pages }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Go to page {{ pager.pages }}</a></p>
+    {%- elif is_filtered %}
+    <p class="card empty">No transactions match that filter. <a href="/transactions">Clear filters</a></p>
+    {%- else %}
+    <p class="card empty">No posted transactions.</p>
+    {%- endif %}
   </section>
 </div>
 
-{% if page > 1 or page * page_size < total %}
+{% if not pager.past_the_end and (page > 1 or page * page_size < total) %}
 <nav class="pager" aria-label="Pages">
   {% if page > 1 %}<a class="btn btn-secondary" href="/transactions?page={{ page - 1 }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">{{ ui.icon("arrow-back") }}Newer</a>{% endif %}
+  <p class="pager-line">{{ pager.line }}</p>
   {% if page * page_size < total %}<a class="btn btn-secondary older" href="/transactions?page={{ page + 1 }}{% if filter_qs %}&{{ filter_qs }}{% endif %}">Older{{ ui.icon("arrow-forward") }}</a>{% endif %}
 </nav>
 {% endif %}

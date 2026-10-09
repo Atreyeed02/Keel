@@ -1,6 +1,35 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
 {% block title %}Transaction{% endblock %}
+
+{#- One side's entries and its totals per currency. Each amount is the only
+    <strong> in its line. -#}
+{% macro side_column(side, entries, totals, label) -%}
+{%- set debit = side == "debit" -%}
+<section class="side-panel side-panel-{{ side }}" aria-labelledby="{{ side }}s-heading">
+  <div class="side-panel-head">
+    <h3 id="{{ side }}s-heading">{{ ui.side(side, hidden=True) }}{{ "Debit" if debit else "Credit" }} entries</h3>
+    <p>{{ entries|length }} entr{{ "y" if entries|length == 1 else "ies" }}</p>
+  </div>
+  <ul class="entries">
+    {%- for entry in entries %}
+    <li>
+      <div class="entry-main"><span class="entry-account">{{ entry.name }}</span><span class="entry-amount"><small class="mono muted">{{ entry.currency }}</small> <strong>{{ entry.amount|money }}</strong></span></div>
+      <p class="entry-effect">{{ ui.icon("south-west" if debit else "north-east") }}{{ entry.effect }}</p>
+    </li>
+    {%- else %}
+    <li class="empty">No {{ side }} entries.</li>
+    {%- endfor %}
+  </ul>
+  {%- if totals %}
+  <div class="entries-total">
+    <span>{{ label }}</span>
+    <span class="total-figures">{% for t in totals %}<span class="num">{{ t.currency }} {{ (t.debits if debit else t.credits)|money }}</span>{% endfor %}</span>
+  </div>
+  {%- endif %}
+</section>
+{%- endmacro %}
+
 {% block content %}
 {% if notice %}
 <div role="status" class="alert alert-note">
@@ -8,49 +37,76 @@
   <p>{{ ui.problem(notice) }}</p>
 </div>
 {% endif %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol>
+    <li><a href="/transactions">Transactions</a></li>
+    <li><span aria-current="page">No. {{ transaction.sequence }}</span></li>
+  </ol>
+</nav>
 <div class="page-head">
-  <p class="eyebrow">Journal entry</p>
-  <h1>Transaction detail</h1>
-  <p class="lede">{{ transaction.description or "Untitled transaction" }}</p>
-  <p class="meta">{{ transaction.id }} · {{ ui.when(transaction.created_at) }}</p>
+  <p class="eyebrow">Transaction No. {{ transaction.sequence }}</p>
+  <h1>{{ transaction.description or "Untitled transaction" }}</h1>
+  <dl class="facts">
+    <div><dt>Posted</dt><dd>{{ ui.when(transaction.created_at, seconds=True) }}</dd></div>
+    <div><dt>Currencies</dt><dd class="mono">{{ totals|map(attribute="currency")|join(", ") if totals else "None" }}</dd></div>
+    <div><dt>Entries</dt><dd>{{ entries_line }}</dd></div>
+    <div><dt>Transaction ID</dt><dd class="mono">{{ transaction.id }}</dd></div>
+  </dl>
 </div>
 
 <div class="stack">
-  <div class="columns">
-    <section class="card" aria-labelledby="debits-heading">
-      <div class="card-head"><h2 id="debits-heading">{{ ui.side("debit", hidden=True) }}Debit entries</h2></div>
-      <ul class="entries">
-        {%- for entry in debits %}
-        <li><span>{{ entry.name }} <small class="mono muted">{{ entry.currency }}</small></span><strong>{{ entry.amount|money }}</strong></li>
-        {%- else %}
-        <li class="empty">No debit entries.</li>
-        {%- endfor %}
-      </ul>
-      <p class="entries-total"><span>Total</span><span class="num">{{ debit_total|money }}</span></p>
-    </section>
-    <section class="card" aria-labelledby="credits-heading">
-      <div class="card-head"><h2 id="credits-heading">{{ ui.side("credit", hidden=True) }}Credit entries</h2></div>
-      <ul class="entries">
-        {%- for entry in credits %}
-        <li><span>{{ entry.name }} <small class="mono muted">{{ entry.currency }}</small></span><strong>{{ entry.amount|money }}</strong></li>
-        {%- else %}
-        <li class="empty">No credit entries.</li>
-        {%- endfor %}
-      </ul>
-      <p class="entries-total"><span>Total</span><span class="num">{{ credit_total|money }}</span></p>
-    </section>
-  </div>
+  <section class="card" aria-labelledby="entries-heading">
+    <div class="card-head">
+      <h2 id="entries-heading">The entries</h2>
+      <p>Every entry is a {{ ui.term("debit", "debit") }} or a {{ ui.term("credit", "credit") }}. Whether it increases or decreases an account depends on the account's {{ ui.term("normal-side", "normal side") }}.</p>
+    </div>
+    <div class="card-body">
+      <div class="columns">
+        {{ side_column("debit", debits, totals, "Total debits") }}
+        {{ side_column("credit", credits, totals, "Total credits") }}
+      </div>
+      {%- if totals %}
+      <div class="balance-proof">
+        <div class="balance-proof-head">
+          {%- if balanced %}
+          {{ ui.balanced() }}
+          <p>Debits equal credits in every currency, so this transaction is {{ ui.term("balanced", "balanced") }}.</p>
+          {%- else %}
+          <span class="badge badge-off">{{ ui.icon("error") }}Doesn't balance</span>
+          <p>Debits and credits differ, so this transaction isn't {{ ui.term("balanced", "balanced") }}.</p>
+          {%- endif %}
+        </div>
+        <ul class="proof-lines">
+          {%- for t in totals %}
+          <li class="sum"><span class="proof-currency">{{ t.currency }}</span> <span class="proof-sum">{{ t.debits|money }} − {{ t.credits|money }} = {{ t.difference|money }}</span></li>
+          {%- endfor %}
+        </ul>
+        {%- if totals|length > 1 %}
+        <p>Each currency balances by itself: Keel can't convert between currencies inside one transaction. <a class="learn-link" href="/learn#example-two-currencies">Why: two currencies{{ ui.icon("arrow-forward") }}</a></p>
+        {%- endif %}
+        {%- if shape_note %}
+        <p>{{ shape_note }} <a class="learn-link" href="/learn#example-january">Example: January's operating costs{{ ui.icon("arrow-forward") }}</a></p>
+        {%- endif %}
+      </div>
+      {%- endif %}
+    </div>
+  </section>
 
   <section class="card" aria-labelledby="event-heading">
-    <div class="card-head"><h2 id="event-heading">Linked event</h2></div>
-    <div class="card-body">
+    <div class="card-head"><h2 id="event-heading"><span>Recorded as an {{ ui.term("event", "event") }}</span></h2></div>
+    <div class="card-body event-body">
       {% if event %}
-      <p class="mono">{{ event.id }}</p>
-      <p class="meta"><span class="badge badge-code">{{ event.event_type }}</span> · {{ ui.when(event.created_at, seconds=True) }}</p>
+      <div>
+        <p class="event-line"><span class="tx-number">Event No. {{ event.sequence }}</span> · <span class="badge badge-code">{{ event.event_type }}</span> · {{ ui.when(event.created_at, seconds=True) }}</p>
+        <p class="meta">{{ event.id }}</p>
+      </div>
+      <a class="link-action" href="/event-log?page={{ event_page }}">See it in the event log{{ ui.icon("arrow-forward") }}</a>
       {% else %}
       <p>No event was found for this transaction.</p>
       {% endif %}
     </div>
   </section>
+
+  <p class="page-note">{{ ui.icon("info") }}<span>Keel never edits a posted transaction. To fix a mistake, post one with the same entries on the opposite sides, then post the right one. <a class="learn-link" href="/learn#events">How Keel records it{{ ui.icon("arrow-forward") }}</a></span></p>
 </div>
 {% endblock %}
