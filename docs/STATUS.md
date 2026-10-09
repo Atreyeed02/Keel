@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-09.** A snapshot of what is actually built, what is
+**As of 2026-10-10.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Seventeen PRs are merged into `main`, with regular merge commits, and their
+Eighteen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -32,6 +32,7 @@ branches deleted:
 | [#15](https://github.com/Atreyeed02/Keel/pull/15) | `feat/ui-learn` | `4484adc` |
 | [#16](https://github.com/Atreyeed02/Keel/pull/16) | `feat/ui-posting-form` | `370e904` |
 | [#17](https://github.com/Atreyeed02/Keel/pull/17) | `feat/ui-overview` | `d1effe4` |
+| [#18](https://github.com/Atreyeed02/Keel/pull/18) | `feat/ui-transactions` | `fce1d7e` |
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -69,15 +70,35 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-transactions`**, the redesign's fifth phase, rebuilds the
+**`feat/ui-event-log`**, the redesign's sixth phase, turns the event log
+into a timeline (§2, "HTTP"): each event in words from its own payload, the
+raw event folded away under it, and a card on how the log works, the
+nightly reset included. Checked on that branch; it adds no migration and no
+dependency:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **419 tests** |
+| `pytest` (no database available) | 276 passed, 143 skipped |
+| `pytest` (local Postgres 16) | 419 passed |
+| Unchanged | `/event-log` and `?page=`, 25 a page, the transaction page's link to the event log's page holding its event, the JSON API and its tests |
+| New tests fail without their change | 13 deliberate breaks, one at a time, each failed a test: entries out of their recorded order, damaged data shown as balanced, the normal side ignoring the type, an old payload's version unexplained, account names or transaction numbers not looked up, the example or the reset sentence outside the demo, the example not undoing the demo's own rent, the raw event open by default, the pager saying "transactions", "1 events", the raw payload dropped |
+| Headless Chrome, seeded demo data | the event log, with and without raw events open, in light and dark, at 1280 px and 390 px (8 renders): no CSP violation, console error, failed request, or page wider than the screen; on a phone, with every raw event open, nothing overflows |
+| The timeline | 18 events, newest first. Event No. 13: "Transaction posted: January operating costs", its three entries by name, "Balanced Debits = credits USD 2,718.50", "Open transaction No. 5". Event No. 1: "Account opened: Cash", "Asset · USD · normal side Debit". The raw event opens with Enter, and with JavaScript off |
+| The example | "For example, undoing February's rent (No. 6) would be:" in a dashed box with no number, time or marker; only on the demo, and it is the demo's own No. 6 with its sides swapped |
+| Contrast | the new text at least 5.25:1 in both themes; the markers' outlines at least 3.53:1 |
+| Motion | none added: Stitch's timeline has none |
+
+**#18, `feat/ui-transactions`**, the redesign's fifth phase, rebuilds the
 transaction list and a transaction's page (§2, "HTTP"), and fixes two
 things on the way. The list's "Volume" added every entry, so each amount
 counted twice and currencies were added together; it is now "Amount", the
 debit total in each currency, on the overview's recent table too. And a
 search by description alone, which the browser sends with both dates empty
 (`date_from=&date_to=`), was answered with a 422 instead of the list, on the
-live site too. Checked on that branch; it adds no migration and no
-dependency:
+live site too. Checked on that branch, then on the live site after
+merging; it adds no migration and no dependency:
 
 | Check | Result |
 |---|---|
@@ -93,6 +114,7 @@ dependency:
 | A transaction's page | No. 5: "Expense: a debit increases it." twice, "Asset: a credit decreases it.", totals under a double rule, "USD 2,718.50 − 2,718.50 = 0.00", and the note on uneven sides. Two currencies: each side's totals per currency, a line per currency, the two-currency note. The event link lands on the event log's page holding the event |
 | Contrast | the new pairs at least 5.02:1 in both themes |
 | Motion | the transaction cards and the filter chips fade in a background under the pointer in 150 ms; under reduced motion, 0 s |
+| Live, on `fce1d7e`, read-only (GET requests only; the browser failed any other request before sending it, and none was attempted) | all seven pages, `/health`, the three steps' forms, a filtered list and a search by description alone send exactly `script-src 'self'`, with no nonce, and `style-src 'self'`, `nosniff`, `DENY` and `same-origin`; nothing inline. The 12 static files are byte-identical to the commit. 7 pages in light and dark at 1280 px and 390 px (28 renders): no CSP violation, console error or failed request, no page wider than the screen; an injected style attribute, `<style>` and inline script were refused. **The 422 is gone:** `/transactions?q=rent&date_from=&date_to=`, the URL the form sends, is 200 with "1 transaction matching" and one chip, also when submitted from the form in the browser; before the merge it was 422 on the live site. A malformed date is still 422. All 10 cards: each one's amount, badge, accounts by side and title match its own page (January's costs "Debits = credits USD 2,718.50"); the overview's recent table says "Amount", has no "Volume", and its 10 amounts match the cards. The chips each link without their filter; page 9 says there's no such page and links to page 1. January's page: what each entry does, the totals, `USD 2,718.50 − 2,718.50 = 0.00`, the note linking to `/learn#example-january`, its five terms once each, and its event linked to the event log's page showing it. A click on a card's corner opens it; the focus ring goes round the card; 150 ms fades, 0 s under reduced motion; nothing cut off on a phone |
 
 **#17, `feat/ui-overview`**, the redesign's fourth phase, opens the overview with
 the accounting equation in each currency, and on the demo adds three "try
@@ -303,7 +325,7 @@ and `alembic check` finds no difference in CI.
 
 All in `app/main.py`, Jinja2 on a shared `base.html`:
 overview with the accounting equation per currency, per-account balances
-and normal-side signs, paginated event log, filterable + paginated transaction list, posting form,
+and normal-side signs, the event log as a paginated timeline, filterable + paginated transaction list, posting form,
 transaction detail with debit/credit columns, account creation, and
 `/learn`, which explains double-entry with the demo's own data and needs
 no database. Plus
@@ -331,7 +353,9 @@ demo notice, open the posting form filled in, with a note for each. The
 transaction list shows each transaction as a card with its accounts by side
 and its amount, the debit total in each currency, and a transaction's page
 says what each entry does to its account and shows the balance in each
-currency (`app/transactions_view.py`). This is
+currency (`app/transactions_view.py`). The event log is a timeline of each
+event in words from its own payload, with the raw event folded away under
+it (`app/event_log.py`). This is
 a redesign done one PR per phase; §6 has the rest.
 
 ### JSON API — four endpoints
@@ -611,11 +635,13 @@ The redesign ships one PR per phase:
    moved to a file and the CSP nonce removed.
 4. **Overview** (#17, merged): the accounting equation per
    currency, and a guided "try it" path from the demo notice.
-5. **Transactions list and detail** (`feat/ui-transactions`): cards with
+5. **Transactions list and detail** (#18, merged): cards with
    each transaction's accounts by side and its amount per currency, the
    filters in force as chips, and a transaction's page saying what each
    entry does, with the balance per currency.
-6. **Event log** as a timeline.
+6. **Event log** as a timeline (`feat/ui-event-log`): each event in words
+   from its own payload, the raw event folded away, and how append-only
+   events and rebuilds work.
 7. **Account detail**, a T-account per account.
 
 Each phase brings the Stitch animations of the elements it builds (card

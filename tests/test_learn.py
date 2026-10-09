@@ -139,7 +139,7 @@ async def test_each_page_defines_its_terms_once_and_every_reference_resolves(dat
         "/": set(GLOSSARY) - {"event"},
         "/transactions": {"debit", "credit", "balanced"},
         "/post-transaction": {"debit", "credit", "balanced"},
-        "/event-log": {"event"},
+        "/event-log": {"event", "balanced", "debit", "credit", "normal-side"},
         "/accounts/new": {"normal-side"},
     }
     for path, html in pages.items():
