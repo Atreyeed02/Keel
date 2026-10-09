@@ -143,7 +143,7 @@
     <div class="table-scroll" role="region" aria-labelledby="recent-heading" tabindex="0">
       <table class="ledger">
         <thead>
-          <tr><th scope="col">Description</th><th scope="col">Created</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Volume</th></tr>
+          <tr><th scope="col">Description</th><th scope="col">Created</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Amount</th></tr>
         </thead>
         <tbody>
           {% for transaction in recent_transactions %}
@@ -151,7 +151,7 @@
             <td><a href="/transaction-detail/{{ transaction.id }}">{{ transaction.description or "Untitled transaction" }}</a></td>
             <td class="muted">{{ ui.when(transaction.created_at) }}</td>
             <td class="num">{{ transaction.entry_count }}</td>
-            <td class="num">{{ transaction.entry_volume|money }}</td>
+            <td class="num">{% if summaries.get(transaction.id) %}{{ ui.amount(summaries[transaction.id]) }}{% endif %}</td>
           </tr>
           {% else %}
           <tr><td colspan="4" class="empty">No posted transactions.</td></tr>

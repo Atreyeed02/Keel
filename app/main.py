@@ -5,13 +5,14 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BeforeValidator
 from sqlalchemy import func, select
 from starlette.types import Scope
 
@@ -72,6 +73,15 @@ from app.posting_messages import (
 )
 from app.ratelimit import RateLimiter, WriteRateLimitMiddleware
 from app.security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
+from app.transactions_view import (
+    effect,
+    entries_line,
+    entry_totals,
+    filter_chips,
+    pager,
+    shape_note,
+    summaries,
+)
 
 configure_logging(settings.log_level)
 
@@ -175,19 +185,20 @@ def _utc_midnight(day: date) -> datetime:
 
 def _transaction_rows():
     """
-    The select behind every transaction listing: id, description, when, how
-    many entries and how much moved. The overview's "recent transactions"
-    table and the /transactions page both build on this, so the two cannot
-    drift into showing different numbers for the same row.
+    The select behind every transaction listing: id, number, description,
+    when, and how many entries. The overview's "recent transactions" table
+    and the /transactions page both build on this, and take each row's
+    amount from `_entry_summaries`, so the two cannot drift into showing
+    different numbers for the same row.
 
     Callers add their own filtering, ordering and limit.
     """
     return (
         select(
             transactions.c.id,
+            transactions.c.sequence,
             transactions.c.description,
             transactions.c.created_at,
-            func.coalesce(func.sum(ledger_entries.c.amount), 0).label("entry_volume"),
             func.count(ledger_entries.c.id).label("entry_count"),
         )
         .outerjoin(ledger_entries, ledger_entries.c.transaction_id == transactions.c.id)
@@ -198,6 +209,37 @@ def _transaction_rows():
             transactions.c.created_at,
         )
     )
+
+
+async def _entry_summaries(conn, rows) -> dict[uuid.UUID, dict[str, Any]]:
+    """
+    The listed transactions' accounts by side and amounts per currency
+    (app/transactions_view.summaries): one query for the page's rows, in each
+    transaction's entry order, as its own page shows them.
+    """
+    ids = [row["id"] for row in rows]
+    if not ids:
+        return {}
+    entries = (
+        await conn.execute(
+            select(
+                ledger_entries.c.transaction_id,
+                ledger_entries.c.entry_type,
+                ledger_entries.c.currency,
+                ledger_entries.c.amount,
+                accounts.c.name,
+            )
+            .join(accounts, accounts.c.id == ledger_entries.c.account_id)
+            .where(ledger_entries.c.transaction_id.in_(ids))
+            .order_by(
+                ledger_entries.c.transaction_id,
+                ledger_entries.c.position.asc().nulls_last(),
+                ledger_entries.c.created_at,
+                ledger_entries.c.id,
+            )
+        )
+    ).mappings()
+    return summaries(entries)
 
 
 templates.env.filters["money"] = _money
@@ -279,6 +321,7 @@ async def read_overview(request: Request):
             .mappings()
             .all()
         )
+        recent_summaries = await _entry_summaries(conn, recent)
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for account in balances:
         grouped[account["account_type"]].append(account)
@@ -292,13 +335,18 @@ async def read_overview(request: Request):
             "accounts_by_type": grouped,
             "totals_by_currency": totals,
             "recent_transactions": recent,
+            "summaries": recent_summaries,
         },
     )
 
 
+# The event log's page size; a transaction's page links to the page holding its event.
+EVENT_LOG_PAGE_SIZE = 25
+
+
 @app.get("/event-log", response_class=HTMLResponse)
 async def read_event_log(request: Request, page: int = Query(1, ge=1)):
-    page_size = 25
+    page_size = EVENT_LOG_PAGE_SIZE
     async with engine.connect() as conn:
         total = await conn.scalar(select(func.count()).select_from(events))
         rows = (
@@ -320,13 +368,20 @@ async def read_event_log(request: Request, page: int = Query(1, ge=1)):
     )
 
 
+# A date filter left empty. The browser sends every field of the filter form,
+# so searching by description alone arrives as `date_from=&date_to=`: that
+# means no date filter, not a malformed date. Anything else still has to be
+# a date.
+OptionalDate = Annotated[date | None, BeforeValidator(lambda value: value or None), Query()]
+
+
 @app.get("/transactions", response_class=HTMLResponse)
 async def read_transactions(
     request: Request,
     page: int = Query(1, ge=1),
     q: str | None = Query(None, description="case-insensitive substring of the description"),
-    date_from: date | None = Query(None),
-    date_to: date | None = Query(None),
+    date_from: OptionalDate = None,
+    date_to: OptionalDate = None,
 ):
     """
     The full transaction list, paginated the same way /event-log is.
@@ -371,6 +426,7 @@ async def read_transactions(
             .mappings()
             .all()
         )
+        listed = await _entry_summaries(conn, rows)
 
     active = {
         key: value
@@ -392,6 +448,9 @@ async def read_transactions(
             # filter state in the template
             "filter_qs": urlencode({k: str(v) for k, v in active.items()}),
             "is_filtered": bool(active),
+            "summaries": listed,
+            "chips": filter_chips(q, date_from, date_to),
+            "pager": pager(page, page_size, total or 0),
         },
     )
 
@@ -610,8 +669,20 @@ async def read_transaction_detail(
             .mappings()
             .first()
         )
+        # the event log is newest first, so its page is set by the events after this one
+        event_page = None
+        if event is not None:
+            newer = await conn.scalar(
+                select(func.count())
+                .select_from(events)
+                .where(events.c.sequence > event["sequence"])
+            )
+            event_page = newer // EVENT_LOG_PAGE_SIZE + 1
+    for row in entry_rows:
+        row["effect"] = effect(row["account_type"], row["entry_type"])
     debits = [row for row in entry_rows if row["entry_type"] == "debit"]
     credits = [row for row in entry_rows if row["entry_type"] == "credit"]
+    totals = entry_totals(entry_rows)
     return templates.TemplateResponse(
         request=request,
         name="transaction_detail.html",
@@ -619,9 +690,13 @@ async def read_transaction_detail(
             "transaction": transaction,
             "debits": debits,
             "credits": credits,
-            "debit_total": sum((row["amount"] for row in debits), Decimal()),
-            "credit_total": sum((row["amount"] for row in credits), Decimal()),
+            # each side's total in each currency, and the difference, never across currencies
+            "totals": totals,
+            "balanced": bool(totals) and all(t["difference"] == 0 for t in totals),
+            "entries_line": entries_line(len(debits), len(credits)),
+            "shape_note": shape_note(len(debits), len(credits)),
             "event": event,
+            "event_page": event_page,
             # the posting form sent a resubmission here instead of posting twice
             "notice": ALREADY_POSTED if already else None,
         },
