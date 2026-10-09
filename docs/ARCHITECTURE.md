@@ -1201,7 +1201,11 @@ a second click; without it the form posts the same. On desktops the
 header stays at the top with a frosted backdrop. Nothing loops forever or
 flashes, and under `prefers-reduced-motion: reduce` every animation and
 transition stops and the spinner is hidden. `tests/test_stylesheet.py`
-holds the stylesheet to both rules.
+holds the stylesheet to both rules, and to a third: no selector is styled
+in two top-level rules unless it's listed with its reason, the motion
+section's repeats or a rule the selectors share followed by each one's own.
+A new class reusing another page's name would otherwise restyle that page
+too, as the event log's first `.example` did to `/learn`'s worked examples.
 
 **The posting form** (`post_transaction.html`, `static/js/post-transaction.js`).
 Each line is a `<fieldset>` with a visually hidden legend ("Line 2") and
@@ -1237,7 +1241,8 @@ stack, with each operator on its own line.
 never changed, so a mistake is undone by a balanced transaction with the
 same entries on the opposite sides, and the tables beside the log are
 rebuilt by replaying it. The demo's example of that is a dashed, unfilled
-box with no number, time or marker, so it can't be taken for an event. The
+box with no number, time or marker (`.reversal-example`; `.example` is
+`/learn`'s), so it can't be taken for an event. The
 timeline is a list with a spine and a marker per event, each event a card:
 its number, type and time, a heading in words, what it recorded, and its
 raw event in a native `<details>`, folded away, so it opens with the
@@ -1439,7 +1444,7 @@ workflow runs it every night (§5.13).
 | `test_event_log_page.py` | partly | each event in words from its own payload: a posted transaction's entries by name in position order, totals per currency, "Doesn't balance" on damaged data, an unknown account by id, "Untitled transaction"; an opened account's type, currency and normal side; an event type without words; the raw event as stored, folded away, old payloads' version; the explainer, its example (checked against the seed) and the reset sentence only on the demo; terms once; the pager and a page past the end; "1 event" and "No events yet." (§5.7, §5.8) |
 | `test_transactions_pages.py` | partly | the list's amount per currency, the debit total and never both sides added, in currency order; each account named once, then "and N more"; "Doesn't balance" if one didn't; the chips, each dropping only its filter; the pager's line, a page past the end, an empty filter; the form's empty dates; one detail link per card; a transaction's page: what each entry does by type and side, totals and the balance per currency, the notes only when they apply, its terms once, the event log's page holding its event; the overview's recent table showing the same amounts (§5.7, §5.8) |
 | `test_overview.py` | partly | the equation per currency, in currency order, without currencies that have no entries, with a loss negative and "Doesn't hold" if it didn't; the steps' links to the filled-in form, the oldest account of a name, none without every account; the notes, only for 1–3 and only on the demo; each step's form, its note kept through a redraw and a refusal; the first step posting, the equation still holding; every term on the demo's overview once (§5.7, §5.8) |
-| `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
+| `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition; no selector is styled in two top-level rules unless listed with its reason (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
 | `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |

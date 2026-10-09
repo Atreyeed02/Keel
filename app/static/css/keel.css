@@ -1314,6 +1314,7 @@ main.wrap {
 .pager {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
   margin-top: var(--space-md);
@@ -2269,10 +2270,6 @@ ul.sides {
   font-weight: 400;
 }
 
-.pager {
-  align-items: center;
-}
-
 .pager-line {
   color: var(--text-muted);
   font-size: 0.875rem;
@@ -2504,21 +2501,21 @@ ul.sides {
 
 /* an example, never posted: dashed and unfilled, with no number, time or
    marker, so it can't be taken for one of the events below */
-.example {
+.reversal-example {
   margin-top: var(--space-md);
   padding: 0.75rem var(--space-md);
   border: 1px dashed var(--control);
   border-radius: var(--radius-control);
 }
 
-.example-label {
+.reversal-example-label {
   color: var(--text-muted);
   font-size: 0.8125rem;
   font-style: italic;
   line-height: 1.25rem;
 }
 
-.example-lines {
+.reversal-example-lines {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2529,13 +2526,13 @@ ul.sides {
   line-height: 1.25rem;
 }
 
-.example-lines > span {
+.reversal-example-lines > span {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
 }
 
-.example-sep {
+.reversal-example-sep {
   color: var(--text-muted);
 }
 

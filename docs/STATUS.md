@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Eighteen PRs are merged into `main`, with regular merge commits, and their
+Nineteen PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -33,6 +33,7 @@ branches deleted:
 | [#16](https://github.com/Atreyeed02/Keel/pull/16) | `feat/ui-posting-form` | `370e904` |
 | [#17](https://github.com/Atreyeed02/Keel/pull/17) | `feat/ui-overview` | `d1effe4` |
 | [#18](https://github.com/Atreyeed02/Keel/pull/18) | `feat/ui-transactions` | `fce1d7e` |
+| [#19](https://github.com/Atreyeed02/Keel/pull/19) | `feat/ui-event-log` | `0faa9df` |
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -70,10 +71,35 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-event-log`**, the redesign's sixth phase, turns the event log
+**`fix/reversal-example-class`** fixes a regression #19 put on the live
+site. #19 named the event log's reversal example `.example`, a class
+`/learn` already used for its five worked examples. Its rule came later in
+`keel.css`, so it won: on the live site `/learn`'s boxes got a dashed
+border, less padding, smaller corners and 16 px more space above, and the
+event log's box took `/learn`'s fill. #19's checks looked for errors and
+overflow, not for pages that changed without meaning to, so none caught it;
+the live check after merging did. The event log's classes are now
+`.reversal-example` and its parts, Phase 5's second `.pager` rule is folded
+into the first, and a stylesheet test fails when a selector is styled in
+two top-level rules unless it's on one of two lists with its reason: the
+motion section's own repeats, and the shared-then-own pairs (`h1`, `h2`,
+`.t-side li`, `.t-total`). Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **420 tests** |
+| `pytest` (no database available) | 277 passed, 143 skipped |
+| `pytest` (local Postgres 16) | 420 passed |
+| The new stylesheet test | fails on `0faa9df`'s stylesheet, naming `.example` and `.pager`; passes on the branch |
+| Every page, `main` (`0faa9df`) against the branch, same seeded data | 9 pages (the overview, the list and a filtered list, a transaction, the posting form and a `?try=` step, the event log, a new account, `/learn`) × light/dark × 1280/390 px, 36 pairs, compared pixel by pixel with every animation finished: only `/learn` (from its first worked example down, 60 px taller) and the event log's example box differ, as intended; the other 28 pairs are identical |
+| `/learn` against `fce1d7e`, before the regression | identical in all four views |
+| The pager | the same computed style on `main` and the branch (it doesn't show on the seeded data, which fits on one page) |
+
+**#19, `feat/ui-event-log`**, the redesign's sixth phase, turns the event log
 into a timeline (§2, "HTTP"): each event in words from its own payload, the
 raw event folded away under it, and a card on how the log works, the
-nightly reset included. Checked on that branch; it adds no migration and no
+nightly reset included. Checked on that branch, then on the live site after merging; it adds no migration and no
 dependency:
 
 | Check | Result |
@@ -89,6 +115,7 @@ dependency:
 | The example | "For example, undoing February's rent (No. 6) would be:" in a dashed box with no number, time or marker; only on the demo, and it is the demo's own No. 6 with its sides swapped |
 | Contrast | the new text at least 5.25:1 in both themes; the markers' outlines at least 3.53:1 |
 | Motion | none added: Stitch's timeline has none |
+| Live, on `0faa9df`, read-only (GET requests only; the browser failed any other request before sending it, and none was attempted) | headers on all seven pages, `/health`, the steps' forms, a filtered list and a search by description alone exact, no nonce, nothing inline; the 12 static files byte-identical to the commit; 28 renders clean, injected style and script refused. The event log: 18 events, No. 18 down to No. 1 with no gaps, every raw event folded, no "Doesn't balance". All 8 opened accounts match their payloads. All 10 "Open transaction" links land on the right transaction (its title, number, event id, entries in order and event number), and each transaction page's link to the event log points to the page holding its event; January's round trip lands on it. The example on the live demo, labelled "For example, undoing February's rent (No. 6) would be:", is the live No. 6 with its sides swapped, with no number, time or marker; the reset sentence is there. Its terms once each; page 9's message; Enter and JavaScript off open a raw event; nothing overflows on a phone. **It also found a regression:** the event log's `.example` restyled `/learn`'s worked examples, fixed by `fix/reversal-example-class` (above) |
 
 **#18, `feat/ui-transactions`**, the redesign's fifth phase, rebuilds the
 transaction list and a transaction's page (§2, "HTTP"), and fixes two
@@ -639,7 +666,7 @@ The redesign ships one PR per phase:
    each transaction's accounts by side and its amount per currency, the
    filters in force as chips, and a transaction's page saying what each
    entry does, with the balance per currency.
-6. **Event log** as a timeline (`feat/ui-event-log`): each event in words
+6. **Event log** as a timeline (#19, merged): each event in words
    from its own payload, the raw event folded away, and how append-only
    events and rebuilds work.
 7. **Account detail**, a T-account per account.
