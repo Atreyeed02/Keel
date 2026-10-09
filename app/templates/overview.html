@@ -5,10 +5,82 @@
 <div class="page-head">
   <p class="eyebrow">Ledger</p>
   <h1>General ledger</h1>
-  <p class="lede">Every posted transaction has equal {{ ui.term("debit", "debits") }} and {{ ui.term("credit", "credits") }} in each currency, so in every currency the two totals below match.</p>
+  <p class="lede">Every posted transaction has equal {{ ui.term("debit", "debits") }} and {{ ui.term("credit", "credits") }} in each currency, so in every currency the trial balance's two totals match.</p>
 </div>
 
 <div class="stack">
+  {#- The accounting equation, once per currency (app/overview.equations). -#}
+  <section class="card" id="equation" aria-labelledby="equation-heading">
+    <div class="card-head"><h2 id="equation-heading">The accounting equation</h2></div>
+    <div class="card-body equation">
+      <p>In every currency, what the business owns equals what it owes plus its owners' stake:</p>
+      <p class="formula">{{ ui.term("asset", "Assets") }} = {{ ui.term("liability", "Liabilities") }} + {{ ui.term("equity", "Equity") }} + ({{ ui.term("revenue", "Revenue") }} − {{ ui.term("expense", "Expenses") }})</p>
+      {%- for eq in equations %}
+      <section class="eq-currency" aria-labelledby="eq-{{ eq.currency }}">
+        <div class="eq-head">
+          <h3 id="eq-{{ eq.currency }}" class="mono">{{ eq.currency }}</h3>
+          {%- if eq.holds %}
+          <span class="badge badge-ok">{{ ui.icon("check-circle") }}Holds</span>
+          {%- else %}
+          <span class="badge badge-off">{{ ui.icon("error") }}Doesn't hold</span>
+          {%- endif %}
+        </div>
+        <div class="eq-row">
+          {%- for label, side, value, caption, op in [
+            ("Assets", "debit", eq.assets, "What it owns", ("=", "equals")),
+            ("Liabilities", "credit", eq.liabilities, "What it owes", ("+", "plus")),
+            ("Equity", "credit", eq.equity, "What the owners put in", ("+", "plus")),
+            ("Revenue − Expenses", none, eq.earned, "Earned %s, spent %s"|format(eq.revenue, eq.expenses), none),
+          ] %}
+          <div class="eq-card">
+            <p class="eq-label">{{ label }}{% if side %} <span class="sr-only">normal side</span>{{ ui.side(side, long=True) }}{% endif %}</p>
+            <p class="eq-value num">{{ value }}</p>
+            <p class="eq-caption">{{ caption }}</p>
+          </div>
+          {%- if op %}
+          <span class="eq-op" aria-hidden="true">{{ op[0] }}</span><span class="sr-only">{{ op[1] }}</span>
+          {%- endif %}
+          {%- endfor %}
+        </div>
+        <p class="sum eq-sum">{{ eq.assets }} = {{ eq.liabilities }} + {{ eq.equity }} + ({{ eq.revenue }} − {{ eq.expenses }})</p>
+      </section>
+      {%- else %}
+      <p class="empty">No entries yet.</p>
+      {%- endfor %}
+      <p class="eq-note">{{ ui.icon("info") }}<span>Every posted transaction is {{ ui.term("balanced", "balanced") }}, so this stays true after each one. <a class="learn-link" href="/learn#equation">Why it always holds{{ ui.icon("arrow-forward") }}</a></span></p>
+    </div>
+  </section>
+
+  {%- if try_steps %}
+  {#- On the demo: three tries that open the posting form filled in
+      (app/overview.try_steps). The demo notice links here. -#}
+  <section class="card try-it" id="try-it" aria-labelledby="try-heading">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Try it</p>
+        <h2 id="try-heading">Post a transaction and watch the equation</h2>
+      </div>
+    </div>
+    <div class="card-body">
+      <p>Three short tries on the demo's own accounts. Each one opens the posting form already filled in. Nothing is posted until you press Post, and the data resets nightly.</p>
+      <ol class="try-steps">
+        {%- for step in try_steps %}
+        <li>
+          <p><strong>{{ step.title }}</strong> {{ step.text }}</p>
+          <p class="try-actions">
+            <a class="btn btn-secondary" href="{{ step.href }}">Open the form<span class="sr-only"> for step {{ step.number }}</span>{{ ui.icon("arrow-forward") }}</a>
+            {%- if step.learn %}
+            <a class="learn-link" href="/learn#{{ step.learn[0] }}">Why<span class="sr-only">: {{ step.learn[1] }}</span>{{ ui.icon("arrow-forward") }}</a>
+            {%- endif %}
+          </p>
+        </li>
+        {%- endfor %}
+      </ol>
+      <p class="try-footer"><span>Each post you make adds an {{ ui.term("event", "event") }} to the event log.</span> <a class="link-action" href="/event-log">Event log{{ ui.icon("arrow-forward") }}</a> <a class="link-action" href="/transactions">Transactions{{ ui.icon("arrow-forward") }}</a></p>
+    </div>
+  </section>
+  {%- endif %}
+
   <section aria-labelledby="totals-heading">
     <h2 id="totals-heading">Trial balance</h2>
     <p class="section-intro">This {{ ui.term("trial-balance", "trial balance") }} adds up every debit and credit entry, per currency.</p>
@@ -45,7 +117,7 @@
         </thead>
         {% for account_type, rows in accounts_by_type.items() %}
         <tbody>
-          <tr><th scope="rowgroup" colspan="5">{{ ui.term(account_type, account_type) if account_type in glossary else account_type }}</th></tr>
+          <tr><th scope="rowgroup" colspan="5">{{ account_type }}</th></tr>
           {% for account in rows %}
           <tr>
             <td>{{ account.name }}</td>

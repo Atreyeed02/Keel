@@ -260,7 +260,7 @@ check the status code, know that it will not notice a lost database.
 | Variable | Required | What it does |
 |---|---|---|
 | `DATABASE_URL` | **yes** | The Postgres URL. `postgres://`, `postgresql://` and `postgresql+asyncpg://` all work, with or without `?sslmode=...`. The only query parameters accepted are `sslmode` and `channel_binding`, and `channel_binding` only as `prefer` or `disable`. The app's driver, asyncpg, can't do channel binding, so `channel_binding=require`, which Neon puts in the URLs it gives you, stops startup: remove it or change it to `prefer`. Any other parameter (`application_name`, `connect_timeout`, `options`, ...) also stops startup, because asyncpg would fail on every connection. |
-| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets nightly, and is the only environment `scripts.reset_demo_data` will run in. |
+| `ENVIRONMENT` | **yes**: `production`, or `demo` for the public demo | Either refuses to start if `DATABASE_URL` is unset or is the local `ledger:ledger@db` default, if the database connection is not encrypted (`DATABASE_SSL`, below), or if `FORWARDED_ALLOW_IPS` is `*` or empty. `demo` also shows a notice on every page saying this is a public demo that resets nightly, linking to the overview's "try it" steps, and is the only environment `scripts.reset_demo_data` will run in. |
 | `PORT` | set by most hosts | Where the server listens. Default 8000. |
 | `FORWARDED_ALLOW_IPS` | **yes** behind a proxy | Proxies whose `X-Forwarded-For` / `-Proto` are believed, as addresses and networks. It decides who the client is: in the logs, and for the write rate limit. On Render: `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (below). Default `127.0.0.1`. `production` and `demo` refuse to start on `*`, alone or in a list, or on an empty value. |
 | `WRITE_RATE_LIMIT`, `WRITE_RATE_WINDOW_SECONDS` | no | Writes (any method but `GET`, `HEAD`, `OPTIONS`) one client may make in any window, forms and API alike; past that, `429` with `Retry-After`. Reads are not limited. Default 30 per 60 seconds; `WRITE_RATE_LIMIT=0` turns it off. |
@@ -493,7 +493,7 @@ pytest -v
 ruff check .
 ```
 
-354 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+370 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -501,8 +501,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 110 database-backed tests are **skipped,
-not failed**. A green run of the remaining 244 is partial coverage:
+Without `TEST_DATABASE_URL`, the 118 database-backed tests are **skipped,
+not failed**. A green run of the remaining 252 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -524,6 +524,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_stylesheet.py` | every animation stops by itself; reduced motion stops all of them |
 | `test_learn.py` | `/learn` without a database, every term's section there, the quiz, the `term` macro, each page's terms defined once |
 | `test_posting_form.py` | every refusal of the posting form worded by its rule, the balance panel as the server draws it, add and remove without JavaScript, the resubmission notice, typed values never logged |
+| `test_overview.py` | the accounting equation per currency, and saying so if it didn't hold; on the demo only, the "try it" steps' links to the filled-in form, their notes kept through a redraw and a refusal, and the first step posting with the equation still holding |
 | `test_proxy_headers.py` | which forwarded headers are believed; the Render chain behind Cloudflare, with `CF-Connecting-IP` believed only when it can be; forged headers, including around Cloudflare, change neither the client nor the write limit |
 | `test_rate_limit.py` | the write rate limit: 429 and an exact `Retry-After`, forms and API sharing one allowance, reads unlimited, IPv6 per /64 |
 | `test_capacity.py` | the account and transaction caps through both interfaces, replays at the cap, uncapped scripts |
@@ -573,13 +574,13 @@ passes `WRITE_RATE_LIMIT`. Details:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/` | balances per account (normal-side signed), totals per currency, recent transactions |
+| `GET` | `/` | the accounting equation per currency (Assets = Liabilities + Equity + (Revenue − Expenses)), totals per currency, balances per account (normal-side signed), recent transactions; on the demo, three "try it" steps that open the posting form filled in |
 | `GET` | `/transactions` | all transactions; `q` (description search), `date_from`, `date_to`, `page` |
 | `GET` | `/transaction-detail/{id}` | one transaction's debits and credits, and its event; `?already=1` after a resubmission says it was already posted |
 | `GET` | `/event-log` | the raw event log, newest first, paginated |
 | `GET` | `/learn` | how double-entry works, with worked examples from the demo's data; needs no database |
 | `GET` / `POST` | `/accounts/new`, `/accounts` | create an account: `name`, `account_type`, `currency` |
-| `GET` / `POST` | `/post-transaction` | post a transaction: repeated `account_id` / `entry_type` / `amount` / `currency` fields, plus `description` and `submission_key`. `GET` takes the same fields, plus `add_line` or `remove_line`, to draw the form again with a line more or fewer: "Add line" and "Remove" without JavaScript |
+| `GET` / `POST` | `/post-transaction` | post a transaction: repeated `account_id` / `entry_type` / `amount` / `currency` fields, plus `description` and `submission_key`. `GET` takes the same fields, plus `add_line` or `remove_line`, to draw the form again with a line more or fewer: "Add line" and "Remove" without JavaScript. On the demo, `try=1`, `2` or `3` (from the overview's steps) shows that step's note, kept while the form is redrawn or refused |
 | `GET` | `/health` | `{"status":"ok","db":"up"}`, or `degraded`/`down` (never raises) |
 
 `POST /post-transaction` answers `302` to the transaction's detail page on
@@ -638,13 +639,14 @@ app/
 ├── client_address.py     who the client is, behind Render and Cloudflare
 ├── glossary.py           the terms the pages define in place, each linked to /learn
 ├── posting_messages.py   the posting form's wording: each refusal, the live balance panel
+├── overview.py           the overview's equation per currency, and the demo's "try it" steps
 ├── main.py               routes and wiring
 └── templates/, static/   Jinja2 pages; the stylesheet, self-hosted fonts and icons
 alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    354 tests; see above
+tests/                    370 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 

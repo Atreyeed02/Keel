@@ -1035,6 +1035,21 @@ join would hide them.
 `account_balances` applies the normal-side sign flip from §2.2, and the
 route groups the rows by `account_type` into a `defaultdict(list)`.
 
+The same rows feed the page's first card, the accounting equation
+(`app/overview.py`, `equations`): for each currency with entries, in
+currency order, the balances added up by type, shown as Assets =
+Liabilities + Equity + (Revenue − Expenses). It always holds, because
+every transaction balances in each currency (§2.3): debit-normal assets
+and expenses on one side, credit-normal liabilities, equity and revenue on
+the other. `equations` still computes `holds` rather than assuming it, so
+a ledger that broke the rule would say "Doesn't hold". On the demo,
+`try_steps` adds three "try it" steps, each a link to the posting form
+filled in through its query string (below): the accounts are found by
+name and currency when the page is drawn, because the nightly reset gives
+them new ids, the oldest winning if a visitor reused a name, and the steps
+are left out if any account is missing. Outside the demo there are no
+steps: they would post examples into a real ledger.
+
 **`GET /event-log`** — paginated, 25 per page, newest first, with a total
 count for the pager.
 
@@ -1093,6 +1108,10 @@ buttons with `formmethod="get"` that come back here with what was typed,
 and the form is drawn with a line more or fewer, never fewer than two.
 Nothing is posted, and a GET is not counted by the write limit. The typed
 values travel in the query string, which no log records (§5.15).
+On the demo, `try=1`, `2` or `3` is one of the overview's steps: the form
+shows the step's note (`overview.try_note`) and carries `try` as a hidden
+field, so the note stays when the form is redrawn or refused. Anything
+else in `try` is ignored, and outside the demo so is `try`.
 
 **`GET /transaction-detail/{id}`** — loads the transaction and its
 entries with their account names through `transaction_with_entries`
@@ -1143,7 +1162,8 @@ button's hover lift; a status dot in the demo notice that pulses three times
 focus, through `:has()` on the line's own select; and a spinner on the
 posting button while the post is in flight. Phase 2 added a term's card
 fading in, hover fades on the Learn page's contents and quiz, and hover
-shadows on its account-type cards. The spinner is the only motion a
+shadows on its account-type cards. Phase 4 added the overview's equation
+cards fading in a background under the pointer, as Stitch's do. The spinner is the only motion a
 script switches on, `static/js/post-transaction.js`, which also ignores
 a second click; without it the form posts the same. On desktops the
 header stays at the top with a frosted backdrop. Nothing loops forever or
@@ -1172,6 +1192,14 @@ of Post is the form's first submit button, so Enter in a field posts
 rather than pressing line 1's "Remove". New motion, under the same
 rules: the banner fades between its states, as Stitch's status banner
 does, and a line's row fades in its hover background.
+
+**The overview's equation** (`overview.html`) is one card: a sentence and
+the formula, whose five account types are its terms, then a row of four
+cards per currency, Assets, Liabilities, Equity and Revenue − Expenses,
+with "=" and "+" between them and a "Holds" badge, and the same sum
+written out on one line under them. The operators are hidden from screen
+readers, which hear "equals" and "plus" instead. On a phone the cards
+stack, with each operator on its own line.
 
 **Text hidden for screen readers stays inside its card.** `.sr-only` is
 absolutely positioned, and with no positioned ancestor it escaped the
@@ -1211,7 +1239,8 @@ public demo, anyone can write to it, and the data resets nightly. The
 template calls `is_demo()`, a global `main.py` registers, rather than
 reading a value fixed at import, so the page follows the setting. It is
 given that one flag rather than the settings object, which holds the
-database URL and its password.
+database URL and its password. The notice ends with "Try it: post your
+first transaction", a link to the overview's steps (§5.7).
 
 ### 5.9 `alembic/` — migrations
 
@@ -1347,6 +1376,7 @@ workflow runs it every night (§5.13).
 | `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
 | `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
 | `test_posting_form.py` | partly | every refusal of the posting form worded by its rule, from the domain's own errors; the balance panel as the server draws it, per currency; uneven or missing lines a 422; all of a form's problems at once, each marked on its line; the demo's wording; a resubmission landing on the transaction with "Already posted."; add and remove without JavaScript, not counted as writes; typed values never logged (§5.7, §5.8, §5.15) |
+| `test_overview.py` | partly | the equation per currency, in currency order, without currencies that have no entries, with a loss negative and "Doesn't hold" if it didn't; the steps' links to the filled-in form, the oldest account of a name, none without every account; the notes, only for 1–3 and only on the demo; each step's form, its note kept through a redraw and a refusal; the first step posting, the equation still holding; every term on the demo's overview once (§5.7, §5.8) |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
@@ -1936,7 +1966,8 @@ and creation (which also writes an event), and `rebuild_read_model()`,
 which replays the log into a fresh read model.
 
 **HTTP layer** — health check, and seven server-rendered pages: overview
-with per-account balances and normal-side signs, event log with
+with the accounting equation per currency, per-account balances and
+normal-side signs, and on the demo three guided "try it" steps, event log with
 pagination, the filterable paginated transaction list, transaction posting
 form with a live per-currency balance panel and refusals that explain the
 rule broken, transaction detail with debit/credit
@@ -1991,7 +2022,7 @@ on total accounts and transactions sized from measured bytes per write
 (§5.20).
 
 **The public demo** — `ENVIRONMENT=demo`, a notice on every page that the
-demo is public and resets (§5.8), and `python -m scripts.reset_demo_data`,
+demo is public and resets, linking to the overview's "try it" steps (§5.8), and `python -m scripts.reset_demo_data`,
 which restores the demo data and refuses to run anywhere else (§5.10). A
 scheduled workflow runs it every night (§5.13).
 
