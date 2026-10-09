@@ -1050,8 +1050,20 @@ them new ids, the oldest winning if a visitor reused a name, and the steps
 are left out if any account is missing. Outside the demo there are no
 steps: they would post examples into a real ledger.
 
-**`GET /event-log`** — paginated, 25 per page, newest first, with a total
-count for the pager.
+**`GET /event-log`** — paginated, 25 per page (`EVENT_LOG_PAGE_SIZE`),
+newest first, with a total count for the pager. Each event is described in
+words from its own payload (`app/event_log.py`, `describe`), so the page
+shows what the event recorded rather than what the tables beside it say
+now. The one lookup is an account's name on a posted transaction's line:
+the payload names accounts by id, so the route reads the page's accounts'
+names in one query (`account_ids`), and the transactions' numbers in
+another. A posted event's totals are computed per currency from the
+payload, as the transaction pages compute theirs, so damaged data would say
+"Doesn't balance" rather than be shown as balanced. An event type with no
+words yet shows its type and raw event. On the demo the page adds the
+example of undoing the demo's own February rent (`REVERSAL_EXAMPLE`) and the
+sentence on the nightly reset, which empties the log; elsewhere neither
+would be true.
 
 **`GET /transactions`** — the full transaction list, paginated on the same
 page/page_size/total shape as `/event-log`. Rows come from
@@ -1182,7 +1194,8 @@ posting button while the post is in flight. Phase 2 added a term's card
 fading in, hover fades on the Learn page's contents and quiz, and hover
 shadows on its account-type cards. Phase 4 added the overview's equation
 cards fading in a background under the pointer, as Stitch's do, and Phase 5
-the transaction cards and the filter chips doing the same. The spinner is the only motion a
+the transaction cards and the filter chips doing the same. Phase 6 added
+none: Stitch's event-log timeline has no motion of its own. The spinner is the only motion a
 script switches on, `static/js/post-transaction.js`, which also ignores
 a second click; without it the form posts the same. On desktops the
 header stays at the top with a frosted backdrop. Nothing loops forever or
@@ -1219,6 +1232,19 @@ with "=" and "+" between them and a "Holds" badge, and the same sum
 written out on one line under them. The operators are hidden from screen
 readers, which hear "equals" and "plus" instead. On a phone the cards
 stack, with each operator on its own line.
+
+**The event log** (`event_log.html`) opens with how it works: events are
+never changed, so a mistake is undone by a balanced transaction with the
+same entries on the opposite sides, and the tables beside the log are
+rebuilt by replaying it. The demo's example of that is a dashed, unfilled
+box with no number, time or marker, so it can't be taken for an event. The
+timeline is a list with a spine and a marker per event, each event a card:
+its number, type and time, a heading in words, what it recorded, and its
+raw event in a native `<details>`, folded away, so it opens with the
+keyboard and without JavaScript. The raw event shows the event id, the
+aggregate, the type, the schema version ("1 (not recorded; replayed as
+version 1)" for payloads from before versions) and the time recorded, then
+the payload as stored.
 
 **The transaction list** (`transactions.html`) is a list of cards, each
 with its number (`sequence`, the posting order, which the nightly reset
@@ -1410,6 +1436,7 @@ workflow runs it every night (§5.13).
 | `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
 | `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
 | `test_posting_form.py` | partly | every refusal of the posting form worded by its rule, from the domain's own errors; the balance panel as the server draws it, per currency; uneven or missing lines a 422; all of a form's problems at once, each marked on its line; the demo's wording; a resubmission landing on the transaction with "Already posted."; add and remove without JavaScript, not counted as writes; typed values never logged (§5.7, §5.8, §5.15) |
+| `test_event_log_page.py` | partly | each event in words from its own payload: a posted transaction's entries by name in position order, totals per currency, "Doesn't balance" on damaged data, an unknown account by id, "Untitled transaction"; an opened account's type, currency and normal side; an event type without words; the raw event as stored, folded away, old payloads' version; the explainer, its example (checked against the seed) and the reset sentence only on the demo; terms once; the pager and a page past the end; "1 event" and "No events yet." (§5.7, §5.8) |
 | `test_transactions_pages.py` | partly | the list's amount per currency, the debit total and never both sides added, in currency order; each account named once, then "and N more"; "Doesn't balance" if one didn't; the chips, each dropping only its filter; the pager's line, a page past the end, an empty filter; the form's empty dates; one detail link per card; a transaction's page: what each entry does by type and side, totals and the balance per currency, the notes only when they apply, its terms once, the event log's page holding its event; the overview's recent table showing the same amounts (§5.7, §5.8) |
 | `test_overview.py` | partly | the equation per currency, in currency order, without currencies that have no entries, with a loss negative and "Doesn't hold" if it didn't; the steps' links to the filled-in form, the oldest account of a name, none without every account; the notes, only for 1–3 and only on the demo; each step's form, its note kept through a redraw and a refusal; the first step posting, the equation still holding; every term on the demo's overview once (§5.7, §5.8) |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition (§5.8) |
@@ -2002,8 +2029,8 @@ which replays the log into a fresh read model.
 
 **HTTP layer** — health check, and seven server-rendered pages: overview
 with the accounting equation per currency, per-account balances and
-normal-side signs, and on the demo three guided "try it" steps, event log with
-pagination, the filterable paginated transaction list with each one's amount per currency, transaction posting
+normal-side signs, and on the demo three guided "try it" steps, event log as
+a timeline with pagination, the filterable paginated transaction list with each one's amount per currency, transaction posting
 form with a live per-currency balance panel and refusals that explain the
 rule broken, transaction detail with debit/credit
 columns, what each entry does and the balance per currency, account creation, and a Learn page that explains double-entry,

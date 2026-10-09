@@ -4,40 +4,100 @@
 {% block content %}
 <div class="page-head">
   <p class="eyebrow">Event store</p>
-  <h1>Immutable event stream</h1>
-  <p class="lede">Every account and transaction is also recorded here as an {{ ui.term("event", "event") }}, in the same database transaction. The database refuses to change or delete an event, and the ledger's tables can be rebuilt from this history.</p>
+  <h1>Event log</h1>
+  <p class="lede">Every account opened and every transaction posted is also written here as an {{ ui.term("event", "event") }}, in the same database transaction. This is the ledger's history, newest first.</p>
 </div>
 
-<section class="card" aria-labelledby="events-heading">
-  <div class="card-head">
-    <h2 id="events-heading">Events</h2>
-    <p>{{ total }} events, newest first.</p>
-  </div>
-  <div class="table-scroll" role="region" aria-labelledby="events-heading" tabindex="0">
-    <table class="ledger">
-      <thead>
-        <tr><th scope="col">Created</th><th scope="col">Type</th><th scope="col">Aggregate</th><th scope="col">Event ID</th><th scope="col">Payload</th></tr>
-      </thead>
-      <tbody>
-        {% for event in events %}
-        <tr>
-          <td class="muted">{{ ui.when(event.created_at, seconds=True) }}</td>
-          <td><span class="badge badge-code">{{ event.event_type }}</span></td>
-          <td class="mono">{{ event.aggregate_type }} / {{ event.aggregate_id }}</td>
-          <td class="mono">{{ event.id }}</td>
-          <td><pre class="payload">{{ event.payload|tojson(indent=2) }}</pre></td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No events yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
+<div class="stack">
+  <section class="card" aria-labelledby="how-heading">
+    <div class="card-head"><h2 id="how-heading">How the event log works</h2></div>
+    <div class="card-body how-log">
+      <div>
+        <h3>Events are never changed</h3>
+        <p>The database refuses to change or delete an event. So nothing is edited: to fix a mistake, post a {{ ui.term("balanced", "balanced") }} transaction with the same entries on the opposite sides, then post the right one.</p>
+        {%- if reversal %}
+        {#- An example, never posted: a dashed box, with no number, time or marker. -#}
+        <div class="example">
+          <p class="example-label">For example, undoing February's rent (No. {{ reversal.number }}) would be:</p>
+          <p class="example-lines">{% for side, name, amount in reversal.lines %}<span>{{ ui.side(side) }} {{ name }} <span class="num">{{ amount }}</span></span>{% if not loop.last %}<span class="example-sep" aria-hidden="true">·</span>{% endif %}{% endfor %}</p>
+        </div>
+        {%- endif %}
+      </div>
+      <div>
+        <h3>The tables are rebuilt from it</h3>
+        <p>The balances on the overview and the transaction list are read from tables kept beside this log. They can be thrown away and rebuilt by replaying these events in order, oldest first, and they come back the same.</p>
+        {%- if is_demo() %}
+        <p>On this demo, the nightly reset is the one exception: it empties the log and the tables together and starts again from the demo data.</p>
+        {%- endif %}
+        <p><a class="learn-link" href="/learn#events">How Keel records it{{ ui.icon("arrow-forward") }}</a></p>
+      </div>
+    </div>
+  </section>
 
-{% if page > 1 or page * page_size < total %}
+  <section aria-labelledby="events-heading">
+    <div class="list-head">
+      <h2 id="events-heading">Events</h2>
+      <p>{{ total }} event{{ '' if total == 1 else 's' }}, newest first.</p>
+    </div>
+    {%- if events %}
+    <p class="section-intro">Each posted transaction lists its {{ ui.term("debit", "debit") }} and {{ ui.term("credit", "credit") }} entries; each opened account, its type and {{ ui.term("normal-side", "normal side") }}.</p>
+    <ol class="timeline">
+      {%- for event in events %}
+      <li class="timeline-item timeline-{{ event.kind }}">
+        <span class="timeline-marker" aria-hidden="true">{{ ui.icon("receipt-long" if event.kind == "transaction" else "account-balance" if event.kind == "account" else "info") }}</span>
+        <article class="card event-card" aria-labelledby="event-{{ event.number }}-title">
+          <div class="event-top">
+            <p class="event-meta"><span class="tx-number">Event No. {{ event.number }}</span> · <span class="badge badge-code">{{ event.event_type }}</span></p>
+            <p class="event-time">{{ ui.when(event.created_at, seconds=True) }}</p>
+          </div>
+          {%- if event.kind == "transaction" %}
+          <h3 id="event-{{ event.number }}-title" class="event-title">Transaction posted: {{ event.title }}</h3>
+          <ul class="event-lines">
+            {%- for line in event.lines %}
+            <li><span class="event-account">{{ ui.side(line.entry_type) }} {% if line.name %}{{ line.name }}{% else %}<span class="mono">{{ line.account_id }}</span>{% endif %}</span><span class="num">{{ line.currency }} {{ line.amount|money }}</span></li>
+            {%- endfor %}
+          </ul>
+          <div class="event-foot">
+            <p class="event-balance">{% if event.balanced %}{{ ui.balanced() }}{% else %}<span class="badge badge-off">{{ ui.icon("error") }}Doesn't balance</span>{% endif %} {{ ui.amount(event, label=True) }}</p>
+            <a class="link-action" href="/transaction-detail/{{ event.transaction_id }}">{% if event.transaction_number %}Open transaction No. {{ event.transaction_number }}{% else %}Open the transaction{% endif %}{{ ui.icon("arrow-forward") }}</a>
+          </div>
+          {%- elif event.kind == "account" %}
+          <h3 id="event-{{ event.number }}-title" class="event-title">Account opened: {{ event.title }}</h3>
+          <p class="event-facts">{{ event.account_type }} · <span class="mono">{{ event.currency }}</span> · normal side {{ ui.side(event.normal_side, long=True) }}</p>
+          <p class="event-note">Its balance starts at 0.00: only transactions change it.</p>
+          {%- else %}
+          <h3 id="event-{{ event.number }}-title" class="event-title mono">{{ event.event_type }}</h3>
+          {%- endif %}
+          <details class="raw-event">
+            <summary>Raw event: what the database stores</summary>
+            <dl class="raw-facts">
+              <div><dt>Event ID</dt><dd class="mono">{{ event.id }}</dd></div>
+              <div><dt>Aggregate</dt><dd class="mono">{{ event.raw.aggregate }}</dd></div>
+              <div><dt>Event type</dt><dd class="mono">{{ event.event_type }}</dd></div>
+              <div><dt>Schema version</dt><dd>{{ event.raw.schema_version }}</dd></div>
+              <div><dt>Recorded at</dt><dd class="mono">{{ event.raw.recorded_at }}</dd></div>
+            </dl>
+            <pre class="payload">{{ event.raw.payload }}</pre>
+            {%- if event.raw.names_accounts %}
+            <p class="raw-note">The payload names accounts by id; the lines above show their names.</p>
+            {%- endif %}
+          </details>
+        </article>
+      </li>
+      {%- endfor %}
+    </ol>
+    {%- elif pager.past_the_end %}
+    <p class="card empty">{{ pager.past_the_end_text }} <a href="/event-log?page={{ pager.pages }}">Go to page {{ pager.pages }}</a></p>
+    {%- else %}
+    <p class="card empty">No events yet.</p>
+    {%- endif %}
+  </section>
+</div>
+
+{% if not pager.past_the_end and (page > 1 or page * page_size < total) %}
 <nav class="pager" aria-label="Pages">
   {% if page > 1 %}<a class="btn btn-secondary" href="/event-log?page={{ page - 1 }}">{{ ui.icon("arrow-back") }}Newer</a>{% endif %}
+  <p class="pager-line">{{ pager.line }}</p>
   {% if page * page_size < total %}<a class="btn btn-secondary older" href="/event-log?page={{ page + 1 }}">Older{{ ui.icon("arrow-forward") }}</a>{% endif %}
 </nav>
 {% endif %}

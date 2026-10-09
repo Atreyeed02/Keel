@@ -72,7 +72,7 @@ def summaries(entries: Iterable[dict[str, Any]]) -> dict[uuid.UUID, dict[str, An
     return out
 
 
-# --- the list's filters and pager -----------------------------------------------------
+# --- the lists' filters and pager -----------------------------------------------------
 
 
 def filter_chips(q: str | None, date_from: date | None, date_to: date | None) -> list[dict]:
@@ -94,15 +94,18 @@ def filter_chips(q: str | None, date_from: date | None, date_to: date | None) ->
     return chips
 
 
-def pager(page: int, page_size: int, total: int) -> dict[str, Any]:
-    """Where this page sits in the list: "Page 1 of 2 · 1–25 of 30", or past the end."""
+def pager(page: int, page_size: int, total: int, noun: str = "transactions") -> dict[str, Any]:
+    """
+    Where this page sits in a list: "Page 1 of 2 · 1–25 of 30", or past the
+    end. `noun` names what the list holds, for the past-the-end sentence.
+    """
     pages = max(-(-total // page_size), 1)
     first = (page - 1) * page_size + 1
     return {
         "pages": pages,
         "past_the_end": total > 0 and page > pages,
         "line": f"Page {page} of {pages} · {first}–{min(page * page_size, total)} of {total}",
-        "past_the_end_text": f"There's no page {page}: these transactions fit on "
+        "past_the_end_text": f"There's no page {page}: these {noun} fit on "
         f"{pages} page{'' if pages == 1 else 's'}.",
     }
 

@@ -44,6 +44,7 @@ from app.domain.ledger import (
     validate_description,
 )
 from app.domain.reads import account_balances, currency_totals, transaction_with_entries
+from app.event_log import REVERSAL_EXAMPLE, account_ids, describe
 from app.glossary import GLOSSARY
 from app.observability import (
     configure_logging,
@@ -361,10 +362,46 @@ async def read_event_log(request: Request, page: int = Query(1, ge=1)):
             .mappings()
             .all()
         )
+        # what the page's events name: posted entries' accounts by id, and each
+        # posted transaction's "No. N"
+        named = account_ids(rows)
+        names = (
+            dict(
+                (
+                    await conn.execute(
+                        select(accounts.c.id, accounts.c.name).where(accounts.c.id.in_(named))
+                    )
+                ).all()
+            )
+            if named
+            else {}
+        )
+        posted = [row["aggregate_id"] for row in rows if row["event_type"] == "transaction.posted"]
+        numbers = (
+            dict(
+                (
+                    await conn.execute(
+                        select(transactions.c.id, transactions.c.sequence).where(
+                            transactions.c.id.in_(posted)
+                        )
+                    )
+                ).all()
+            )
+            if posted
+            else {}
+        )
     return templates.TemplateResponse(
         request=request,
         name="event_log.html",
-        context={"events": rows, "page": page, "page_size": page_size, "total": total or 0},
+        context={
+            "events": [describe(row, names, numbers) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total or 0,
+            "pager": pager(page, page_size, total or 0, noun="events"),
+            # the demo's own February rent, undone, as the explainer's example
+            "reversal": REVERSAL_EXAMPLE if settings.is_demo else None,
+        },
     )
 
 
