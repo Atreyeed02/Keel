@@ -427,3 +427,21 @@ def test_the_image_never_reloads_and_the_dev_override_does():
     assert dev["command"] == ["python", "-m", "app.serve", "--reload"]
     # bind mounts from Windows/macOS hosts deliver no change events: poll
     assert dev["environment"]["WATCHFILES_FORCE_POLLING"] == "true"
+
+
+def test_base_images_come_from_ecr_public_pinned_by_digest():
+    """Docker Hub's anonymous limit fails CI; a tag alone changes under a build."""
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    pinned = r"public\.ecr\.aws/docker/library/{}:[\w.-]+@sha256:[0-9a-f]{{64}}"
+    (base,) = re.findall(r"^FROM (\S+)", (root / "Dockerfile").read_text(), re.M)
+    assert re.fullmatch(pinned.format("python"), base)
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["db"]
+    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
+    service = ci["jobs"]["lint-and-test"]["services"]["postgres"]
+    assert re.fullmatch(pinned.format("postgres"), compose["image"])
+    assert service["image"] == compose["image"]  # CI tests against what compose runs
