@@ -493,7 +493,7 @@ pytest -v
 ruff check .
 ```
 
-420 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+444 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -579,6 +579,7 @@ passes `WRITE_RATE_LIMIT`. Details:
 | `GET` | `/` | the accounting equation per currency (Assets = Liabilities + Equity + (Revenue − Expenses)), totals per currency, balances per account (normal-side signed), recent transactions with each one's amount per currency; on the demo, three "try it" steps that open the posting form filled in |
 | `GET` | `/transactions` | all transactions, newest first, one card each: its number, accounts by side and amount per currency (its debit total, which is also its credit total). `q` (description search), `date_from`, `date_to` (left empty, no date filter), `page`; the filters in force are chips, each a link without it |
 | `GET` | `/transaction-detail/{id}` | one transaction's debit and credit entries, what each does to its account, the totals and the balance per currency, and its event, linked to its page of the event log; `?already=1` after a resubmission says it was already posted |
+| `GET` | `/account-detail/{id}` | one account as a T-account: its debits on the left and credits on the right, oldest first, 25 a page (`page`), each with its transaction and the accounts on its other side; why its normal side; the sum that gives its balance, below zero included; its event. An unknown id is a 404 page |
 | `GET` | `/event-log` | the event log as a timeline, newest first, 25 a page (`page`): each event in words from its own payload, with the raw event folded away under it, and how append-only events and rebuilds work |
 | `GET` | `/learn` | how double-entry works, with worked examples from the demo's data; needs no database |
 | `GET` / `POST` | `/accounts/new`, `/accounts` | create an account: `name`, `account_type`, `currency` |
@@ -631,7 +632,7 @@ app/
 │   ├── idempotency.py    claim-first idempotent posting
 │   ├── accounts.py       account validation and creation
 │   ├── rebuild.py        replay events into the read model
-│   ├── reads.py          balances and transaction lookups shared by pages and API
+│   ├── reads.py          balances, entries and transaction lookups shared by pages and API
 │   ├── capacity.py       the caps on total accounts and transactions
 │   └── account_types.py, errors.py
 ├── db/                   SQLAlchemy Core tables, triggers, engine
@@ -643,6 +644,7 @@ app/
 ├── posting_messages.py   the posting form's wording: each refusal, the live balance panel
 ├── overview.py           the overview's equation per currency, and the demo's "try it" steps
 ├── event_log.py          each event in the event log in words, from its own payload
+├── account_view.py       an account's page in words: why its normal side, its other sides, its sum
 ├── transactions_view.py  each transaction's amount per currency and accounts by side; the list's
 │                         filter chips and pager; what each entry does, on a transaction's page
 ├── main.py               routes and wiring
@@ -651,7 +653,7 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    420 tests; see above
+tests/                    444 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 

@@ -62,6 +62,7 @@ MOTION_REPEATS = {
     ".eq-card",
     ".chip",
     ".tx-card",
+    ".acct-entry-link",
 }
 # Other intended repeats, outside the motion section: a rule the selectors
 # share, then each one's own, right after it.

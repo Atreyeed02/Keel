@@ -1146,7 +1146,32 @@ finds the linked event. Each entry says what it does to its account,
 from the account's type and normal side (`effect`: "Liability: a debit
 decreases it."). The page links to the event log's page that holds the
 event, counted from the events newer than it (`EVENT_LOG_PAGE_SIZE`, the
-event log's own page size). A `404` if the transaction is missing.
+event log's own page size). Each entry's account name links to the
+account's page. A `404` if the transaction is missing.
+
+**`GET /account-detail/{id}`** — one account as a T-account. Its
+balance, debit and credit totals come from `account_balances` (§5.17)
+for that one account, the numbers the overview and `GET /api/accounts`
+show. `account_entries` reads how many entries each side has and one page
+of them, 25 at a time (`ACCOUNT_PAGE_SIZE`), oldest first: by
+transaction number, then by each entry's place in its transaction, so a
+page holds both sides' entries in the order they were posted, and the
+page splits them into the two columns. `other_sides` reads, for the
+page's transactions, their entries on other accounts, and each entry
+names the accounts on its opposite side (`app/account_view.py`,
+`other_side`, the transaction cards' first-three-then-"and N more"
+rule). The counts and totals are always the whole account's; with more
+than one page the page says so. `app/account_view.py` words the rest:
+why the normal side is the one it is (`why`), what each column does to
+the account (`column_note`), and the sum that gives the balance, the
+normal side's total minus the other's (`proof`). A balance below zero is
+shown with a true minus sign (`signed_money`) and a sentence on what it
+means and where it would sit on paper. The account's `account.created`
+event links to the event log's page holding it, counted as a
+transaction's is (`_event_and_page`, which both pages share). An id that
+is no account's, or not an id at all, gets `account_missing.html` with a
+`404`, not JSON: on the demo every account's id changes at the nightly
+reset, so old links end there, and the page says so.
 
 ### 5.8 `app/templates/` — Jinja2 inheritance
 
@@ -1264,7 +1289,15 @@ under a double rule, and under them debits minus credits in each currency.
 Notes appear when they apply: more than one entry on a side links to the
 January example on `/learn`, more than one currency to the two-currency one.
 It ends by saying a posted transaction is never edited, and how a mistake
-is put right.
+is put right. **An account's page** (`account_detail.html`) has its
+facts and, beside them, its balance; a card on why its normal side is the
+one it is; then the T-account: the account's name over a heavy rule, the
+transaction page's two columns under it (`.side-panel`, `.entries`,
+`.entries-total`), and the sum under them in a neutral box, since an
+account doesn't balance or fail to. Its own classes start `acct-`; the
+T-account sketches on `/learn` keep their `.t-` classes. Each entry's
+transaction is its one link, and the row fades in a background under the
+pointer (the motion section, §5.8).
 
 **Text hidden for screen readers stays inside its card.** `.sr-only` is
 absolutely positioned, and with no positioned ancestor it escaped the
@@ -1444,6 +1477,7 @@ workflow runs it every night (§5.13).
 | `test_event_log_page.py` | partly | each event in words from its own payload: a posted transaction's entries by name in position order, totals per currency, "Doesn't balance" on damaged data, an unknown account by id, "Untitled transaction"; an opened account's type, currency and normal side; an event type without words; the raw event as stored, folded away, old payloads' version; the explainer, its example (checked against the seed) and the reset sentence only on the demo; terms once; the pager and a page past the end; "1 event" and "No events yet." (§5.7, §5.8) |
 | `test_transactions_pages.py` | partly | the list's amount per currency, the debit total and never both sides added, in currency order; each account named once, then "and N more"; "Doesn't balance" if one didn't; the chips, each dropping only its filter; the pager's line, a page past the end, an empty filter; the form's empty dates; one detail link per card; a transaction's page: what each entry does by type and side, totals and the balance per currency, the notes only when they apply, its terms once, the event log's page holding its event; the overview's recent table showing the same amounts (§5.7, §5.8) |
 | `test_overview.py` | partly | the equation per currency, in currency order, without currencies that have no entries, with a loss negative and "Doesn't hold" if it didn't; the steps' links to the filled-in form, the oldest account of a name, none without every account; the notes, only for 1–3 and only on the demo; each step's form, its note kept through a redraw and a refusal; the first step posting, the equation still holding; every term on the demo's overview once (§5.7, §5.8) |
+| `test_account_detail.py` | partly | an account's page: oldest first across both sides, each column's count and total the whole account's on every page, each entry's one link and its other side, why the normal side for each type, the sum the right way round, a balance below zero with a minus sign and what it means, a new account with no entries, paging and past the end, the 404 page for an unknown or malformed id (the reset sentence only on the demo), the links from the chart of accounts, a transaction's page and the event log, its terms once each, its event's page of the log |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition; no selector is styled in two top-level rules unless listed with its reason (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
@@ -1754,7 +1788,8 @@ What it does not do yet is listed in §8.
 The read-side queries that both a page and an API endpoint need:
 `account_balances` (the overview's per-account totals, with the
 normal-side sign), `currency_totals` (the overview's trial balance) and
-`transaction_with_entries` (the detail page's lookup). They moved here
+`transaction_with_entries` (the detail page's lookup), and for an
+account's page `account_entries` and `other_sides`. They moved here
 from `main.py` when the API needed them. The pages were rendered from a
 seeded ledger before and after the move and are byte-identical.
 
@@ -2048,13 +2083,14 @@ that writes the event log alongside the read model, account validation
 and creation (which also writes an event), and `rebuild_read_model()`,
 which replays the log into a fresh read model.
 
-**HTTP layer** — health check, and seven server-rendered pages: overview
+**HTTP layer** — health check, and eight server-rendered pages: overview
 with the accounting equation per currency, per-account balances and
 normal-side signs, and on the demo three guided "try it" steps, event log as
 a timeline with pagination, the filterable paginated transaction list with each one's amount per currency, transaction posting
 form with a live per-currency balance panel and refusals that explain the
 rule broken, transaction detail with debit/credit
-columns, what each entry does and the balance per currency, account creation, and a Learn page that explains double-entry,
+columns, what each entry does and the balance per currency, account detail
+as a T-account, account creation, and a Learn page that explains double-entry,
 with key terms defined where the pages use them.
 
 **JSON API** — `POST`/`GET /api/accounts`, `POST /api/transactions` with a

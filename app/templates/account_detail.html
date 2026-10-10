@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ account.name }}{% endblock %}
+
+{#- One column of the T-account: its side's entries on this page, oldest
+    first, each linking to its transaction and naming the other side; then
+    the whole account's total for the side. -#}
+{% macro t_column(side, entries) -%}
+{%- set debit = side == "debit" -%}
+<section class="side-panel side-panel-{{ side }}" aria-labelledby="{{ side }}s-heading">
+  <div class="side-panel-head">
+    <h3 id="{{ side }}s-heading">{{ ui.side(side, hidden=True) }}{{ "Debits" if debit else "Credits" }} · {{ column_note[side] }}</h3>
+    <p>{{ count[side] }}</p>
+  </div>
+  <ul class="entries">
+    {%- for entry in entries %}
+    <li class="acct-entry">
+      <p class="acct-entry-meta"><span class="tx-number">No. {{ entry.sequence }}</span> · {{ ui.when(entry.created_at) }}</p>
+      <div class="entry-main"><a class="acct-entry-link" href="/transaction-detail/{{ entry.transaction_id }}">{{ entry.description or "Untitled transaction" }}</a><span class="entry-amount"><strong>{{ entry.amount|money }}</strong></span></div>
+      {%- if entry.other %}
+      <p class="acct-other">Other side: {{ ui.side(entry.other.side) }} {{ entry.other.shown|join(", ") }}{% if entry.other.more %} and {{ entry.other.more }} more{% endif %}</p>
+      {%- endif %}
+    </li>
+    {%- else %}
+    <li class="empty">No {{ side }} entries{% if counts[side] %} on this page{% endif %}.</li>
+    {%- endfor %}
+  </ul>
+  <div class="entries-total">
+    <span>Total {{ side }}s</span>
+    <span class="num">{{ account.currency }} {{ (account.debits if debit else account.credits)|money }}</span>
+  </div>
+</section>
+{%- endmacro %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <ol>
+    <li><a href="/">Overview</a></li>
+    <li><a href="/#accounts">Chart of accounts</a></li>
+    <li><span aria-current="page">{{ account.name }}</span></li>
+  </ol>
+</nav>
+<div class="acct-head">
+  <div class="page-head">
+    <p class="eyebrow">{{ account.account_type|capitalize }} account</p>
+    <h1>{{ account.name }}</h1>
+    <dl class="facts">
+      <div><dt>Type</dt><dd>{{ account.account_type }}</dd></div>
+      <div><dt>Currency</dt><dd class="mono">{{ account.currency }}</dd></div>
+      <div><dt>Normal side</dt><dd>{{ ui.side(account.normal_side, long=True) }}</dd></div>
+      <div><dt>Opened</dt><dd>{{ ui.when(account.created_at, seconds=True) }}</dd></div>
+      <div><dt>Account ID</dt><dd class="mono">{{ account.id }}</dd></div>
+    </dl>
+  </div>
+  <div class="acct-balance">
+    <p class="stat-label">Balance{% if account.balance < 0 %} <span class="badge badge-off">{{ ui.icon("info") }}Below zero</span>{% endif %}</p>
+    <p class="stat-value"><span class="muted">{{ account.currency }}</span> {{ account.balance|signed_money }}</p>
+    <p class="stat-note">On its normal side, {{ account.normal_side }}</p>
+  </div>
+</div>
+
+<div class="stack">
+  <section class="card" aria-labelledby="why-heading">
+    <div class="card-head"><h2 id="why-heading">{{ why.heading }}</h2></div>
+    <div class="card-body acct-why">
+      <p>{{ why.lead }} {{ why.article }} {{ ui.term(why.type, why.type) }} account. {{ why.rule }} {{ ui.term("normal-side", "normal side") }} {{ why.result }}</p>
+      <p><a class="learn-link" href="/learn#normal-side">Normal side and T-accounts{{ ui.icon("arrow-forward") }}</a></p>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="t-heading">
+    <div class="card-head">
+      <h2 id="t-heading">{{ account.name }} as a {{ ui.term("t-account", "T-account") }}</h2>
+      <p>{{ ui.term("debit", "Debits") }} on the left, {{ ui.term("credit", "credits") }} on the right, oldest first. Each entry is one side of a balanced transaction; its other side is on another account, named under it.</p>
+    </div>
+    <div class="card-body">
+      {%- if pager.past_the_end %}
+      <p class="card empty">{{ pager.past_the_end_text }} <a href="/account-detail/{{ account.id }}?page={{ pager.pages }}">Go to page {{ pager.pages }}</a></p>
+      {%- elif not total %}
+      <p class="card empty">No entries yet, so the balance is 0.00: only transactions change it.</p>
+      {%- else %}
+      <div class="acct-t">
+        <p class="acct-t-name" aria-hidden="true">{{ account.name }}</p>
+        <div class="columns">
+          {{ t_column("debit", columns.debit) }}
+          {{ t_column("credit", columns.credit) }}
+        </div>
+      </div>
+      {%- if total > page_size %}
+      <p class="acct-totals-note">Totals are for all {{ total_line }}, not just this page.</p>
+      {%- endif %}
+      <div class="acct-proof">
+        <ul class="proof-lines">
+          <li class="sum"><span class="proof-currency">{{ account.currency }}</span> <span class="proof-sum">{{ proof.sum }}</span></li>
+        </ul>
+        <p>{{ proof.because }}</p>
+        {%- if proof.below %}
+        <p>{{ proof.below }} <a class="learn-link" href="/learn#normal-side">Why: normal side{{ ui.icon("arrow-forward") }}</a></p>
+        {%- endif %}
+      </div>
+      {%- endif %}
+    </div>
+  </section>
+
+  {% if not pager.past_the_end and (page > 1 or page * page_size < total) %}
+  <nav class="pager" aria-label="Pages">
+    {% if page > 1 %}<a class="btn btn-secondary" href="/account-detail/{{ account.id }}?page={{ page - 1 }}">{{ ui.icon("arrow-back") }}Earlier</a>{% endif %}
+    <p class="pager-line">{{ pager.line }} entries</p>
+    {% if page * page_size < total %}<a class="btn btn-secondary older" href="/account-detail/{{ account.id }}?page={{ page + 1 }}">Later{{ ui.icon("arrow-forward") }}</a>{% endif %}
+  </nav>
+  {% endif %}
+
+  <section class="card" aria-labelledby="event-heading">
+    <div class="card-head"><h2 id="event-heading"><span>Recorded as an {{ ui.term("event", "event") }}</span></h2></div>
+    <div class="card-body event-body">
+      {% if event %}
+      <div>
+        <p class="event-line">Opened in <span class="tx-number">Event No. {{ event.sequence }}</span> · <span class="badge badge-code">{{ event.event_type }}</span> · {{ ui.when(event.created_at, seconds=True) }}</p>
+        <p class="meta">{{ event.id }}</p>
+      </div>
+      <a class="link-action" href="/event-log?page={{ event_page }}">See it in the event log{{ ui.icon("arrow-forward") }}</a>
+      {% else %}
+      <p>No event was found for this account.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <p class="page-note">{{ ui.icon("info") }}<span>Keel never edits or deletes an entry. A balance changes only when a transaction is posted. <a class="learn-link" href="/learn#events">How Keel records it{{ ui.icon("arrow-forward") }}</a></span></p>
+</div>
+{% endblock %}

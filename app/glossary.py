@@ -48,6 +48,13 @@ GLOSSARY: dict[str, Term] = {
         "balanced",
         "balancing",
     ),
+    "t-account": Term(
+        "T-account",
+        "One account drawn as a T: debits under the left arm, credits under the right. "
+        "Its balance is the difference between the two sides.",
+        "normal-side",
+        "T-accounts",
+    ),
     "trial-balance": Term(
         "Trial balance",
         "Traditionally, every account's balance listed in debit and credit columns. Keel "

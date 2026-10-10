@@ -1479,6 +1479,8 @@ main.wrap {
     .definition-expense { position-anchor: --term-expense; }
     .term-event { anchor-name: --term-event; }
     .definition-event { position-anchor: --term-event; }
+    .term-t-account { anchor-name: --term-t-account; }
+    .definition-t-account { position-anchor: --term-t-account; }
   }
 }
 
@@ -2658,6 +2660,11 @@ ul.sides {
   margin-top: 0.75rem;
 }
 
+/* an opened account's card has only its link: on the right, like a transaction's */
+.event-foot > :only-child {
+  margin-left: auto;
+}
+
 .event-balance {
   display: flex;
   flex-wrap: wrap;
@@ -2749,6 +2756,105 @@ ul.sides {
   line-height: 1.25rem;
 }
 
+/* --- an account's page: its balance, why its normal side, and its T-account ------------ */
+
+/* the heading and facts, with the balance beside them, or under them on a phone */
+.acct-head {
+  display: grid;
+  gap: var(--space-md) var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.acct-head > .page-head {
+  margin-bottom: 0;
+}
+
+@media (min-width: 768px) {
+  .acct-head {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, auto);
+    align-items: start;
+  }
+}
+
+.acct-balance {
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.acct-why > p + p {
+  margin-top: var(--space-sm);
+}
+
+/* the T: the account's name over a heavy rule, the two columns under it */
+.acct-t-name {
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 3px solid var(--text);
+  color: var(--text);
+  font-weight: 700;
+  text-align: center;
+}
+
+/* an entry: its number and date, its transaction as the one link, the other side */
+.acct-entry:hover {
+  background: var(--hover);
+}
+
+.acct-entry-meta {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.acct-entry-link {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.acct-entry:hover .acct-entry-link,
+.acct-entry-link:focus-visible {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+.acct-other {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.acct-totals-note {
+  margin-top: var(--space-md);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+/* the sum that gives the balance: neutral, since an account doesn't balance or fail to */
+.acct-proof {
+  margin-top: var(--space-lg);
+  padding: var(--space-md) 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
+  color: var(--text);
+}
+
+.acct-proof > p {
+  margin-top: var(--space-sm);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
 /* --- motion ---------------------------------------------------------------------------
    Every animation in Keel is here, carried over from the Stitch designs:
    their colour fades on hover and focus, the hover lift on the posting
@@ -2756,7 +2862,8 @@ ul.sides {
    term's card fading in, the Learn page's hover shadows on its cards, and
    the posting form's balance banner fading between its states, the
    overview's equation cards fading in a background under the pointer, and
-   the transaction cards and filter chips doing the same.
+   the transaction cards, filter chips and an account's entries doing the
+   same.
    Rules for this section:
    - nothing loops forever: the dot pulses three times, the spinner stops
      after twelve turns;
@@ -2804,6 +2911,14 @@ a,
 .chip {
   transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease),
     color var(--fast) var(--ease);
+}
+
+/* an account's entries fade in a background under the pointer, and their
+   transaction's name its colour, as Stitch's T-account rows do
+   (transition-colors) */
+.acct-entry,
+.acct-entry-link {
+  transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 
 /* the account-type cards lift their shadow under the pointer (Stitch's
