@@ -493,7 +493,7 @@ pytest -v
 ruff check .
 ```
 
-419 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+420 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -502,7 +502,7 @@ stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
 Without `TEST_DATABASE_URL`, the 143 database-backed tests are **skipped,
-not failed**. A green run of the remaining 276 is partial coverage:
+not failed**. A green run of the remaining 277 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -523,7 +523,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
 | `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command |
 | `test_hardening.py` | the body size limit (a page for a form, JSON for the API), security headers, the page CSP with no nonce, no inline scripts or styles on any page, static file types |
-| `test_stylesheet.py` | every animation stops by itself; reduced motion stops all of them |
+| `test_stylesheet.py` | every animation stops by itself; reduced motion stops all of them; no selector is styled twice by accident |
 | `test_learn.py` | `/learn` without a database, every term's section there, the quiz, the `term` macro, each page's terms defined once |
 | `test_posting_form.py` | every refusal of the posting form worded by its rule, the balance panel as the server draws it, add and remove without JavaScript, the resubmission notice, typed values never logged |
 | `test_overview.py` | the accounting equation per currency, and saying so if it didn't hold; on the demo only, the "try it" steps' links to the filled-in form, their notes kept through a redraw and a refusal, and the first step posting with the equation still holding |
@@ -651,7 +651,7 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    419 tests; see above
+tests/                    420 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 

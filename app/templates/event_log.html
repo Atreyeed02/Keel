@@ -17,9 +17,9 @@
         <p>The database refuses to change or delete an event. So nothing is edited: to fix a mistake, post a {{ ui.term("balanced", "balanced") }} transaction with the same entries on the opposite sides, then post the right one.</p>
         {%- if reversal %}
         {#- An example, never posted: a dashed box, with no number, time or marker. -#}
-        <div class="example">
-          <p class="example-label">For example, undoing February's rent (No. {{ reversal.number }}) would be:</p>
-          <p class="example-lines">{% for side, name, amount in reversal.lines %}<span>{{ ui.side(side) }} {{ name }} <span class="num">{{ amount }}</span></span>{% if not loop.last %}<span class="example-sep" aria-hidden="true">·</span>{% endif %}{% endfor %}</p>
+        <div class="reversal-example">
+          <p class="reversal-example-label">For example, undoing February's rent (No. {{ reversal.number }}) would be:</p>
+          <p class="reversal-example-lines">{% for side, name, amount in reversal.lines %}<span>{{ ui.side(side) }} {{ name }} <span class="num">{{ amount }}</span></span>{% if not loop.last %}<span class="reversal-example-sep" aria-hidden="true">·</span>{% endif %}{% endfor %}</p>
         </div>
         {%- endif %}
       </div>

@@ -287,7 +287,7 @@ async def test_the_explainer_on_the_demo(seeded):
     assert "On this demo, the nightly reset is the one exception" in text
     assert 'href="/learn#events"' in page
     # the example is not an event: no number, time or marker of its own
-    example = page.split('<div class="example">')[1].split("</div>")[0]
+    example = page.split('<div class="reversal-example">')[1].split("</div>")[0]
     assert "Event No." not in example and "<time" not in example
 
 
@@ -320,7 +320,7 @@ async def test_outside_the_demo_no_example_and_no_reset(seeded, monkeypatch):
     async with _client() as client:
         page = (await client.get("/event-log")).text
     text = _text(page)
-    assert 'class="example"' not in page
+    assert 'class="reversal-example"' not in page
     assert "nightly reset" not in text
     # the reversal sentence stays; the term's card sits inside it in the text
     assert "to fix a mistake, post a balanced" in text
