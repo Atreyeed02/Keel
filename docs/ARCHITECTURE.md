@@ -1474,6 +1474,21 @@ user, `keel` (uid 10001). The copied files stay owned by root, so the app can
 read its code but not change it. `PYTHONUNBUFFERED` gets log lines to the
 host as they are written.
 
+**Base images.** The Dockerfile's `python:3.12-slim` and the `postgres:16-alpine`
+in `docker-compose.yml` and `ci.yml` come from
+`public.ecr.aws/docker/library`, Docker's own copy of its official images on
+ECR Public, not from Docker Hub. CI's runners share addresses, and Docker
+Hub's anonymous pull limit failed both jobs with `429 Too Many Requests`
+before a single step ran. Each is pinned by its index digest, which is the
+same on both registries, so the bytes are the ones Docker Hub's tag pointed
+to. Render builds this Dockerfile, so production pulls from ECR Public too,
+and CI tests the base production ships. The pin trades automatic updates
+for reproducible builds: a Debian or Python patch reaches the image only
+through a pull request that bumps the digest, like the actions and the runner
+image (§5.13). `test_base_images_come_from_ecr_public_pinned_by_digest` fails
+if any of the three drifts back to a bare tag, or if CI's Postgres stops
+being the one compose runs.
+
 The start command is `python -m app.serve` (`app/serve.py`): `alembic
 upgrade head`, then, only if that succeeded, uvicorn on `$PORT` (default
 8000), serving `app.main:served` with uvicorn's own proxy handling off
@@ -1584,7 +1599,8 @@ during a reset.
 All three workflows, these two and "Cloudflare ranges" (§5.21), run on a
 pinned `ubuntu-24.04` image and pin `actions/checkout` and
 `actions/setup-python` to the same commits. A new runner image or action
-version reaches CI only through a pull request that changes them.
+version reaches CI only through a pull request that changes them. The base
+images are pinned the same way (§5.12).
 
 ### 5.14 `app/domain/idempotency.py`
 
