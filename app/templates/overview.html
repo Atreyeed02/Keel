@@ -105,7 +105,7 @@
     {% endfor %}
   </section>
 
-  <section class="card" aria-labelledby="accounts-heading">
+  <section class="card" id="accounts" aria-labelledby="accounts-heading">
     <div class="card-head">
       <h2 id="accounts-heading">Chart of accounts</h2>
       <p>Each balance is shown on its account's {{ ui.term("normal-side", "normal side") }}, the side that makes it grow.</p>
@@ -120,7 +120,7 @@
           <tr><th scope="rowgroup" colspan="5">{{ account_type }}</th></tr>
           {% for account in rows %}
           <tr>
-            <td>{{ account.name }}</td>
+            <td><a href="/account-detail/{{ account.id }}">{{ account.name }}</a></td>
             <td>{{ account.account_type }}</td>
             <td class="mono">{{ account.currency }}</td>
             <td>{{ ui.side(account.normal_side, long=True) }}</td>

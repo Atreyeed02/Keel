@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-10.** A snapshot of what is actually built, what is
+**As of 2026-10-11.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Nineteen PRs are merged into `main`, with regular merge commits, and their
+Twenty-one PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -34,6 +34,8 @@ branches deleted:
 | [#17](https://github.com/Atreyeed02/Keel/pull/17) | `feat/ui-overview` | `d1effe4` |
 | [#18](https://github.com/Atreyeed02/Keel/pull/18) | `feat/ui-transactions` | `fce1d7e` |
 | [#19](https://github.com/Atreyeed02/Keel/pull/19) | `feat/ui-event-log` | `0faa9df` |
+| [#20](https://github.com/Atreyeed02/Keel/pull/20) | `fix/reversal-example-class` | `731003f` |
+| [#21](https://github.com/Atreyeed02/Keel/pull/21) | `chore/pin-base-images-ecr` | `0505b83` |
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -71,7 +73,45 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`fix/reversal-example-class`** fixes a regression #19 put on the live
+**`feat/ui-account-detail`**, the redesign's seventh and last phase, adds
+an account's page, `/account-detail/{id}` (§2, "HTTP"): the account as a
+T-account, debits on the left and credits on the right, oldest first, 25
+entries a page; each entry's transaction as its one link, with the accounts
+on its other side; why the account's normal side is the one it is; and the
+sum that gives its balance, saying what a balance below zero means. The
+chart of accounts, each entry on a transaction's page and each opened
+account in the event log link to it. An id that isn't an account's gets a
+page saying so, with a 404; on the demo it adds that the nightly reset
+changes every id. It adds the "T-account" term, no migration and no
+dependency; the existing URLs and the JSON API are unchanged. Checked on
+that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` | clean |
+| `pytest` collection | **444 tests** |
+| `pytest` (no database available) | 289 passed, 155 skipped |
+| `pytest` (local Postgres 16) | 444 passed |
+| Unchanged | every existing URL and its status, the JSON API and its tests; a transaction's page keeps its JSON 404 for an unknown id |
+| New tests fail without their change | 16 deliberate breaks, one at a time, each failed a test: entries newest first, a column's count from the page rather than the account, the other side naming this side's accounts, the sum ignoring the normal side, a balance below zero unexplained, a hyphen for the minus sign, an unknown id as JSON, a malformed id as a 422, no note that the totals cover every page, the chart of accounts, the event log or a transaction's page not linking, the event log's page off by one, the reset sentence outside the demo, the term without its card's anchor, "a" and "an" ignoring the type |
+| Every page, `main` (`731003f`) against the branch, same seeded data | 9 pages × light/dark × 1280/390 px, 36 pairs, compared pixel by pixel with every animation finished: 24 pairs identical. The overview differs only in the chart of accounts (the names are links now, at the links' weight, so its columns shift a few pixels), a transaction's page only in its entries' account names, and the event log only by each opened account's "Open account" link (8 × 44 px taller), with a few anti-aliased pixels on the timeline's markers above it |
+| Headless Chrome, account pages | Cash, Equipment loan payable, Cash below zero and a new account with no entries (both posted to a local database only), and an unknown id, in light and dark at 1280 and 390 px (20 renders): no CSP violation, console error, failed request (but the unknown id's own 404), cut-off figure, or page wider than the screen |
+| Motion | Stitch's T-account rows: an entry's background fades in under the pointer and its transaction's name changes colour, 150 ms; 0 s under reduced motion. Stitch's normal-balance tooltip is the term cards. Its inflow/outflow ratio bar, an invented "retained liquidity" figure whose transition never ran, is not shipped |
+| Keyboard and terms | an entry's link takes the focus ring and its colour; the page defines its account's type, normal side, T-account, debit, credit and event once each; the T-account card links to `/learn#normal-side` |
+
+**#21, `chore/pin-base-images-ecr`**: Docker Hub's anonymous pull limit
+(`429 Too Many Requests`) stopped both CI jobs on #20 before a step ran. The
+Dockerfile's `python:3.12-slim` and the `postgres:16-alpine` in
+`docker-compose.yml` and CI now come from `public.ecr.aws/docker/library`,
+Docker's own copy of its official images, pinned by digest (the same
+digests as Docker Hub's); a test keeps the three pinned and CI's Postgres
+the same as compose's. Render builds the Dockerfile, so production pulls
+from there too. Its CI and #20's (after `gh pr update-branch`) pulled from
+ECR Public; `/health` was up after the merge, and #20's deploy, built from
+the same Dockerfile, went live. The base images now change only through a
+pull request that bumps the digests.
+
+**#20, `fix/reversal-example-class`**, fixes a regression #19 put on the live
 site. #19 named the event log's reversal example `.example`, a class
 `/learn` already used for its five worked examples. Its rule came later in
 `keel.css`, so it won: on the live site `/learn`'s boxes got a dashed
@@ -83,7 +123,8 @@ the live check after merging did. The event log's classes are now
 into the first, and a stylesheet test fails when a selector is styled in
 two top-level rules unless it's on one of two lists with its reason: the
 motion section's own repeats, and the shared-then-own pairs (`h1`, `h2`,
-`.t-side li`, `.t-total`). Checked on that branch:
+`.t-side li`, `.t-total`). Checked on that branch, then on the live site
+after merging:
 
 | Check | Result |
 |---|---|
@@ -95,6 +136,7 @@ motion section's own repeats, and the shared-then-own pairs (`h1`, `h2`,
 | Every page, `main` (`0faa9df`) against the branch, same seeded data | 9 pages (the overview, the list and a filtered list, a transaction, the posting form and a `?try=` step, the event log, a new account, `/learn`) × light/dark × 1280/390 px, 36 pairs, compared pixel by pixel with every animation finished: only `/learn` (from its first worked example down, 60 px taller) and the event log's example box differ, as intended; the other 28 pairs are identical |
 | `/learn` against `fce1d7e`, before the regression | identical in all four views |
 | The pager | the same computed style on `main` and the branch (it doesn't show on the seeded data, which fits on one page) |
+| Live, on `731003f`, read-only (GET requests only; the browser failed any other request before sending it, and none was attempted) | live a minute after the merge; headers on 13 URLs exact; the 12 static files byte-identical to the commit; the posting form's checks and the malformed date's 422 hold; 28 renders clean, injected style and script refused. `/learn`'s five worked examples against `fce1d7e`, before the regression: the same computed style, and pixel-identical in light and dark at 1280 and 390 px. The event log's example: a 1 px dashed border, no fill, not `.example`, no number, time or marker |
 
 **#19, `feat/ui-event-log`**, the redesign's sixth phase, turns the event log
 into a timeline (§2, "HTTP"): each event in words from its own payload, the
@@ -348,12 +390,13 @@ and `alembic check` finds no difference in CI.
   transaction boundary, which is what lets the idempotency check wrap it
   in the same database transaction.
 
-### HTTP — seven server-rendered pages
+### HTTP — eight server-rendered pages
 
 All in `app/main.py`, Jinja2 on a shared `base.html`:
 overview with the accounting equation per currency, per-account balances
 and normal-side signs, the event log as a paginated timeline, filterable + paginated transaction list, posting form,
-transaction detail with debit/credit columns, account creation, and
+transaction detail with debit/credit columns, account detail as a
+T-account, account creation, and
 `/learn`, which explains double-entry with the demo's own data and needs
 no database. Plus
 `/health`, which reports `degraded` rather than raising. The
@@ -382,8 +425,10 @@ and its amount, the debit total in each currency, and a transaction's page
 says what each entry does to its account and shows the balance in each
 currency (`app/transactions_view.py`). The event log is a timeline of each
 event in words from its own payload, with the raw event folded away under
-it (`app/event_log.py`). This is
-a redesign done one PR per phase; §6 has the rest.
+it (`app/event_log.py`). An account's page shows it as a T-account, with
+its entries oldest first, why its normal side is the one it is, and the sum
+that gives its balance, below zero included (`app/account_view.py`). This
+was a redesign done one PR per phase; §6 has the phases.
 
 ### JSON API — four endpoints
 
@@ -455,7 +500,9 @@ ranges", compares `app/client_address.py`'s copy of Cloudflare's address
 ranges with the published lists every Monday. A fourth, "Demo
 maintenance", resets the public demo every night (below). Since #13, all
 three workflow files pin their actions by commit and run every job on
-`ubuntu-24.04`.
+`ubuntu-24.04`. Since #21, the images both jobs pull, Python for the app
+and Postgres, come from ECR Public pinned by digest, not from Docker Hub,
+whose anonymous pull limit had stopped them.
 Both jobs are required checks: the "Protect main" ruleset (§1) merges
 nothing into `main` until they pass.
 
@@ -552,10 +599,13 @@ Every route is public. Fine for a demo, disqualifying otherwise.
 No single-account read, no transaction listing, no pagination and no
 event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
 
-**4. The UI redesign, phases 4–7**
-One PR each, in the order §6 lists. Each keeps every page working, is
-checked in light and dark at desktop and phone width, and claims nothing
-the ledger does not do.
+**4. After the redesign**
+- give `/transaction-detail/{id}` the account page's 404 page: today an
+  unknown id gets JSON and a malformed one a 422, and on the demo its links
+  break at every nightly reset, as an account's do;
+- Dependabot for the pinned base images (the Dockerfile's, and compose's
+  and CI's, which must move together), and for pip and the actions'
+  commit pins, so security updates arrive as pull requests.
 
 **Done since the previous version of this list:** deploy readiness
 (host-style configuration, a migrate-then-serve start command, a non-root
@@ -669,8 +719,10 @@ The redesign ships one PR per phase:
 6. **Event log** as a timeline (#19, merged): each event in words
    from its own payload, the raw event folded away, and how append-only
    events and rebuilds work.
-7. **Account detail**, a T-account per account.
+7. **Account detail** (`feat/ui-account-detail`): each account as a
+   T-account, its entries oldest first, why its normal side, and its
+   balance as a sum, below zero included.
 
 Each phase brings the Stitch animations of the elements it builds (card
-hovers, the balance banner's change of state, bar widths), under the same rules: CSS first, nothing endless, all
+hovers, the balance banner's change of state), under the same rules: CSS first, nothing endless, all
 of it off under reduced motion, and every page working without JavaScript.

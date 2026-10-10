@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- /account-detail/{id} for an id that isn't an account's, or isn't an id:
+    a 404 with the site's header, and the way back to the accounts there are. -#}
+{% block title %}No such account{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Not found</p>
+  <h1>No such account</h1>
+  <p class="lede">There's no account with this ID.{% if is_demo() %} The demo's data resets nightly, so a link from before the last reset no longer works.{% endif %}</p>
+</div>
+<p><a class="link-action" href="/#accounts">Go to the chart of accounts{{ ui.icon("arrow-forward") }}</a></p>
+{% endblock %}

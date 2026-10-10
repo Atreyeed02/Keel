@@ -135,8 +135,9 @@ async def test_each_page_defines_its_terms_once_and_every_reference_resolves(dat
 
     expected = {
         # every term but "event", which only the demo's "try it" steps use
-        # (tests/test_overview.py)
-        "/": set(GLOSSARY) - {"event"},
+        # (tests/test_overview.py), and "t-account", which only an account's
+        # page uses (tests/test_account_detail.py)
+        "/": set(GLOSSARY) - {"event", "t-account"},
         "/transactions": {"debit", "credit", "balanced"},
         "/post-transaction": {"debit", "credit", "balanced"},
         "/event-log": {"event", "balanced", "debit", "credit", "normal-side"},

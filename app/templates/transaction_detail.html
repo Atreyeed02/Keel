@@ -14,7 +14,7 @@
   <ul class="entries">
     {%- for entry in entries %}
     <li>
-      <div class="entry-main"><span class="entry-account">{{ entry.name }}</span><span class="entry-amount"><small class="mono muted">{{ entry.currency }}</small> <strong>{{ entry.amount|money }}</strong></span></div>
+      <div class="entry-main"><a class="entry-account" href="/account-detail/{{ entry.account_id }}">{{ entry.name }}</a><span class="entry-amount"><small class="mono muted">{{ entry.currency }}</small> <strong>{{ entry.amount|money }}</strong></span></div>
       <p class="entry-effect">{{ ui.icon("south-west" if debit else "north-east") }}{{ entry.effect }}</p>
     </li>
     {%- else %}

@@ -16,6 +16,7 @@ from pydantic import BeforeValidator
 from sqlalchemy import func, select
 from starlette.types import Scope
 
+from app.account_view import column_note, entries_count, entry_rows, proof, signed_money, why
 from app.api.accounts import router as accounts_api_router
 from app.api.errors import register_api_error_handlers
 from app.api.health import router as health_router
@@ -43,7 +44,13 @@ from app.domain.ledger import (
     assert_balanced,
     validate_description,
 )
-from app.domain.reads import account_balances, currency_totals, transaction_with_entries
+from app.domain.reads import (
+    account_balances,
+    account_entries,
+    currency_totals,
+    other_sides,
+    transaction_with_entries,
+)
 from app.event_log import REVERSAL_EXAMPLE, account_ids, describe
 from app.glossary import GLOSSARY
 from app.observability import (
@@ -245,6 +252,7 @@ async def _entry_summaries(conn, rows) -> dict[uuid.UUID, dict[str, Any]]:
 
 templates.env.filters["money"] = _money
 templates.env.filters["utc"] = _utc
+templates.env.filters["signed_money"] = signed_money
 # A function, not a value, so the notice follows the setting at render time. The
 # pages get this one flag, never the settings object with its database URL.
 templates.env.globals["is_demo"] = lambda: settings.is_demo
@@ -341,8 +349,35 @@ async def read_overview(request: Request):
     )
 
 
-# The event log's page size; a transaction's page links to the page holding its event.
+# The event log's page size; a transaction's and an account's page link to the
+# page holding its event.
 EVENT_LOG_PAGE_SIZE = 25
+
+
+async def _event_and_page(conn, aggregate_type: str, aggregate_id: uuid.UUID):
+    """
+    The event that recorded a transaction or an account, and the event log's
+    page holding it: the log is newest first, so its page is set by the events
+    after this one. (None, None) if there is no such event.
+    """
+    event = (
+        (
+            await conn.execute(
+                select(events).where(
+                    events.c.aggregate_type == aggregate_type,
+                    events.c.aggregate_id == aggregate_id,
+                )
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if event is None:
+        return None, None
+    newer = await conn.scalar(
+        select(func.count()).select_from(events).where(events.c.sequence > event["sequence"])
+    )
+    return event, newer // EVENT_LOG_PAGE_SIZE + 1
 
 
 @app.get("/event-log", response_class=HTMLResponse)
@@ -694,27 +729,7 @@ async def read_transaction_detail(
         transaction, entry_rows = await transaction_with_entries(conn, transaction_id)
         if transaction is None:
             raise HTTPException(status_code=404, detail="transaction not found")
-        event = (
-            (
-                await conn.execute(
-                    select(events).where(
-                        events.c.aggregate_type == "transaction",
-                        events.c.aggregate_id == transaction_id,
-                    )
-                )
-            )
-            .mappings()
-            .first()
-        )
-        # the event log is newest first, so its page is set by the events after this one
-        event_page = None
-        if event is not None:
-            newer = await conn.scalar(
-                select(func.count())
-                .select_from(events)
-                .where(events.c.sequence > event["sequence"])
-            )
-            event_page = newer // EVENT_LOG_PAGE_SIZE + 1
+        event, event_page = await _event_and_page(conn, "transaction", transaction_id)
     for row in entry_rows:
         row["effect"] = effect(row["account_type"], row["entry_type"])
     debits = [row for row in entry_rows if row["entry_type"] == "debit"]
@@ -736,5 +751,61 @@ async def read_transaction_detail(
             "event_page": event_page,
             # the posting form sent a resubmission here instead of posting twice
             "notice": ALREADY_POSTED if already else None,
+        },
+    )
+
+
+# An account's page lists this many of its entries at a time, both sides together.
+ACCOUNT_PAGE_SIZE = 25
+
+
+@app.get("/account-detail/{account_id}", response_class=HTMLResponse)
+async def read_account_detail(request: Request, account_id: str, page: int = Query(1, ge=1)):
+    """
+    One account as a T-account: debits on the left, credits on the right,
+    oldest first, a page of entries at a time. The totals and the balance
+    are always the whole account's, from the same query as the overview and
+    GET /api/accounts.
+
+    An id that isn't an account's, or isn't an id at all, gets a page saying
+    so with a 404: on the demo, every account's id changes at the nightly
+    reset, so old links end up here.
+    """
+    try:
+        found = uuid.UUID(account_id)
+    except ValueError:
+        found = None
+    async with engine.connect() as conn:
+        balances = await account_balances(conn, found) if found else []
+        if not balances:
+            return templates.TemplateResponse(
+                request=request, name="account_missing.html", status_code=404
+            )
+        account = balances[0]
+        page_size = ACCOUNT_PAGE_SIZE
+        counts, rows = await account_entries(conn, found, page_size, (page - 1) * page_size)
+        total = counts["debit"] + counts["credit"]
+        others = await other_sides(conn, found, list({row["transaction_id"] for row in rows}))
+        event, event_page = await _event_and_page(conn, "account", found)
+    normal = account["normal_side"]
+    return templates.TemplateResponse(
+        request=request,
+        name="account_detail.html",
+        context={
+            "account": account,
+            "why": why(account["name"], account["account_type"], normal),
+            "columns": entry_rows(rows, others),
+            "column_note": {side: column_note(side, normal) for side in ("debit", "credit")},
+            # each column's count is the whole account's, like its total
+            "counts": counts,
+            "count": {side: entries_count(n) for side, n in counts.items()},
+            "proof": proof(account["name"], normal, account["debits"], account["credits"]),
+            "total": total,
+            "total_line": entries_count(total),
+            "page": page,
+            "page_size": page_size,
+            "pager": pager(page, page_size, total, noun="entries"),
+            "event": event,
+            "event_page": event_page,
         },
     )

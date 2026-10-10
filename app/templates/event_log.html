@@ -65,6 +65,9 @@
           <h3 id="event-{{ event.number }}-title" class="event-title">Account opened: {{ event.title }}</h3>
           <p class="event-facts">{{ event.account_type }} · <span class="mono">{{ event.currency }}</span> · normal side {{ ui.side(event.normal_side, long=True) }}</p>
           <p class="event-note">Its balance starts at 0.00: only transactions change it.</p>
+          <div class="event-foot">
+            <a class="link-action" href="/account-detail/{{ event.account_id }}">Open account{{ ui.icon("arrow-forward") }}</a>
+          </div>
           {%- else %}
           <h3 id="event-{{ event.number }}-title" class="event-title mono">{{ event.event_type }}</h3>
           {%- endif %}

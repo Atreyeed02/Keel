@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -277,8 +278,11 @@ async def test_pages_load_nothing_from_elsewhere_and_have_nothing_inline(databas
                 "/accounts/new",
                 "/learn",
                 posted.headers["location"],
+                f"/account-detail/{ids['Cash']}",
             )
         }
+        # and so is the page for an account that isn't there
+        pages["missing account"] = await client.get(f"/account-detail/{uuid.uuid4()}")
         # forms re-rendered with an error are pages too
         pages["POST /accounts"] = await client.post("/accounts", data={"name": ""})
         pages["POST /post-transaction"] = await client.post(
@@ -291,6 +295,7 @@ async def test_pages_load_nothing_from_elsewhere_and_have_nothing_inline(databas
         **{path: 200 for path in pages},
         "POST /accounts": 422,
         "POST /post-transaction": 422,
+        "missing account": 404,
     }
     for path, response in pages.items():
         html = response.text

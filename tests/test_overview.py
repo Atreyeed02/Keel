@@ -268,7 +268,8 @@ async def test_the_demo_overview_defines_every_term_once(seeded, demo):
         page = (await client.get("/")).text
     ids = re.findall(r'\sid="([^"]+)"', page)
     assert len(ids) == len(set(ids))
-    assert set(re.findall(r'class="term term-([\w-]+)"', page)) == set(GLOSSARY)
+    # all but "t-account", which only an account's page uses
+    assert set(re.findall(r'class="term term-([\w-]+)"', page)) == set(GLOSSARY) - {"t-account"}
     # the formula names the five types; the chart's group rows no longer do
     formula = page.split('class="formula"')[1].split("</p>")[0]
     assert set(re.findall(r"term term-([\w-]+)", formula)) == {

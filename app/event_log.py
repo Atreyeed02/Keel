@@ -111,6 +111,7 @@ def describe(
         item.update(
             kind="account",
             title=payload.get("name", ""),
+            account_id=row["aggregate_id"],
             account_type=account_type.capitalize(),
             currency=payload.get("currency"),
             normal_side=normal_side(account_type),
