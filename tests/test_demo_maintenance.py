@@ -178,7 +178,7 @@ def test_actions_are_pinned_to_a_commit(workflow):
 
 def test_python_is_the_dockerfiles(workflow):
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    image = re.search(r"^FROM python:(\d+\.\d+)", dockerfile, re.MULTILINE).group(1)
+    image = re.search(r"^FROM \S*/python:(\d+\.\d+)", dockerfile, re.MULTILINE).group(1)
     versions = [
         step["with"]["python-version"]
         for step in _steps(workflow)
