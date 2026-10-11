@@ -26,7 +26,6 @@ date-range filter.
 """
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision = "fca143a4d6d9"

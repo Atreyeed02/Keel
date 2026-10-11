@@ -18,7 +18,6 @@ order, and JSONB keeps array order.
 """
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision = "c2e8f4a61b07"

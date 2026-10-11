@@ -24,12 +24,14 @@ updates:
     groups:
       # What the image runs. fastapi and starlette are in one group so a bump
       # never splits them and leaves starlette outside fastapi's range.
+      # sqlalchemy and uvicorn are left out on purpose: each gets a pull
+      # request of its own, because their updates need a closer review
+      # (the engine and the migrations; the proxy-header handling in
+      # app/client_address.py).
       runtime:
         patterns:
           - fastapi
           - starlette
-          - uvicorn
-          - sqlalchemy
           - alembic
           - asyncpg
           - psycopg
@@ -51,7 +53,8 @@ updates:
       security:
         applies-to: security-updates
         patterns: ["*"]
-    # Major versions are not grouped: each gets a pull request of its own.
+    # sqlalchemy, uvicorn and every major version get pull requests of
+    # their own.
 
   # The Dockerfile's python, from ECR Public, pinned by digest. Only digest
   # updates: the minor version stays 3.12, which the workflows' setup-python

@@ -1648,7 +1648,10 @@ India time it checks four ecosystems:
 
 - `pip`: minor and patch updates come in two grouped pull requests,
   `runtime` (what the image runs, fastapi and starlette always together)
-  and `dev-tools`. Each major version gets its own pull request.
+  and `dev-tools`. sqlalchemy and uvicorn are in neither: each gets its
+  own pull request, as does each major version. Their updates need a
+  closer review, of the engine and the migrations, and of the proxy-header
+  handling in `app/client_address.py` (§5.21).
 - `docker`: the Dockerfile's python, digest updates only, so it stays on
   3.12, which setup-python must match.
 - `docker-compose`: compose's postgres, and with it CI's. It stays on 16,

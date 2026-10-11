@@ -41,7 +41,6 @@ rather than grandfathered in.
 """
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision = "de4f1aec2fe6"

@@ -1,10 +1,9 @@
 """initial ledger schema"""
 
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy import Text
 from sqlalchemy.dialects import postgresql
-
-from alembic import op
 
 revision = "d8b553ce7776"
 down_revision = None
