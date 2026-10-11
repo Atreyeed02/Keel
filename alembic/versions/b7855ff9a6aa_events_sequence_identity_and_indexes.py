@@ -20,7 +20,6 @@ linked-event lookup behind the transaction-detail page).
 """
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision = "b7855ff9a6aa"

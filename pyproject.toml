@@ -9,3 +9,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+# The repository's own alembic/ directory holds the migrations, not the
+# package; ruff versions disagree on which section `from alembic...` sorts
+# into without this.
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]

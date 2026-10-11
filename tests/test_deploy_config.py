@@ -9,9 +9,9 @@ No database needed.
 import re
 
 import pytest
+from alembic.config import Config
 from pydantic import ValidationError
 
-from alembic.config import Config
 from app import serve
 from app.config import DEFAULT_DATABASE_URL, Settings, database_target
 
@@ -499,7 +499,9 @@ def test_dependabot_covers_every_pinned_ecosystem():
     # fastapi caps starlette's range, so they always move in the same pull request
     runtime = updates["pip"]["groups"]["runtime"]["patterns"]
     assert {"fastapi", "starlette"} <= set(runtime)
-    # every pinned requirement belongs to exactly one version-update group
+    # sqlalchemy and uvicorn get pull requests of their own; every other
+    # pinned requirement belongs to exactly one version-update group
+    alone = {"sqlalchemy", "uvicorn"}
     names = [
         re.match(r"[A-Za-z0-9_.-]+", line).group(0).lower()
         for line in (root / "requirements.txt").read_text().splitlines()
@@ -510,5 +512,6 @@ def test_dependabot_covers_every_pinned_ecosystem():
         for group in updates["pip"]["groups"].values()
         if group.get("applies-to", "version-updates") == "version-updates"
     ]
+    assert alone <= set(names)
     for name in names:
-        assert sum(name in group for group in groups) == 1, name
+        assert sum(name in group for group in groups) == (0 if name in alone else 1), name

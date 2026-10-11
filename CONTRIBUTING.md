@@ -30,6 +30,8 @@ merges itself. Remember that merging one deploys, like any merge.
 | `actions` group, or compose's postgres digest | CI green | nothing more |
 | The Dockerfile's python digest | CI green; `docker-smoke` boots the new image | `/health` and the pages on the live site |
 | pip `runtime` group, or a runtime major version | CI green, including `pip-audit`; the changelogs, especially for a major; every page compared with `main`, since jinja2, starlette or fastapi can change what a page renders | `/health` and the pages on the live site |
+| uvicorn, on its own | as for the `runtime` group, and its changelog for anything about proxy headers, `forwarded_allow_ips`, `ProxyHeadersMiddleware` or access logging, which `app/client_address.py` depends on | as for the `runtime` group, and the forged-header check ("Check it after a deploy", in the README's `FORWARDED_ALLOW_IPS` section) |
+| sqlalchemy, on its own | as for the `runtime` group, and its changelog for anything affecting the async engine, the queries or Alembic | `/health` and the pages on the live site |
 | pip `dev-tools` group | CI green. If a new ruff flags existing code, fix it in a pull request of its own first | nothing more |
 
 Pushing a commit to a Dependabot branch stops Dependabot from rebasing it,
