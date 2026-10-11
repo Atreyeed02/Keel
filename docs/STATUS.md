@@ -481,10 +481,16 @@ application change. Starlette 1.x also imports `python_multipart`
 directly, so form parsing no longer goes through the deprecated
 `import multipart` shim.
 
+Dependabot (`.github/dependabot.yml`) proposes updates every Monday for pip,
+the Dockerfile's python, compose's postgres (which CI's tests run on, so
+the digest is written once) and the actions' commit pins. Updates are
+grouped, Python stays on 3.12 and Postgres on 16, and nothing merges
+without review (ARCHITECTURE §5.13, CONTRIBUTING).
+
 ### CI — two jobs
 
 `lint-and-test` (ruff, `alembic check` on a freshly migrated database,
-then pytest against a live Postgres service) and
+then pytest against compose's Postgres) and
 `docker-smoke`, which is the more interesting one: it builds the image,
 waits for `/health`, asserts the exact healthy body `{"status":"ok","db":"up"}`
 (a bare 200 check would go green on a stack whose migrations failed),
@@ -602,10 +608,7 @@ event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
 **4. After the redesign**
 - give `/transaction-detail/{id}` the account page's 404 page: today an
   unknown id gets JSON and a malformed one a 422, and on the demo its links
-  break at every nightly reset, as an account's do;
-- Dependabot for the pinned base images (the Dockerfile's, and compose's
-  and CI's, which must move together), and for pip and the actions'
-  commit pins, so security updates arrive as pull requests.
+  break at every nightly reset, as an account's do.
 
 **Done since the previous version of this list:** deploy readiness
 (host-style configuration, a migrate-then-serve start command, a non-root

@@ -1,0 +1,106 @@
+# Weekly pull requests for everything the repository pins: Python packages,
+# the base images and the actions' commit pins. Each pull request goes
+# through CI and the "Protect main" ruleset like any other, and nothing
+# merges itself: CONTRIBUTING.md's "Reviewing Dependabot pull requests" has
+# what to check for each kind. tests/test_deploy_config.py fails if an
+# ecosystem the repository uses is missing here.
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    # A release has a week to be pulled or fixed before it is proposed.
+    # Security updates skip this.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # What the image runs. fastapi and starlette are in one group so a bump
+      # never splits them and leaves starlette outside fastapi's range.
+      runtime:
+        patterns:
+          - fastapi
+          - starlette
+          - uvicorn
+          - sqlalchemy
+          - alembic
+          - asyncpg
+          - psycopg
+          - pydantic
+          - pydantic-settings
+          - python-dotenv
+          - jinja2
+          - python-multipart
+        update-types: [minor, patch]
+      # Tests and lint only; none of these is installed differently in production.
+      dev-tools:
+        patterns:
+          - pytest
+          - pytest-asyncio
+          - httpx
+          - ruff
+          - pyyaml
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+    # Major versions are not grouped: each gets a pull request of its own.
+
+  # The Dockerfile's python, from ECR Public, pinned by digest. Only digest
+  # updates: the minor version stays 3.12, which the workflows' setup-python
+  # must match (tests/test_demo_maintenance.py).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    commit-message:
+      prefix: chore
+      include: scope
+    ignore:
+      - dependency-name: "*python"
+        update-types: [version-update:semver-major, version-update:semver-minor]
+
+  # docker-compose.yml's postgres, which CI's lint-and-test also starts, so
+  # one bump moves both. Major versions are ignored: a new major cannot read
+  # an existing local data volume.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    commit-message:
+      prefix: chore
+      include: scope
+    ignore:
+      - dependency-name: "*postgres"
+        update-types: [version-update:semver-major]
+
+  # The actions in all three workflows, kept pinned by commit with the
+  # version in the trailing comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
