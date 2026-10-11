@@ -441,7 +441,74 @@ def test_base_images_come_from_ecr_public_pinned_by_digest():
     (base,) = re.findall(r"^FROM (\S+)", (root / "Dockerfile").read_text(), re.M)
     assert re.fullmatch(pinned.format("python"), base)
     compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["db"]
-    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
-    service = ci["jobs"]["lint-and-test"]["services"]["postgres"]
     assert re.fullmatch(pinned.format("postgres"), compose["image"])
-    assert service["image"] == compose["image"]  # CI tests against what compose runs
+    # The dev override must not swap the database image.
+    dev = yaml.safe_load((root / "docker-compose.override.yml").read_text())["services"]
+    assert "db" not in dev
+
+
+def test_ci_tests_against_composes_database_and_nothing_else():
+    """One pinned postgres, in docker-compose.yml, so one Dependabot bump moves CI too."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
+    job = ci["jobs"]["lint-and-test"]
+    assert "services" not in job and "container" not in job
+    # the base file only, never the dev override that checkout puts on disk
+    assert job["env"]["COMPOSE_FILE"] == "docker-compose.yml"
+    runs = [step.get("run", "") for step in job["steps"]]
+    start = runs.index("docker compose up -d --wait db")
+    assert start < next(i for i, run in enumerate(runs) if "alembic upgrade head" in run)
+    assert start < runs.index("pytest -v")
+    # the credentials the steps use are the ones compose's db creates
+    db = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["db"]
+    assert db["environment"] == {
+        "POSTGRES_USER": "ledger",
+        "POSTGRES_PASSWORD": "ledger",
+        "POSTGRES_DB": "ledger",
+    }
+    assert "5432:5432" in db["ports"]
+    tests = next(step for step in job["steps"] if step.get("run") == "pytest -v")
+    assert tests["env"]["TEST_DATABASE_URL"].endswith("ledger:ledger@localhost:5432/ledger")
+
+
+def test_dependabot_covers_every_pinned_ecosystem():
+    """A pin nothing proposes updates for only ever ages."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    config = yaml.safe_load((root / ".github" / "dependabot.yml").read_text())
+    updates = {u["package-ecosystem"]: u for u in config["updates"]}
+    assert set(updates) == {"pip", "docker", "docker-compose", "github-actions"}
+    for update in updates.values():
+        assert update["directory"] == "/"
+        assert update["schedule"]["interval"] == "weekly"
+    # python stays 3.12 (setup-python must match it); postgres stays 16
+    (python,) = updates["docker"]["ignore"]
+    assert set(python["update-types"]) == {
+        "version-update:semver-major",
+        "version-update:semver-minor",
+    }
+    (postgres,) = updates["docker-compose"]["ignore"]
+    assert postgres["update-types"] == ["version-update:semver-major"]
+    # fastapi caps starlette's range, so they always move in the same pull request
+    runtime = updates["pip"]["groups"]["runtime"]["patterns"]
+    assert {"fastapi", "starlette"} <= set(runtime)
+    # every pinned requirement belongs to exactly one version-update group
+    names = [
+        re.match(r"[A-Za-z0-9_.-]+", line).group(0).lower()
+        for line in (root / "requirements.txt").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    groups = [
+        set(group["patterns"])
+        for group in updates["pip"]["groups"].values()
+        if group.get("applies-to", "version-updates") == "version-updates"
+    ]
+    for name in names:
+        assert sum(name in group for group in groups) == 1, name

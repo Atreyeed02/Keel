@@ -9,8 +9,10 @@
 #     docker compose -f docker-compose.yml up --build
 services:
   db:
-    # Same image and digest as ci.yml's service container; see the Dockerfile
-    # for why it comes from ECR Public and is pinned.
+    # CI's lint-and-test runs its tests on this service too, so this is the
+    # only place the image is pinned; see the Dockerfile for why it comes
+    # from ECR Public and is pinned. Dependabot proposes digest bumps
+    # (.github/dependabot.yml).
     image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     environment:
       POSTGRES_USER: ledger

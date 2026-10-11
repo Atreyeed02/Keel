@@ -19,6 +19,22 @@ keep that safe. The README covers how to run Keel and its tests, and
    any host action needed (see "Deployment constraints", rule 4) at the very
    top. If there is none, say so.
 
+## Reviewing Dependabot pull requests
+
+Dependabot (`.github/dependabot.yml`) opens pull requests every Monday. They
+go through the same checks and the same approval as any other, and none
+merges itself. Remember that merging one deploys, like any merge.
+
+| Pull request | Check before approving | After merging |
+|---|---|---|
+| `actions` group, or compose's postgres digest | CI green | nothing more |
+| The Dockerfile's python digest | CI green; `docker-smoke` boots the new image | `/health` and the pages on the live site |
+| pip `runtime` group, or a runtime major version | CI green, including `pip-audit`; the changelogs, especially for a major; every page compared with `main`, since jinja2, starlette or fastapi can change what a page renders | `/health` and the pages on the live site |
+| pip `dev-tools` group | CI green. If a new ruff flags existing code, fix it in a pull request of its own first | nothing more |
+
+Pushing a commit to a Dependabot branch stops Dependabot from rebasing it,
+so make fixes in a separate pull request and let Dependabot rebase its own.
+
 ## Deployment constraints
 
 Every rule below exists because of how the live demo runs: one container on

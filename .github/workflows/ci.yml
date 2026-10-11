@@ -11,23 +11,19 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        # Same as docker-compose.yml's db; ECR Public, pinned (see Dockerfile).
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
-        env:
-          POSTGRES_USER: ledger
-          POSTGRES_PASSWORD: ledger
-          POSTGRES_DB: ledger
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ledger"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
+    # The tests' Postgres is docker-compose.yml's db, so the image and its
+    # digest are written in one place and a Dependabot bump of compose moves
+    # CI too. Only the base file: the dev override must not apply here, as
+    # in docker-smoke below.
+    env:
+      COMPOSE_FILE: docker-compose.yml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # User, password and database are all `ledger`, published on 5432;
+      # --wait returns once compose's pg_isready healthcheck passes.
+      - name: Start Postgres (docker-compose.yml's db)
+        run: docker compose up -d --wait db
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

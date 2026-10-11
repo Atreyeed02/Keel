@@ -533,8 +533,8 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_demo.py` | the demo notice on every page, and the reset script's refusals, restore and rollback |
 | `test_demo_maintenance.py` | the database host check, and the scheduled reset's workflow: its triggers, permissions, secret handling, step order, pinned actions and Python version |
 
-CI (`.github/workflows/ci.yml`) runs ruff and the full suite against a
-PostgreSQL service container. A separate `docker-smoke` job builds the
+CI (`.github/workflows/ci.yml`) runs ruff and the full suite against
+`docker-compose.yml`'s PostgreSQL. A separate `docker-smoke` job builds the
 image, boots the stack, confirms migrations ran and drives account
 creation → posting → overview over HTTP.
 

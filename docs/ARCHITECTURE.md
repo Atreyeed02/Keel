@@ -1509,7 +1509,7 @@ read its code but not change it. `PYTHONUNBUFFERED` gets log lines to the
 host as they are written.
 
 **Base images.** The Dockerfile's `python:3.12-slim` and the `postgres:16-alpine`
-in `docker-compose.yml` and `ci.yml` come from
+in `docker-compose.yml`, which CI's tests also run on, come from
 `public.ecr.aws/docker/library`, Docker's own copy of its official images on
 ECR Public, not from Docker Hub. CI's runners share addresses, and Docker
 Hub's anonymous pull limit failed both jobs with `429 Too Many Requests`
@@ -1519,9 +1519,13 @@ to. Render builds this Dockerfile, so production pulls from ECR Public too,
 and CI tests the base production ships. The pin trades automatic updates
 for reproducible builds: a Debian or Python patch reaches the image only
 through a pull request that bumps the digest, like the actions and the runner
-image (§5.13). `test_base_images_come_from_ecr_public_pinned_by_digest` fails
-if any of the three drifts back to a bare tag, or if CI's Postgres stops
-being the one compose runs.
+image (§5.13). Dependabot opens those pull requests every Monday
+(`.github/dependabot.yml`, §5.13). It keeps Python on 3.12 and Postgres on
+16 and proposes only new digests for those tags.
+`test_base_images_come_from_ecr_public_pinned_by_digest` fails if either
+drifts back to a bare tag, and
+`test_ci_tests_against_composes_database_and_nothing_else` if CI's Postgres
+stops being the one compose runs.
 
 The start command is `python -m app.serve` (`app/serve.py`): `alembic
 upgrade head`, then, only if that succeeded, uvicorn on `$PORT` (default
@@ -1585,7 +1589,10 @@ on a database of their own, which fails the build if the migrations and
 `app/db/schema.py` have drifted apart in any way autogenerate can see
 (the tests build their schema from `schema.py`, the app from the
 migrations, so drift would mean the tests exercise a different schema);
-then pytest against a real Postgres service container.
+then pytest against a real Postgres. That Postgres is `docker-compose.yml`'s
+`db`, started with `docker compose up -d --wait db` under
+`COMPOSE_FILE: docker-compose.yml`, so the image is pinned in one place
+and the dev override never applies.
 
 **`docker-smoke`** — proves the shipped image works: build, `up -d`, poll
 `/health` until it answers (with a deadline, not a fixed sleep), assert
@@ -1635,6 +1642,29 @@ pinned `ubuntu-24.04` image and pin `actions/checkout` and
 `actions/setup-python` to the same commits. A new runner image or action
 version reaches CI only through a pull request that changes them. The base
 images are pinned the same way (§5.12).
+
+**`.github/dependabot.yml`** opens those pull requests. Every Monday at 09:00
+India time it checks four ecosystems:
+
+- `pip`: minor and patch updates come in two grouped pull requests,
+  `runtime` (what the image runs, fastapi and starlette always together)
+  and `dev-tools`. Each major version gets its own pull request.
+- `docker`: the Dockerfile's python, digest updates only, so it stays on
+  3.12, which setup-python must match.
+- `docker-compose`: compose's postgres, and with it CI's. It stays on 16,
+  because a new major can't read an existing data volume.
+- `github-actions`: every workflow's actions in one pull request, still
+  pinned by commit.
+
+Python packages and actions wait out a 7-day cooldown, so a release that is
+pulled or fixed within a week is never proposed. Dependabot can't date the
+ECR images, so their digests are proposed as soon as they change. Security
+updates get their own group and skip the cooldown. The pull requests go
+through both required checks and the ruleset like any other, and none
+merges itself; CONTRIBUTING has what to check for each kind.
+`test_dependabot_covers_every_pinned_ecosystem` fails if an ecosystem goes
+missing, if Python or Postgres could jump a version, or if a pinned package
+sits in no group.
 
 ### 5.14 `app/domain/idempotency.py`
 
