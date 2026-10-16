@@ -1,10 +1,13 @@
-# Docker's official python image, pulled from its ECR Public copy (same
-# digest as on Docker Hub) because Docker Hub's anonymous pull limit fails
-# CI on shared runners. Pinned by digest, so the base image changes only
-# through a pull request that bumps it, which Dependabot opens weekly when
-# the tag moves (.github/dependabot.yml); docker-compose.yml pins postgres
-# the same way. Render builds this file, so it pulls from here too.
-FROM public.ecr.aws/docker/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+# Docker's official python image, from this repository's copy on ghcr.io.
+# The "Mirror base images" workflow copies it from Docker's ECR Public copy
+# byte for byte, so the digest below is the one Docker Hub's tag pointed to:
+# Docker Hub's and ECR Public's anonymous limits both failed CI and
+# Dependabot on shared addresses. Pinned by digest, so the base image
+# changes only through a pull request that bumps it, which Dependabot opens
+# weekly when the mirror's tag moves (.github/dependabot.yml);
+# docker-compose.yml pins postgres the same way. Render builds this file,
+# so it pulls from here too.
+FROM ghcr.io/atreyeed02/keel-base/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 # No .pyc files (the code is read-only to the app's user), and unbuffered
 # output, so JSON log lines reach the host's log collector as they happen.

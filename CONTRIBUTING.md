@@ -27,12 +27,29 @@ merges itself. Remember that merging one deploys, like any merge.
 
 | Pull request | Check before approving | After merging |
 |---|---|---|
-| `actions` group, or compose's postgres digest | CI green | nothing more |
-| The Dockerfile's python digest | CI green; `docker-smoke` boots the new image | `/health` and the pages on the live site |
+| `actions` group | CI green | nothing more |
+| compose's postgres digest | CI green; the new digest is Docker's (below) | nothing more |
+| The Dockerfile's python digest | CI green; `docker-smoke` boots the new image; the new digest is Docker's (below) | `/health` and the pages on the live site |
 | pip `runtime` group, or a runtime major version | CI green, including `pip-audit`; the changelogs, especially for a major; every page compared with `main`, since jinja2, starlette or fastapi can change what a page renders | `/health` and the pages on the live site |
 | uvicorn, on its own | as for the `runtime` group, and its changelog for anything about proxy headers, `forwarded_allow_ips`, `ProxyHeadersMiddleware` or access logging, which `app/client_address.py` depends on | as for the `runtime` group, and the forged-header check ("Check it after a deploy", in the README's `FORWARDED_ALLOW_IPS` section) |
 | sqlalchemy, on its own | as for the `runtime` group, and its changelog for anything affecting the async engine, the queries or Alembic | `/health` and the pages on the live site |
 | pip `dev-tools` group | CI green. If a new ruff flags existing code, fix it in a pull request of its own first | nothing more |
+
+**Is a base image's new digest Docker's?** Both base images come from this
+repository's mirror on ghcr.io, which the "Mirror base images" workflow
+fills from Docker's official images (`docs/ARCHITECTURE.md` §5.12). Before
+approving a digest bump, ask Docker Hub for that digest in Docker's own
+repository, `library/python` or `library/postgres`. It needs Docker with
+Buildx, but not a running Docker engine:
+
+```bash
+d=sha256:<the new digest from the pull request>
+docker buildx imagetools inspect "docker.io/library/python@$d" --format "{{.Manifest.Digest}}"
+```
+
+For compose's postgres, use `library/postgres`. If the image is Docker's,
+it prints the same digest. If it isn't, the command fails with `not found`:
+don't approve, and find out how the mirror came to hold it.
 
 Pushing a commit to a Dependabot branch stops Dependabot from rebasing it,
 so make fixes in a separate pull request and let Dependabot rebase its own.

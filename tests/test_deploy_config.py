@@ -429,22 +429,58 @@ def test_the_image_never_reloads_and_the_dev_override_does():
     assert dev["environment"]["WATCHFILES_FORCE_POLLING"] == "true"
 
 
-def test_base_images_come_from_ecr_public_pinned_by_digest():
-    """Docker Hub's anonymous limit fails CI; a tag alone changes under a build."""
-    import re
+MIRROR = "ghcr.io/atreyeed02/keel-base"
+
+
+def _pinned_base_images():
+    """The Dockerfile's python and compose's postgres, as written."""
     from pathlib import Path
 
     import yaml
 
     root = Path(__file__).resolve().parent.parent
-    pinned = r"public\.ecr\.aws/docker/library/{}:[\w.-]+@sha256:[0-9a-f]{{64}}"
-    (base,) = re.findall(r"^FROM (\S+)", (root / "Dockerfile").read_text(), re.M)
-    assert re.fullmatch(pinned.format("python"), base)
-    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["db"]
-    assert re.fullmatch(pinned.format("postgres"), compose["image"])
+    (python,) = re.findall(r"^FROM (\S+)", (root / "Dockerfile").read_text(), re.M)
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]
+    return python, compose["db"]["image"]
+
+
+def test_base_images_come_from_the_ghcr_mirror_pinned_by_digest():
+    """Docker Hub and ECR Public limit anonymous pulls; a tag alone changes under a build."""
+    from pathlib import Path
+
+    import yaml
+
+    pinned = re.escape(MIRROR) + r"/{}:[\w.-]+@sha256:[0-9a-f]{{64}}"
+    python, postgres = _pinned_base_images()
+    assert re.fullmatch(pinned.format("python"), python)
+    assert re.fullmatch(pinned.format("postgres"), postgres)
     # The dev override must not swap the database image.
+    root = Path(__file__).resolve().parent.parent
     dev = yaml.safe_load((root / "docker-compose.override.yml").read_text())["services"]
     assert "db" not in dev
+
+
+def test_the_mirror_copies_exactly_the_pinned_tags_and_only_from_main():
+    """A tag the workflow doesn't copy never moves, so Dependabot never proposes it."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    workflow = yaml.safe_load(
+        (root / ".github" / "workflows" / "mirror-base-images.yml").read_text()
+    )
+    # PyYAML reads the key `on` as True
+    assert set(workflow[True]) == {"schedule", "workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read", "packages": "write"}
+    (job,) = workflow["jobs"].values()
+    assert job["if"] == "github.ref == 'refs/heads/main'"
+    assert job["env"]["MIRROR"] == MIRROR
+    assert job["env"]["SOURCE"] == "public.ecr.aws/docker/library"
+    (copy,) = [step["run"] for step in job["steps"] if "crane copy" in step.get("run", "")]
+    (images,) = re.findall(r"^\s*for image in (.+); do$", copy, re.M)
+    pinned = {image.removeprefix(MIRROR + "/").split("@")[0] for image in _pinned_base_images()}
+    assert set(images.split()) == pinned == {"python:3.12-slim", "postgres:16-alpine"}
 
 
 def test_ci_tests_against_composes_database_and_nothing_else():

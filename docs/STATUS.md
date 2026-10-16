@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-11.** A snapshot of what is actually built, what is
+**As of 2026-10-16.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Twenty-one PRs are merged into `main`, with regular merge commits, and their
+Twenty-eight PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -36,6 +36,17 @@ branches deleted:
 | [#19](https://github.com/Atreyeed02/Keel/pull/19) | `feat/ui-event-log` | `0faa9df` |
 | [#20](https://github.com/Atreyeed02/Keel/pull/20) | `fix/reversal-example-class` | `731003f` |
 | [#21](https://github.com/Atreyeed02/Keel/pull/21) | `chore/pin-base-images-ecr` | `0505b83` |
+| [#22](https://github.com/Atreyeed02/Keel/pull/22) | `feat/ui-account-detail` | `82cdd62` |
+| [#23](https://github.com/Atreyeed02/Keel/pull/23) | `chore/dependabot` | `ff84f20` |
+| [#25](https://github.com/Atreyeed02/Keel/pull/25) | `dependabot/pip/dev-tools-…` (Dependabot: pytest, httpx, ruff) | `81b3ff8` |
+| [#26](https://github.com/Atreyeed02/Keel/pull/26) | `chore/deps-prep` | `50ee2d9` |
+| [#27](https://github.com/Atreyeed02/Keel/pull/27) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 7 updates) | `7a1b669` |
+| [#29](https://github.com/Atreyeed02/Keel/pull/29) | `dependabot/pip/uvicorn-0.54.0` (Dependabot) | `3663e39` |
+| [#30](https://github.com/Atreyeed02/Keel/pull/30) | `chore/mirror-base-images` | `3a8f967` |
+
+Dependabot's first `runtime` pull request, #24, was closed unmerged: it
+needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
+2.0.35 → 2.1.3, is open and waits for 2.1.4.
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -73,7 +84,94 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/ui-account-detail`**, the redesign's seventh and last phase, adds
+**`chore/base-images-from-ghcr`** moves both base images to this
+repository's mirror on ghcr.io, which #30's workflow fills (below), with the
+same digests: the Dockerfile's
+`ghcr.io/atreyeed02/keel-base/python:3.12-slim@sha256:a6e34c59…` and
+compose's `ghcr.io/atreyeed02/keel-base/postgres:16-alpine@sha256:721873c3…`.
+After ECR Public's anonymous limits failed Dependabot's docker runs and one
+of `main`'s CI runs, nothing Keel builds or tests pulls from a shared
+anonymous allowance any more. The base-image test now requires the mirror,
+and a new one requires the mirror workflow to copy exactly the pinned tags,
+to the mirror, from `main` only, with no other trigger or permission.
+CONTRIBUTING has the command a reviewer runs to confirm a digest bump is
+Docker's own image. It changes no app code and no migration, and needs no
+host action: both packages are public. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.16.10) | clean |
+| `pytest` collection | **447 tests** |
+| `pytest` (no database available) | 292 passed, 155 skipped |
+| `pytest` (local Postgres 16) | 447 passed |
+| New tests fail without their change | 9 deliberate breaks, one at a time, each failed a test: the Dockerfile or compose back on ECR Public, the python pin a bare tag, the workflow no longer copying postgres, compose on a tag the workflow doesn't copy, a `push` trigger, `contents: write`, the job not gated to `main`, another mirror |
+| CONTRIBUTING's digest check, on today's pins | `docker buildx imagetools inspect` printed the python pin for `docker.io/library/python@` that digest, and the postgres pin for `library/postgres`, as did the mirror for both; postgres's digest under `library/python`, and a digest of zeros: `not found`, exit 1. No Docker engine was running: it only asks the registry |
+| Anonymous pulls from the mirror | a token with no login, then each pinned digest's manifest: 200 for both |
+| Every page, `main` (`3a8f967`) against the branch, same seeded data | 11 pages × light/dark × 1280/390 px, 44 pairs, compared pixel by pixel twice, with every animation finished. 41 identical in both passes. A transaction's page (phone, light) in the first pass and an account's page (phone, dark) in the second differed by 96 and 323 scattered pixels, each in one pass only. The new-account form (phone, dark) differed in both, only in the native drop-down's "Asset", while the page and every file it loads were byte-identical on both servers: Chrome drawing its own control, not a change |
+
+**#30, `chore/mirror-base-images`**, adds the "Mirror base images" workflow
+(`ARCHITECTURE.md` §5.12). Every Monday at 02:30 UTC, an hour before
+Dependabot, and by hand, it copies `python:3.12-slim` and
+`postgres:16-alpine` from ECR Public to `ghcr.io/atreyeed02/keel-base` with
+`crane` (pinned by version and checksum), by digest, every platform
+included, and fails unless the copy has the official digest. Only `main`'s
+copy runs; its token can read the repository and write packages. It
+changed nothing that was built. Checked on that branch, then on `main`
+after merging:
+
+| Check | Result |
+|---|---|
+| CI on the PR | both checks passed |
+| Every page, `main` (`3663e39`) against the branch | 44 pairs, two passes: identical apart from the demo dot and the native drop-down's text |
+| First run, by hand on `main` (`3a8f967`), 2026-10-16 | passed. `python:3.12-slim`: none → `sha256:a6e34c59…`; `postgres:16-alpine`: none → `sha256:721873c3…`, the digests the Dockerfile and compose pin; the workflow's own check (the mirror's digest equals the official one) passed for both |
+| The packages | public: pulled with no login, each pinned digest's manifest 200 |
+
+**#29, uvicorn 0.31.0 → 0.54.0** (Dependabot, on its own, as CONTRIBUTING
+asks). `app/client_address.py` runs uvicorn's `ProxyHeadersMiddleware`
+unchanged, so the review read what changed there: several
+`X-Forwarded-For` headers are now joined into one list, where 0.31 kept
+only the last; `host:port` entries are split, the port going to the
+client's second field, which Keel never reads; trust checks are memoised.
+On Render's chain, a single header with no ports, nothing changes, which a
+local probe of both versions showed. Before merging: 446 tests passed on
+both versions, also with warnings as errors; every page, 44 pairs,
+identical; 22 URLs identical but for each render's own submission key and
+the static files' dates. After merging, `main`'s first CI run failed
+pulling postgres from ECR Public (`toomanyrequests: Data limit exceeded`),
+and its rerun passed. Checked on the live site:
+
+| Check | Result |
+|---|---|
+| The deploy | `3663e39` live: `keel.css` served with `Last-Modified` 8 s after the merge, Render's checkout time |
+| Read-only, GET requests only | 14 URLs and their headers as expected, the static files byte-identical to the commit, 32 renders clean, injected style and script refused |
+| The README's forged-header check (2026-10-14) | a write with forged `X-Forwarded-For`, `True-Client-IP` and `X-Real-IP`: 400, logged with the sender's own public address as `client` and `scheme` `https` |
+| Two separate `X-Forwarded-For` headers (`192.0.2.5`, then `192.0.2.6`), the case 0.54 handles differently | 400, logged the same way: the sender's own address, not either forged one |
+
+**#27, #26 and #25**, the first Dependabot updates. #26 prepared for them:
+`sqlalchemy[asyncio]`, because SQLAlchemy 2.1 no longer installs greenlet,
+which broke #24's CI and container; `alembic` sorted as third-party, which
+newer ruff wanted; and sqlalchemy and uvicorn moved out of the `runtime`
+group into pull requests of their own. Then #25 (pytest 9.1.1, httpx
+0.28.1, ruff 0.16.10) and #27 (the `runtime` group, 7 updates, fastapi
+0.142.2 among them) merged with CI green. #27 was checked on the live site
+after its deploy: 12 URLs and their headers, 9 static files byte-identical,
+32 renders clean, injected style and script refused, GET requests only.
+
+**#23, `chore/dependabot`**, adds `.github/dependabot.yml`: pip, the
+Dockerfile's python, compose's postgres and the actions, every Monday at
+09:00 India time, in groups, with a 7-day cooldown for packages and
+actions; Python stays on 3.12 and Postgres on 16 (`ARCHITECTURE.md`
+§5.13). CI's tests now run on compose's `db`, under `COMPOSE_FILE` at job
+level, so the postgres digest is written once. Before merging: 3 deliberate
+breaks, each failed a test; every page, 44 pairs against `82cdd62`,
+identical; CI ran 446 tests, none skipped, on compose's database. After
+merging, Dependabot alerts and security updates were turned on (they had
+been off); there were no open alerts. Each ecosystem's first run: pip opened
+#24 and #25, both with CI red (above); the actions were up to date; the
+postgres digest was current; the python check failed on ECR Public's
+anonymous limit (`429`), which is what led to #30 and the mirror.
+
+**#22, `feat/ui-account-detail`**, the redesign's seventh and last phase, adds
 an account's page, `/account-detail/{id}` (§2, "HTTP"): the account as a
 T-account, debits on the left and credits on the right, oldest first, 25
 entries a page; each entry's transaction as its one link, with the accounts
@@ -84,7 +182,7 @@ account in the event log link to it. An id that isn't an account's gets a
 page saying so, with a 404; on the demo it adds that the nightly reset
 changes every id. It adds the "T-account" term, no migration and no
 dependency; the existing URLs and the JSON API are unchanged. Checked on
-that branch:
+that branch, then on the live site after merging:
 
 | Check | Result |
 |---|---|
@@ -98,6 +196,7 @@ that branch:
 | Headless Chrome, account pages | Cash, Equipment loan payable, Cash below zero and a new account with no entries (both posted to a local database only), and an unknown id, in light and dark at 1280 and 390 px (20 renders): no CSP violation, console error, failed request (but the unknown id's own 404), cut-off figure, or page wider than the screen |
 | Motion | Stitch's T-account rows: an entry's background fades in under the pointer and its transaction's name changes colour, 150 ms; 0 s under reduced motion. Stitch's normal-balance tooltip is the term cards. Its inflow/outflow ratio bar, an invented "retained liquidity" figure whose transition never ran, is not shipped |
 | Keyboard and terms | an entry's link takes the focus ring and its colour; the page defines its account's type, normal side, T-account, debit, credit and event once each; the T-account card links to `/learn#normal-side` |
+| Live, on `82cdd62`, read-only (GET requests only; the browser failed any other request before sending it, and none was attempted) | live about 50 s after the merge; headers on 13 URLs exact; the 12 static files byte-identical to the commit; `/health` ok; the posting form's checks and the 422 hold; 28 renders clean, injected style and script refused. All 8 account pages: 200, exact headers, nothing inline, the chart's name and balance, "why debit/credit" right for the type, each column's count and total its entries', the sum the right way round, oldest first, each entry's one link a transaction listing the account on that side, every "other side" that transaction's opposite accounts, the event link on the log's page holding its "Open account", each term once, no repeated id. The 21 account links on the 10 transaction pages and the 8 "Open account" links in the event log each land on the right account. An unknown and a malformed id: the HTML 404 with the reset sentence and its link. 12 renders of account pages clean; the hover fade, the focus ring and the T-account card work, and nothing moves under reduced motion |
 
 **#21, `chore/pin-base-images-ecr`**: Docker Hub's anonymous pull limit
 (`429 Too Many Requests`) stopped both CI jobs on #20 before a step ran. The
@@ -474,8 +573,9 @@ echoed as `X-Request-ID`. Posting lines carry `transaction_id`,
 
 ### Dependencies
 
-FastAPI 0.141.1 on Starlette 1.7.0 (pinned directly), pytest 9 with
-pytest-asyncio 1.4, python-dotenv 1.2.2, jinja2 3.1.6. Moving off
+FastAPI 0.142.2 on Starlette 1.7.0 (pinned directly), uvicorn 0.54.0,
+SQLAlchemy 2.0.35, pytest 9.1 with pytest-asyncio 1.4, python-dotenv 1.2.4,
+jinja2 3.1.6. Moving off
 Starlette 0.38.6 closed all 7 of its advisories and needed no
 application change. Starlette 1.x also imports `python_multipart`
 directly, so form parsing no longer goes through the deprecated
@@ -483,7 +583,9 @@ directly, so form parsing no longer goes through the deprecated
 
 Dependabot (`.github/dependabot.yml`) proposes updates every Monday for pip,
 the Dockerfile's python, compose's postgres (which CI's tests run on, so
-the digest is written once) and the actions' commit pins. Updates are
+the digest is written once) and the actions' commit pins. The two images'
+new digests come from the mirror, which copies Docker's official images an
+hour earlier. Updates are
 grouped, Python stays on 3.12 and Postgres on 16, and nothing merges
 without review (ARCHITECTURE §5.13, CONTRIBUTING).
 
@@ -504,11 +606,14 @@ Since #5, `lint-and-test` also runs `pip-audit --strict`, and `docker-smoke`
 fails if the container runs as root. A third, scheduled workflow, "Cloudflare
 ranges", compares `app/client_address.py`'s copy of Cloudflare's address
 ranges with the published lists every Monday. A fourth, "Demo
-maintenance", resets the public demo every night (below). Since #13, all
-three workflow files pin their actions by commit and run every job on
-`ubuntu-24.04`. Since #21, the images both jobs pull, Python for the app
-and Postgres, come from ECR Public pinned by digest, not from Docker Hub,
-whose anonymous pull limit had stopped them.
+maintenance", resets the public demo every night (below), and a fifth,
+"Mirror base images", copies the base images to ghcr.io every Monday
+(#30). Since #13, the workflow files pin their actions by commit and run
+every job on `ubuntu-24.04`. The images both jobs pull, Python for the app
+and Postgres, are pinned by digest and come from the repository's mirror on
+ghcr.io: Docker Hub's anonymous pull limit stopped them first, and #21 moved
+them to ECR Public; then ECR Public's stopped Dependabot and a run of
+`main`'s CI, and `chore/base-images-from-ghcr` moved them to the mirror.
 Both jobs are required checks: the "Protect main" ruleset (§1) merges
 nothing into `main` until they pass.
 
@@ -589,8 +694,9 @@ Ordered so that earlier items unblock or de-risk later ones.
 **1. Finish the live deployment**
 Keel is live on Render + Neon (§1). What is left:
 
-- keep the repository active, or GitHub pauses the nightly reset after 60
-  days without activity (README, "Scheduled maintenance"). The reset itself
+- keep the repository active, or GitHub pauses the nightly reset and the
+  base-image mirror after 60 days without activity (README, "Scheduled
+  maintenance"). The reset itself
   is set up and verified on the live database (§1);
 - try `sslmode=verify-full` with Neon, which needs a CA bundle both drivers
   can find in `python:3.12-slim`;
@@ -647,7 +753,7 @@ docker compose exec app python -m scripts.seed_demo_data
 ```
 
 **To actually run the test suite**, give it a database — without this
-you are running 244 of 354 tests:
+you are running 292 of 447 tests:
 
 ```bash
 docker compose up -d db
@@ -722,7 +828,7 @@ The redesign ships one PR per phase:
 6. **Event log** as a timeline (#19, merged): each event in words
    from its own payload, the raw event folded away, and how append-only
    events and rebuilds work.
-7. **Account detail** (`feat/ui-account-detail`): each account as a
+7. **Account detail** (#22, merged): each account as a
    T-account, its entries oldest first, why its normal side, and its
    balance as a sum, below zero included.
 
