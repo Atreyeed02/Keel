@@ -1,0 +1,79 @@
+name: Mirror base images
+
+# Copies the two official base images (Docker's python and postgres, as
+# published on ECR Public) to this repository's GitHub container registry,
+# byte for byte, so CI, Render and Dependabot pull from ghcr.io instead of
+# ECR Public, whose anonymous limits fail them on shared addresses. The copy
+# keeps the image's digest, so a pin on the mirror names exactly the same
+# image as the official one; the job fails if it ever does not. Each copy
+# moves the mirror's tag to the official tag's current digest, and
+# Dependabot's Monday run then proposes the digest bump as a pull request.
+# Old digests stay pullable, so a rollback needs nothing from here.
+#
+# GitHub emails a failed scheduled run to whoever last changed the schedule
+# below, and stops scheduled runs in a public repository after 60 days
+# without activity; run it by hand from the Actions tab then.
+on:
+  schedule:
+    - cron: "30 2 * * 1" # Mondays, 02:30 UTC: an hour before Dependabot's 09:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# The runner image and crane are pinned, so neither changes under this job
+# except through a change to this file.
+jobs:
+  mirror:
+    # A manual run can be started on any branch; only main's copy of this
+    # file may write to the registry.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CRANE_VERSION: v0.22.1
+      # sha256 of go-containerregistry_Linux_x86_64.tar.gz, from that
+      # release's checksums.txt.
+      CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+      SOURCE: public.ecr.aws/docker/library
+      MIRROR: ghcr.io/atreyeed02/keel-base
+    steps:
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          url="https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL -o /tmp/crane.tar.gz "$url"
+          echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
+
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | crane auth login ghcr.io --username "$ACTOR" --password-stdin
+
+      # The tags are the ones the Dockerfile and docker-compose.yml pin; a
+      # new python minor or postgres major is a change to this list and to
+      # those files together.
+      - name: Copy what changed
+        run: |
+          set -euo pipefail
+          for image in python:3.12-slim postgres:16-alpine; do
+            official="$(crane digest "${SOURCE}/${image}")"
+            mirrored="$(crane digest "${MIRROR}/${image}" 2>/dev/null || true)"
+            if [ "$official" = "$mirrored" ]; then
+              echo "${image}: up to date (${official})"
+              continue
+            fi
+            # Copy by digest, not by tag, so a tag that moves mid-copy
+            # cannot mix two images. Every platform is copied: the
+            # official index is what keeps the digest the same.
+            crane copy "${SOURCE}/${image%%:*}@${official}" "${MIRROR}/${image}"
+            copied="$(crane digest "${MIRROR}/${image}")"
+            if [ "$copied" != "$official" ]; then
+              echo "::error::${image}: the mirror holds ${copied}, the official image is ${official}"
+              exit 1
+            fi
+            echo "${image}: ${mirrored:-none} -> ${official}"
+          done
