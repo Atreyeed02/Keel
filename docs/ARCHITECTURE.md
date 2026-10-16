@@ -1470,7 +1470,7 @@ workflow runs it every night (§5.13).
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
-| `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override (§5.1, §5.12) |
+| `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override; the base images from the mirror, pinned by digest, and the mirror workflow copying exactly those tags, only from `main` (§5.1, §5.12) |
 | `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
 | `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
 | `test_posting_form.py` | partly | every refusal of the posting form worded by its rule, from the domain's own errors; the balance panel as the server draws it, per currency; uneven or missing lines a 422; all of a form's problems at once, each marked on its line; the demo's wording; a resubmission landing on the transaction with "Already posted."; add and remove without JavaScript, not counted as writes; typed values never logged (§5.7, §5.8, §5.15) |
@@ -1510,20 +1510,44 @@ host as they are written.
 
 **Base images.** The Dockerfile's `python:3.12-slim` and the `postgres:16-alpine`
 in `docker-compose.yml`, which CI's tests also run on, come from
-`public.ecr.aws/docker/library`, Docker's own copy of its official images on
-ECR Public, not from Docker Hub. CI's runners share addresses, and Docker
-Hub's anonymous pull limit failed both jobs with `429 Too Many Requests`
-before a single step ran. Each is pinned by its index digest, which is the
-same on both registries, so the bytes are the ones Docker Hub's tag pointed
-to. Render builds this Dockerfile, so production pulls from ECR Public too,
-and CI tests the base production ships. The pin trades automatic updates
-for reproducible builds: a Debian or Python patch reaches the image only
-through a pull request that bumps the digest, like the actions and the runner
-image (§5.13). Dependabot opens those pull requests every Monday
-(`.github/dependabot.yml`, §5.13). It keeps Python on 3.12 and Postgres on
-16 and proposes only new digests for those tags.
-`test_base_images_come_from_ecr_public_pinned_by_digest` fails if either
-drifts back to a bare tag, and
+`ghcr.io/atreyeed02/keel-base`, this repository's own copy of Docker's
+official images on GitHub's container registry. CI's runners and
+Dependabot share addresses with everyone else's, and anonymous pull limits
+failed them twice: Docker Hub's (`429 Too Many Requests`, both CI jobs,
+before a single step ran), then ECR Public's, where Docker keeps its own copy
+of the official images (`429`, and `toomanyrequests: Data limit exceeded`
+pulling postgres in CI). Both packages are public, so pulling them needs
+no login. Each image is pinned by its index digest. The mirror copies the
+image byte for byte, so the digest is the one Docker Hub's and ECR Public's
+tags pointed to, and CONTRIBUTING has the one command that confirms a new
+digest is in Docker's own repository before its bump is approved. Render
+builds this Dockerfile, so production pulls from the mirror too, and CI
+tests the base production ships. The pin trades
+automatic updates for reproducible builds: a Debian or Python patch reaches
+the image only through a pull request that bumps the digest, like the
+actions and the runner image (§5.13). Dependabot opens those pull requests
+every Monday (`.github/dependabot.yml`, §5.13). It keeps Python on 3.12 and
+Postgres on 16 and proposes only new digests for those tags.
+
+**`.github/workflows/mirror-base-images.yml`** fills the mirror. Every Monday
+at 02:30 UTC, an hour before Dependabot's run, and by hand, it asks ECR
+Public for each tag's current digest and, if the mirror's tag names another,
+copies that digest with `crane` (pinned by version and checksum), every
+platform included, then fails unless the mirror's tag now has the official
+digest. Copying by digest, not by tag, means a tag that moves mid-copy can't
+mix two images. Moving the mirror's tag is what Dependabot sees; the image
+the Dockerfile and compose use changes only when its pull request merges,
+and every digest copied before stays pullable, so a rollback needs nothing
+from the workflow. It starts only on its schedule or by hand, and only
+`main`'s copy runs: its job is skipped on any other ref. Its token can read
+the repository and write packages, nothing else.
+
+`test_base_images_come_from_the_ghcr_mirror_pinned_by_digest` fails if
+either image comes from anywhere else or drifts back to a bare tag;
+`test_the_mirror_copies_exactly_the_pinned_tags_and_only_from_main` if the
+workflow copies a different set of tags from the ones pinned (a tag it
+doesn't copy never moves, so Dependabot would never propose it), copies to
+another place, gains a trigger or a permission, or runs off `main`; and
 `test_ci_tests_against_composes_database_and_nothing_else` if CI's Postgres
 stops being the one compose runs.
 
@@ -1637,11 +1661,12 @@ lives to 30 days. The README's "Scheduled maintenance" section covers the
 setup, failure emails, GitHub's 60-day pause, and what a visitor sees
 during a reset.
 
-All three workflows, these two and "Cloudflare ranges" (§5.21), run on a
-pinned `ubuntu-24.04` image and pin `actions/checkout` and
-`actions/setup-python` to the same commits. A new runner image or action
-version reaches CI only through a pull request that changes them. The base
-images are pinned the same way (§5.12).
+Every workflow, these two, "Cloudflare ranges" (§5.21) and "Mirror base
+images" (§5.12), runs on a pinned `ubuntu-24.04` image, and the three that
+use actions pin `actions/checkout` and `actions/setup-python` to the same
+commits. A new runner image or action version reaches CI only through a
+pull request that changes them. The base images are pinned the same way
+(§5.12).
 
 **`.github/dependabot.yml`** opens those pull requests. Every Monday at 09:00
 India time it checks four ecosystems:
@@ -1661,7 +1686,8 @@ India time it checks four ecosystems:
 
 Python packages and actions wait out a 7-day cooldown, so a release that is
 pulled or fixed within a week is never proposed. Dependabot can't date the
-ECR images, so their digests are proposed as soon as they change. Security
+mirrored images, so their digests are proposed as soon as the mirror's tag
+moves. Security
 updates get their own group and skip the cooldown. The pull requests go
 through both required checks and the ruleset like any other, and none
 merges itself; CONTRIBUTING has what to check for each kind.
@@ -2238,8 +2264,10 @@ maintenance tasks are CLIs and not routes.
 night from GitHub Actions (§5.13), not from anything in the stack. In a
 public repository GitHub pauses scheduled workflows after 60 days without
 activity, and a paused workflow emails nobody, so someone has to keep the
-repository active or re-enable it. Key pruning (§4) has no scheduler. The
-demo doesn't need one, since the reset empties the keys, but a ledger that
+repository active or re-enable it. The base-image mirror (§5.12) pauses
+the same way; paused, it stops new Debian, Python and Postgres patches from
+being proposed, while the pinned images keep pulling. Key pruning (§4) has
+no scheduler. The demo doesn't need one, since the reset empties the keys, but a ledger that
 isn't reset would.
 
 **4. The forwarded client address, residual risk.** Settled on the live

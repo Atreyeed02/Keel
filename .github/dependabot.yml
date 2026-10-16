@@ -56,9 +56,9 @@ updates:
     # sqlalchemy, uvicorn and every major version get pull requests of
     # their own.
 
-  # The Dockerfile's python, from ECR Public, pinned by digest. Only digest
-  # updates: the minor version stays 3.12, which the workflows' setup-python
-  # must match (tests/test_demo_maintenance.py).
+  # The Dockerfile's python, from the ghcr.io mirror, pinned by digest. Only
+  # digest updates: the minor version stays 3.12, which the workflows'
+  # setup-python must match (tests/test_demo_maintenance.py).
   - package-ecosystem: docker
     directory: /
     schedule:

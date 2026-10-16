@@ -225,7 +225,10 @@ that runs an image and provides Postgres: Render, Railway, Fly.io and the
 like. Nothing here is specific to one of them.
 
 **Build** from the `Dockerfile`. The compose files are for running locally
-and are not part of a deployment.
+and are not part of a deployment. The base image is pulled from
+`ghcr.io/atreyeed02/keel-base`, this repository's public copy of Docker's
+official `python:3.12-slim`, pinned by digest, so a host needs no registry
+login (`docs/ARCHITECTURE.md` §5.12).
 
 **Start command:** the image's own, `python -m app.serve`. It runs
 `alembic upgrade head`, and only if that succeeds starts uvicorn on `$PORT`
@@ -435,9 +438,10 @@ and use **Re-run jobs** once the cause is fixed, or leave it to the next
 night's run.
 
 **The 60-day pause.** In a public repository, GitHub disables scheduled
-workflows after 60 days without repository activity, this one and
-"Cloudflare ranges" alike. A disabled workflow doesn't run, so it has no
-failure to email: no email doesn't mean the reset ran. Push a commit at
+workflows after 60 days without repository activity, this one,
+"Cloudflare ranges" and "Mirror base images" alike. A disabled workflow
+doesn't run, so it has no failure to email: no email doesn't mean the reset
+ran. Push a commit at
 least every 60 days. If it has been paused, re-enable it under **Actions →
 Demo maintenance → Enable workflow**, or with
 `gh workflow enable demo-maintenance.yml`. Don't keep it alive with a bot
@@ -493,7 +497,7 @@ pytest -v
 ruff check .
 ```
 
-444 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+447 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -521,7 +525,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_health.py` | `/health` always answers |
 | `test_schema_guard.py` | the fixtures refuse to wipe a migrated database |
 | `test_api.py` | every JSON API status code, the error shape, string amounts, replays, concurrent duplicate requests |
-| `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command |
+| `test_deploy_config.py` | `DATABASE_URL` in every host spelling, TLS, `PORT`, the production and demo guards, the start command, the base images from the mirror pinned by digest, and the mirror workflow |
 | `test_hardening.py` | the body size limit (a page for a form, JSON for the API), security headers, the page CSP with no nonce, no inline scripts or styles on any page, static file types |
 | `test_stylesheet.py` | every animation stops by itself; reduced motion stops all of them; no selector is styled twice by accident |
 | `test_learn.py` | `/learn` without a database, every term's section there, the quiz, the `term` macro, each page's terms defined once |
@@ -536,7 +540,10 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 CI (`.github/workflows/ci.yml`) runs ruff and the full suite against
 `docker-compose.yml`'s PostgreSQL. A separate `docker-smoke` job builds the
 image, boots the stack, confirms migrations ran and drives account
-creation → posting → overview over HTTP.
+creation → posting → overview over HTTP. Both pull their base images from
+the repository's mirror on ghcr.io, which the "Mirror base images" workflow
+(`.github/workflows/mirror-base-images.yml`) fills from Docker's official
+images every Monday, before Dependabot looks for new digests.
 
 ## API
 
@@ -653,7 +660,7 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    444 tests; see above
+tests/                    447 tests; see above
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
 ```
 
