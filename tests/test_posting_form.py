@@ -16,12 +16,13 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import insert
+from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app import main as main_module
 from app import posting_messages as messages
 from app.config import settings
-from app.db.schema import accounts, metadata
+from app.db.schema import accounts, metadata, transactions
 from app.domain.ledger import EntryInput
 from app.main import app, write_limiter
 from app.observability import JsonFormatter, log
@@ -63,7 +64,25 @@ def _entry(amount, side, currency="USD"):
             "switch the line to Debit.",
         ),
         (_row("1.005"), "Line 3: 1.005 has more than two decimal places.", "to the cent"),
+        # pydantic calls these too many digits in total, as it does a huge amount
+        (
+            _row("1E-999999999"),
+            "Line 3: 1E-999999999 has more than two decimal places.",
+            "to the cent",
+        ),
+        (_row("1E-28"), "Line 3: 1E-28 has more than two decimal places.", "to the cent"),
+        (
+            _row("1234567890123456.001"),
+            "Line 3: 1234567890123456.001 has more than two decimal places.",
+            "to the cent",
+        ),
         (_row("1" * 17), f"Line 3: {'1' * 17} is too large.", "16 digits"),
+        (
+            _row("12345678901234567.001"),
+            "Line 3: 12345678901234567.001 is too large.",
+            "16 digits",
+        ),
+        (_row("1E+20"), "Line 3: 1E+20 is too large.", "16 digits"),
         (_row(side="sideways"), "Line 3: choose Debit or Credit.", "one side of its account"),
         (
             {**_row(), "account_id": ""},
@@ -273,6 +292,24 @@ async def test_every_bad_line_is_reported_at_once_and_marked(database):
     assert response.text.count('aria-invalid="true"') == 2
     # what was typed comes back
     assert 'value="-5"' in response.text and 'value="1.005"' in response.text
+
+
+async def test_a_vanishingly_small_amount_is_refused_on_its_line(database):
+    """1E-999999999 was a 500 before pydantic 2.14 (rolled back, nothing written)."""
+    cash_id, revenue_id = database
+    async with _client() as client:
+        response = await client.post(
+            "/post-transaction",
+            data=_form(cash_id, revenue_id, amounts=("1E-999999999", "10.00")),
+        )
+    page = html.unescape(response.text)
+    assert response.status_code == 422
+    assert "Line 1: 1E-999999999 has more than two decimal places." in page
+    assert 'href="#line-1"' in response.text
+    assert response.text.count('aria-invalid="true"') == 1
+    async with main_module.engine.connect() as conn:
+        written = await conn.scalar(select(func.count()).select_from(transactions))
+    assert written == 0
 
 
 async def test_the_demo_says_why_an_account_is_gone(database, monkeypatch):

@@ -157,6 +157,12 @@ async def test_an_unreadable_body_is_a_422(no_database, content, message):
             "validation_error",
             "entries.0.amount decimal input should have no more than 2 decimal places",
         ),
+        # a 500 before pydantic 2.14 (rolled back, nothing written)
+        (
+            lambda b: [e.update(amount="1E-999999999") for e in b["entries"]],
+            "validation_error",
+            "entries.0.amount decimal input should have no more than 18 digits in total",
+        ),
         (
             lambda b: b["entries"][1].update(amount="99.99"),
             "unbalanced_transaction",
@@ -179,6 +185,7 @@ async def test_an_unreadable_body_is_a_422(no_database, content, message):
     ids=[
         "number-amount",
         "three-decimals",
+        "tiny-amount",
         "unbalanced",
         "one-entry",
         "long-description",
@@ -237,9 +244,11 @@ async def test_unknown_api_routes_and_methods_use_the_error_shape(no_database):
 async def test_html_routes_keep_fastapis_own_error_shape(no_database):
     """The /api/ handlers are scoped: a bad query on a page is still FastAPI's default 422."""
     async with _client() as client:
-        response = await client.get("/transactions", params={"page": 0})
-    assert response.status_code == 422
-    assert "detail" in response.json() and "error" not in response.json()
+        listing = await client.get("/transactions", params={"page": 0})
+        detail = await client.get(f"/transaction-detail/{uuid.uuid4()}?already=maybe")
+    for response in (listing, detail):
+        assert response.status_code == 422
+        assert "detail" in response.json() and "error" not in response.json()
 
 
 def test_the_json_fingerprint_hashes_meaning_not_bytes():
