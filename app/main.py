@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -723,13 +723,29 @@ async def submit_post_transaction(
 
 @app.get("/transaction-detail/{transaction_id}", response_class=HTMLResponse)
 async def read_transaction_detail(
-    request: Request, transaction_id: uuid.UUID, already: bool = Query(False)
+    request: Request, transaction_id: str, already: bool = Query(False)
 ):
+    """
+    One transaction: its entries by side, the totals, and the event that
+    recorded it.
+
+    An id that isn't a transaction's, or isn't an id at all, gets a page
+    saying so with a 404, as /account-detail does: on the demo, every
+    transaction's id changes at the nightly reset, so old links end up here.
+    """
+    try:
+        found = uuid.UUID(transaction_id)
+    except ValueError:
+        found = None
     async with engine.connect() as conn:
-        transaction, entry_rows = await transaction_with_entries(conn, transaction_id)
+        transaction, entry_rows = (
+            await transaction_with_entries(conn, found) if found else (None, [])
+        )
         if transaction is None:
-            raise HTTPException(status_code=404, detail="transaction not found")
-        event, event_page = await _event_and_page(conn, "transaction", transaction_id)
+            return templates.TemplateResponse(
+                request=request, name="transaction_missing.html", status_code=404
+            )
+        event, event_page = await _event_and_page(conn, "transaction", found)
     for row in entry_rows:
         row["effect"] = effect(row["account_type"], row["entry_type"])
     debits = [row for row in entry_rows if row["entry_type"] == "debit"]

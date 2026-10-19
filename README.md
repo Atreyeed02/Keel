@@ -460,8 +460,8 @@ locking the five ledger tables. Until it commits:
   `no account exists with id ...` (`422`): the reseeded accounts have new
   IDs. An account created meanwhile lands in the fresh demo. Reloading the
   page shows the fresh demo.
-- Links to old transactions return `404`. Resubmitting an old form can't
-  post twice, because the accounts it names are gone.
+- Links to old transactions get a page saying so (`404`). Resubmitting an
+  old form can't post twice, because the accounts it names are gone.
 - Rarely, a page load and the reset deadlock, and Postgres aborts one of
   them: the visitor gets one error page, or the reset rolls back and the run
   fails (above).
@@ -585,7 +585,7 @@ passes `WRITE_RATE_LIMIT`. Details:
 |---|---|---|
 | `GET` | `/` | the accounting equation per currency (Assets = Liabilities + Equity + (Revenue − Expenses)), totals per currency, balances per account (normal-side signed), recent transactions with each one's amount per currency; on the demo, three "try it" steps that open the posting form filled in |
 | `GET` | `/transactions` | all transactions, newest first, one card each: its number, accounts by side and amount per currency (its debit total, which is also its credit total). `q` (description search), `date_from`, `date_to` (left empty, no date filter), `page`; the filters in force are chips, each a link without it |
-| `GET` | `/transaction-detail/{id}` | one transaction's debit and credit entries, what each does to its account, the totals and the balance per currency, and its event, linked to its page of the event log; `?already=1` after a resubmission says it was already posted |
+| `GET` | `/transaction-detail/{id}` | one transaction's debit and credit entries, what each does to its account, the totals and the balance per currency, and its event, linked to its page of the event log; `?already=1` after a resubmission says it was already posted. An unknown id is a 404 page |
 | `GET` | `/account-detail/{id}` | one account as a T-account: its debits on the left and credits on the right, oldest first, 25 a page (`page`), each with its transaction and the accounts on its other side; why its normal side; the sum that gives its balance, below zero included; its event. An unknown id is a 404 page |
 | `GET` | `/event-log` | the event log as a timeline, newest first, 25 a page (`page`): each event in words from its own payload, with the raw event folded away under it, and how append-only events and rebuilds work |
 | `GET` | `/learn` | how double-entry works, with worked examples from the demo's data; needs no database |

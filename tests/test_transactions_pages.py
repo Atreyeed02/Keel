@@ -420,6 +420,38 @@ async def test_the_event_link_opens_the_event_logs_page_holding_it(seeded, monke
     assert "Event No. 9" in _text(page)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "00000000-0000-0000-0000-000000000000",
+        "not-an-id",
+        # a resubmission's redirect, after a reset took the transaction away
+        "00000000-0000-0000-0000-000000000000?already=1",
+    ],
+)
+async def test_an_unknown_transaction_gets_a_page_saying_so(seeded, path):
+    async with _client() as client:
+        response = await client.get(f"/transaction-detail/{path}")
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/html")
+    text = _text(response.text)
+    assert "<title>Keel — No such transaction</title>" in response.text
+    assert "Not found No such transaction There's no transaction with this ID." in text
+    assert "The demo's data resets nightly, so a link from before the last reset" in text
+    assert "Already posted." not in text
+    assert '<a class="link-action" href="/transactions">Go to all transactions' in response.text
+
+
+async def test_outside_the_demo_the_missing_transaction_says_nothing_of_resets(
+    seeded, monkeypatch
+):
+    monkeypatch.setattr(settings, "environment", "development")
+    async with _client() as client:
+        text = _text((await client.get(f"/transaction-detail/{uuid.uuid4()}")).text)
+    assert "There's no transaction with this ID." in text
+    assert "resets" not in text.split("Post transaction", 1)[1]
+
+
 async def test_an_untitled_transaction_keeps_its_fallback(seeded):
     async with seeded.begin() as conn:
         await conn.execute(

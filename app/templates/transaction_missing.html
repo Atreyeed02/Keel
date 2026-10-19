@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- /transaction-detail/{id} for an id that isn't a transaction's, or isn't an id:
+    a 404 with the site's header, and the way back to the transactions there are. -#}
+{% block title %}No such transaction{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Not found</p>
+  <h1>No such transaction</h1>
+  <p class="lede">There's no transaction with this ID.{% if is_demo() %} The demo's data resets nightly, so a link from before the last reset no longer works.{% endif %}</p>
+</div>
+<p><a class="link-action" href="/transactions">Go to all transactions{{ ui.icon("arrow-forward") }}</a></p>
+{% endblock %}

@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Twenty-eight PRs are merged into `main`, with regular merge commits, and their
+Thirty-one PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -43,10 +43,13 @@ branches deleted:
 | [#27](https://github.com/Atreyeed02/Keel/pull/27) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 7 updates) | `7a1b669` |
 | [#29](https://github.com/Atreyeed02/Keel/pull/29) | `dependabot/pip/uvicorn-0.54.0` (Dependabot) | `3663e39` |
 | [#30](https://github.com/Atreyeed02/Keel/pull/30) | `chore/mirror-base-images` | `3a8f967` |
+| [#31](https://github.com/Atreyeed02/Keel/pull/31) | `chore/base-images-from-ghcr` | `5badfe2` |
+| [#32](https://github.com/Atreyeed02/Keel/pull/32) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 3 updates) | `ea13de8` |
+| [#33](https://github.com/Atreyeed02/Keel/pull/33) | `dependabot/pip/sqlalchemy-2.1.4` (Dependabot) | `82fba15` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
-2.0.35 → 2.1.3, is open and waits for 2.1.4.
+2.0.35 → 2.1.3, was closed by Dependabot, superseded by #33 (2.1.4).
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -84,7 +87,60 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`chore/base-images-from-ghcr`** moves both base images to this
+**`feat/transaction-missing-page`** gives a transaction's page the
+account page's 404 page. An id that is no transaction's, or not an id at
+all, now gets `transaction_missing.html` with a `404` ("No such
+transaction", the reset sentence on the demo only, a link to all
+transactions) where it got FastAPI's JSON: a `404` for an unknown id, a
+`422` for a malformed one. `?already=` is unchanged: only the posting
+redirect writes it, as `1`, and anything else is still FastAPI's `422`.
+`GET /api/transactions/{id}` keeps its own error shape. The PR also pins
+the `1E-999999999` amount, which gave a 500 before #32 (the post rolled
+back; nothing was written) and has been refused since pydantic 2.14 with
+a `422`: the API test runs with no database, so the refusal comes before
+any connection, and the form's test checks that nothing is written. The
+form used to call that amount "too large", because pydantic reports a
+vanishingly small amount and a huge one as the same error (too many
+digits in total). It now says the amount "has more than two decimal
+places" whenever that is the part to fix, that is with at most 16 digits
+before the point. No migration, no host action. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.16.10) | clean |
+| `pytest` collection | **458 tests** |
+| `pytest` (no database available) | 298 passed, 160 skipped |
+| `pytest` (local Postgres 16) | 458 passed |
+| New tests fail without their change | 12 deliberate breaks, one at a time, each failed a test: the account's template, status 200, the id parsed by FastAPI again, the reset sentence always or never shown, another link, heading, tab title or no eyebrow; the form's wording fix removed, `normalize()` (which rounds `1E-999999999` to 0), the 16-digit limit dropped |
+| Every page, `main` (`82fba15`) against the branch, same seeded data | 44 pairs, two passes. Identical apart from the native drop-down's text on three phone shots (the new-account form, the posting form and its second "Try it" step), whose HTML was byte-identical on both servers once each render's own UUIDs were masked |
+| The new page | light/dark × 1280/390 px, unknown and malformed ids: `404`, no sideways scroll, no console error or blocked style, GET requests only. On `main` the same URLs are FastAPI's JSON (`404`; `422` `uuid_parsing`) |
+
+**#33, sqlalchemy[asyncio] 2.0.35 → 2.1.4** (Dependabot), merged
+2026-10-17. Keel uses only SQLAlchemy Core. The review read 2.1's
+changelog and the 2.0.x fixes released with it. Migrations ran on fresh
+databases with both versions: up, down to base and up again, `alembic
+check` clean, the catalogs identical, and the offline SQL identical. 447
+tests passed, also with deprecation warnings as errors. Every page, 44
+pairs, was identical but for the native drop-down's text. CI on the PR:
+both checks passed. Read-only live check after merging: `/health`
+`{"status":"ok","db":"up"}`, the overview with its 8 accounts, and
+`/transactions` with its 10. The deploy of `82fba15` was confirmed in
+Render's events.
+
+**#32, the `runtime` group** (Dependabot: fastapi 0.142.2 → 0.143.0,
+asyncpg 0.31.0 → 0.32.0, pydantic 2.13.5 → 2.14.0), merged 2026-10-17.
+CI on the PR: both checks passed, `pip-audit` clean. 447 tests passed
+locally. Every page, 44 pairs, was identical but for the native
+drop-down's text. A probe of the app's responses found two changes. The
+wording of the malformed-UUID `422` changed. And `1E-999999999` as an
+amount, which pydantic 2.13 accepted and Postgres then could not store (a
+500, rolled back), is now refused with a `422` (pinned by
+`feat/transaction-missing-page`, above). Read-only live check after
+merging: the new UUID wording showed the deploy was live; `/health`
+`{"status":"ok","db":"up"}`, so asyncpg 0.32 reaches Neon over TLS; the
+overview and `/transactions` as expected.
+
+**#31, `chore/base-images-from-ghcr`**, moves both base images to this
 repository's mirror on ghcr.io, which #30's workflow fills (below), with the
 same digests: the Dockerfile's
 `ghcr.io/atreyeed02/keel-base/python:3.12-slim@sha256:a6e34c59…` and
@@ -96,7 +152,8 @@ and a new one requires the mirror workflow to copy exactly the pinned tags,
 to the mirror, from `main` only, with no other trigger or permission.
 CONTRIBUTING has the command a reviewer runs to confirm a digest bump is
 Docker's own image. It changes no app code and no migration, and needs no
-host action: both packages are public. Checked on that branch:
+host action: both packages are public. Checked on that branch, then on the
+live site after merging:
 
 | Check | Result |
 |---|---|
@@ -108,6 +165,9 @@ host action: both packages are public. Checked on that branch:
 | CONTRIBUTING's digest check, on today's pins | `docker buildx imagetools inspect` printed the python pin for `docker.io/library/python@` that digest, and the postgres pin for `library/postgres`, as did the mirror for both; postgres's digest under `library/python`, and a digest of zeros: `not found`, exit 1. No Docker engine was running: it only asks the registry |
 | Anonymous pulls from the mirror | a token with no login, then each pinned digest's manifest: 200 for both |
 | Every page, `main` (`3a8f967`) against the branch, same seeded data | 11 pages × light/dark × 1280/390 px, 44 pairs, compared pixel by pixel twice, with every animation finished. 41 identical in both passes. A transaction's page (phone, light) in the first pass and an account's page (phone, dark) in the second differed by 96 and 323 scattered pixels, each in one pass only. The new-account form (phone, dark) differed in both, only in the native drop-down's "Asset", while the page and every file it loads were byte-identical on both servers: Chrome drawing its own control, not a change |
+| CI on the PR | both checks passed; `lint-and-test` pulled the python image from `ghcr.io/atreyeed02/keel-base` |
+| The deploy | `5badfe2` live in Render's events on 2026-10-16 at 18:04 UTC, about a minute after it started; the Dockerfile names only the mirror, so that build pulled from it |
+| Read-only, GET requests only | 14 URLs' status and security headers as expected, the overview's 5 static files byte-identical to the commit, `/health` ok, 32 renders clean, injected style and script refused |
 
 **#30, `chore/mirror-base-images`**, adds the "Mirror base images" workflow
 (`ARCHITECTURE.md` §5.12). Every Monday at 02:30 UTC, an hour before
@@ -573,8 +633,8 @@ echoed as `X-Request-ID`. Posting lines carry `transaction_id`,
 
 ### Dependencies
 
-FastAPI 0.142.2 on Starlette 1.7.0 (pinned directly), uvicorn 0.54.0,
-SQLAlchemy 2.0.35, pytest 9.1 with pytest-asyncio 1.4, python-dotenv 1.2.4,
+FastAPI 0.143.0 on Starlette 1.7.0 (pinned directly), uvicorn 0.54.0,
+SQLAlchemy 2.1.4, asyncpg 0.32.0, pydantic 2.14.0, pytest 9.1 with pytest-asyncio 1.4, python-dotenv 1.2.4,
 jinja2 3.1.6. Moving off
 Starlette 0.38.6 closed all 7 of its advisories and needed no
 application change. Starlette 1.x also imports `python_multipart`
@@ -613,7 +673,7 @@ every job on `ubuntu-24.04`. The images both jobs pull, Python for the app
 and Postgres, are pinned by digest and come from the repository's mirror on
 ghcr.io: Docker Hub's anonymous pull limit stopped them first, and #21 moved
 them to ECR Public; then ECR Public's stopped Dependabot and a run of
-`main`'s CI, and `chore/base-images-from-ghcr` moved them to the mirror.
+`main`'s CI, and #31 moved them to the mirror.
 Both jobs are required checks: the "Protect main" ruleset (§1) merges
 nothing into `main` until they pass.
 
@@ -711,11 +771,6 @@ Every route is public. Fine for a demo, disqualifying otherwise.
 No single-account read, no transaction listing, no pagination and no
 event-log endpoint yet (`ARCHITECTURE.md` §8 item 7).
 
-**4. After the redesign**
-- give `/transaction-detail/{id}` the account page's 404 page: today an
-  unknown id gets JSON and a malformed one a 422, and on the demo its links
-  break at every nightly reset, as an account's do.
-
 **Done since the previous version of this list:** deploy readiness
 (host-style configuration, a migrate-then-serve start command, a non-root
 image, proxy headers, a body limit and security headers, the write rate
@@ -726,8 +781,9 @@ versions, `alembic check` in CI with the duplicate idempotency-key
 constraint removed, the JSON API, the
 `account.created` backfill, the account-currency rule in the database, idempotency key
 retention, UTC date filtering, the trigram search index, the
-FastAPI/Starlette upgrade, and the test fixtures' guard against migrated
-databases.
+FastAPI/Starlette upgrade, the test fixtures' guard against migrated
+databases, and a transaction's 404 page, like an account's
+(`feat/transaction-missing-page`).
 
 **Future work, not started:** FX handling (needs a clearing-account
 pattern plus an FX gain/loss account — see `ARCHITECTURE.md` §2.4 for why

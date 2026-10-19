@@ -91,6 +91,10 @@ def _line_problem(line: int, row: dict[str, str], err: Any) -> Problem:
         )
     typed = row["amount"].strip()
     kind = err["type"]
+    if kind == "decimal_max_digits" and _only_too_many_places(typed):
+        # pydantic counts 1E-999999999's digits like a huge amount's, but only
+        # the places need fixing
+        kind = "decimal_max_places"
     if kind == "decimal_max_places":
         return Problem(
             f"Line {line}: {typed} has more than two decimal places.",
@@ -134,6 +138,13 @@ def _line_problem(line: int, row: dict[str, str], err: Any) -> Problem:
         line,
         "amount",
     )
+
+
+def _only_too_many_places(typed: str) -> bool:
+    """More than two decimal places, and no more than 16 digits before the point."""
+    # as written, not normalize()d, which rounds 1E-999999999 to 0
+    _, digits, exponent = Decimal(typed).as_tuple()
+    return exponent < -2 and len(digits) + exponent <= 16
 
 
 # --- the whole transaction ------------------------------------------------------------
