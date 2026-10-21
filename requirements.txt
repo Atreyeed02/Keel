@@ -1,14 +1,14 @@
-fastapi==0.143.0
+fastapi==0.143.1
 # Transitive via fastapi, pinned so the version that closes its advisories
 # is what gets installed, not whatever fastapi's range happens to resolve to.
-starlette==1.7.0
+starlette==1.8.0
 uvicorn[standard]==0.54.0
 sqlalchemy[asyncio]==2.1.4
 alembic==1.20.0
 asyncpg==0.32.0
 psycopg[binary]==3.3.6
-pydantic==2.14.0
-pydantic-settings==2.15.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
 python-dotenv==1.2.4
 
 # dev / test
