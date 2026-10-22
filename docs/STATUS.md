@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-21.** A snapshot of what is actually built, what is
+**As of 2026-10-22.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,8 +10,8 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Thirty-four PRs are merged into `main`, with regular merge commits, and their
-branches deleted:
+Thirty-five PRs are merged into `main`, with regular merge commits, and
+their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
 |---|---|---|
@@ -49,6 +49,7 @@ branches deleted:
 | [#35](https://github.com/Atreyeed02/Keel/pull/35) | `dependabot/pip/dev-tools-…` (Dependabot: ruff) | `7e00163` |
 | [#36](https://github.com/Atreyeed02/Keel/pull/36) | `feat/transaction-missing-page` | `2c80961` |
 | [#37](https://github.com/Atreyeed02/Keel/pull/37) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 4 updates) | `cb40f57` |
+| [#38](https://github.com/Atreyeed02/Keel/pull/38) | `chore/mirror-on-sunday` | `4d6cfaf` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
@@ -92,10 +93,30 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`chore/mirror-on-sunday`** moves the "Mirror base images" workflow from
-Mondays to Sundays, still at 02:30 UTC, so it runs a day before
-Dependabot's Monday run instead of an hour before. GitHub starts a
-scheduled run late when it is busy: on 2026-10-19 the Monday 02:30 UTC run
+**`docs/readme-showcase`** gives the README a new top: a one-line pitch, the
+live demo's link (with the free tier's wake-up delay and the nightly reset),
+four light screenshots in a 2 × 2 grid (the overview's accounting equation,
+the posting form filled in by "Try it" step 1, the Cash account's T-account,
+the event log down to its newest event), a "What makes this interesting"
+list, the tech stack, and a short "Why I built this". The old opening
+paragraph and tech line are replaced; everything from "The guarantees" down
+is unchanged, except the test count, 447 → 458 in two places, and
+`docs/screenshots/` in the project layout. The screenshots are
+`docs/screenshots/*.png`, 1280 px wide, 949 to 1,076 px tall, about 100 to
+150 KB each, taken from a local server on the seeded demo data, so they hold
+no visitor's data. The Docker image copies only `app/`, `alembic/` and
+`scripts/`, so they don't reach it. No migration, no host action, nothing
+under `app/` changes. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| Every page, `main` (`4d6cfaf`) against the branch, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px). Identical apart from the native drop-down's text on two phone shots (the posting form, the new-account form); all 33 HTML and JSON responses byte-identical once each render's own key was masked |
+| The four screenshots | no console error, failed request or blocked style; GET requests only |
+
+**#38, `chore/mirror-on-sunday`**, merged 2026-10-22, moves the "Mirror base
+images" workflow from Mondays to Sundays, still at 02:30 UTC, so it runs a
+day before Dependabot's Monday run instead of an hour before. GitHub starts
+a scheduled run late when it is busy: on 2026-10-19 the Monday 02:30 UTC run
 started at 07:58 UTC, after Dependabot's run at 03:36 UTC. Nothing new was
 copied that day, but a new official digest would have reached Dependabot a
 week late. Dependabot keeps its Monday schedule. The workflow test checks
@@ -107,6 +128,7 @@ nothing under `app/` changes. Checked on that branch:
 | `ruff check .` (0.17.0) | clean |
 | `pytest` (no database available) | 298 passed, 160 skipped |
 | `pytest` (local Postgres 16) | 458 passed |
+| CI on the PR | both checks passed |
 | Every page, `main` (`7e00163`) against the branch, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px). Identical apart from the native drop-down's text on two phone shots (the posting form, the new-account form); all 33 HTML and JSON responses byte-identical once each render's own key was masked |
 
 **#35, ruff 0.16.10 → 0.17.0** (Dependabot), merged 2026-10-21. Keel's
@@ -248,14 +270,14 @@ live site after merging:
 | Read-only, GET requests only | 14 URLs' status and security headers as expected, the overview's 5 static files byte-identical to the commit, `/health` ok, 32 renders clean, injected style and script refused |
 
 **#30, `chore/mirror-base-images`**, adds the "Mirror base images" workflow
-(`ARCHITECTURE.md` §5.12). Every Monday at 02:30 UTC (Sundays since
-`chore/mirror-on-sunday`, above), an hour before Dependabot, and by hand, it
-copies `python:3.12-slim` and `postgres:16-alpine` from ECR Public to
-`ghcr.io/atreyeed02/keel-base` with `crane` (pinned by version and
-checksum), by digest, every platform included, and fails unless the copy has
-the official digest. Only `main`'s copy runs; its token can read the
-repository and write packages. It changed nothing that was built. Checked on
-that branch, then on `main` after merging:
+(`ARCHITECTURE.md` §5.12). Every Monday at 02:30 UTC (Sundays since #38,
+above), an hour before Dependabot, and by hand, it copies `python:3.12-slim`
+and `postgres:16-alpine` from ECR Public to `ghcr.io/atreyeed02/keel-base`
+with `crane` (pinned by version and checksum), by digest, every platform
+included, and fails unless the copy has the official digest. Only `main`'s
+copy runs; its token can read the repository and write packages. It changed
+nothing that was built. Checked on that branch, then on `main` after
+merging:
 
 | Check | Result |
 |---|---|
@@ -744,14 +766,14 @@ fails if the container runs as root. A third, scheduled workflow,
 address ranges with the published lists every Monday. A fourth, "Demo
 maintenance", resets the public demo every night (below), and a fifth,
 "Mirror base images", copies the base images to ghcr.io every Sunday (#30;
-Mondays until `chore/mirror-on-sunday`). Since #13, the workflow files pin
-their actions by commit and run every job on `ubuntu-24.04`. The images both
-jobs pull, Python for the app and Postgres, are pinned by digest and come
-from the repository's mirror on ghcr.io: Docker Hub's anonymous pull limit
-stopped them first, and #21 moved them to ECR Public; then ECR Public's
-stopped Dependabot and a run of `main`'s CI, and #31 moved them to the
-mirror. Both jobs are required checks: the "Protect main" ruleset (§1)
-merges nothing into `main` until they pass.
+Mondays until #38). Since #13, the workflow files pin their actions by
+commit and run every job on `ubuntu-24.04`. The images both jobs pull,
+Python for the app and Postgres, are pinned by digest and come from the
+repository's mirror on ghcr.io: Docker Hub's anonymous pull limit stopped
+them first, and #21 moved them to ECR Public; then ECR Public's stopped
+Dependabot and a run of `main`'s CI, and #31 moved them to the mirror. Both
+jobs are required checks: the "Protect main" ruleset (§1) merges nothing
+into `main` until they pass.
 
 ### Deploy readiness — merged (#5), live on Render
 
