@@ -1,12 +1,51 @@
 # Keel
 
-An event-sourced, double-entry ledger service: the accounting core you'd
-put behind a payments platform, built to explore the same invariants a
-system like Juspay has to get right. Money never appears or disappears,
-every state change is auditable and replayable, and a retried request
-never double-charges.
+**A double-entry ledger built on an append-only event log: every posting
+must balance, and every balance can be rebuilt from history.**
 
-FastAPI · PostgreSQL 16 · SQLAlchemy 2.0 Core · Alembic · Docker Compose
+**Live demo: [keel-htwz.onrender.com](https://keel-htwz.onrender.com)**.
+It runs on Render's free tier, so the first visit after a quiet spell can
+take about a minute to wake up. The demo data resets every night.
+
+| | |
+|---|---|
+| ![The overview: the accounting equation, once per currency, with the totals on each side](docs/screenshots/overview.png) | ![The posting form, filled in with a balanced transaction: a debit and a credit of 12.00 USD](docs/screenshots/post-transaction.png) |
+| **Overview.** The accounting equation for each currency, recomputed from the ledger | **Posting form.** Debits and credits must net to zero, per currency, before anything is written |
+| ![The Cash account as a T-account: debits on the left, credits on the right, with each entry's other side](docs/screenshots/account-detail.png) | ![The event log: how it works, then the newest event, a posted transaction with its debit and credit](docs/screenshots/event-log.png) |
+| **T-account.** Every entry on an account, with its normal side and the other side of each transaction | **Event log.** The source of truth: append-only, and every balance can be rebuilt from it |
+
+## What makes this interesting
+
+- **Rules enforced twice.** Balance and currency rules are checked in
+  Python for readable errors, and by Postgres triggers, so they also hold
+  for writes that bypass the app.
+- **History can't be rewritten.** A trigger refuses UPDATE, DELETE and
+  TRUNCATE on the event log. The balance tables are a projection of the
+  log and can be dropped and replayed.
+- **Retries are safe under concurrency.** Each idempotency key maps to
+  exactly one committed effect, using a claim-first
+  `INSERT … ON CONFLICT DO NOTHING`.
+- **Money is exact.** Amounts are `NUMERIC(18,2)` and `Decimal`, never
+  floats, and every transaction must balance per currency.
+- **It teaches as it runs.** Glossary terms are explained inline, a Learn
+  page works through examples, and account pages are drawn as T-accounts.
+- **It runs like a real service.** Images are pinned by digest, CI checks
+  are required, the server refuses to start with unsafe settings, and the
+  demo resets itself every night.
+- **Tested and gated.** 450+ automated tests, required CI checks on every
+  change, and a before-and-after screenshot comparison on every PR.
+
+## Tech stack
+
+Python 3.12 · FastAPI on Starlette · SQLAlchemy 2.1 Core with asyncpg ·
+Alembic · PostgreSQL 16 · Jinja2 server-rendered pages with two small
+scripts · Docker · GitHub Actions · deployed on Render with Neon Postgres
+
+## Why I built this
+
+To explore the invariants a payments system has to get right: money never
+appears or disappears, every state change is auditable and replayable, and
+a retried request never double-charges.
 
 ## The guarantees, and where each one is enforced
 
@@ -497,7 +536,7 @@ pytest -v
 ruff check .
 ```
 
-447 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+458 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -660,8 +699,9 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    447 tests; see above
-docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status)
+tests/                    458 tests; see above
+docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status),
+                          screenshots/ (the README's)
 ```
 
 ## Limitations and future work
