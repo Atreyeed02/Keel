@@ -15,7 +15,10 @@ name: Mirror base images
 # without activity; run it by hand from the Actions tab then.
 on:
   schedule:
-    - cron: "30 2 * * 1" # Mondays, 02:30 UTC: an hour before Dependabot's 09:00 IST
+    # Sundays, 02:30 UTC: a day before Dependabot's Monday 09:00 IST run.
+    # GitHub may start a scheduled run hours late (2026-10-19's Monday run
+    # started at 07:58 UTC, after Dependabot's), and a day leaves room for it.
+    - cron: "30 2 * * 0"
   workflow_dispatch:
 
 permissions:

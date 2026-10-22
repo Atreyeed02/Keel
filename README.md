@@ -543,7 +543,7 @@ image, boots the stack, confirms migrations ran and drives account
 creation → posting → overview over HTTP. Both pull their base images from
 the repository's mirror on ghcr.io, which the "Mirror base images" workflow
 (`.github/workflows/mirror-base-images.yml`) fills from Docker's official
-images every Monday, before Dependabot looks for new digests.
+images every Sunday, a day before Dependabot looks for new digests.
 
 ## API
 
