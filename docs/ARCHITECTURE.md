@@ -1505,11 +1505,12 @@ without needing an explicit marker.
 
 ### 5.12 Docker
 
-`Dockerfile` — `python:3.12-slim`, install requirements, copy `app/`,
-`alembic/`, `alembic.ini` and `scripts/`, then switch to an unprivileged
-user, `keel` (uid 10001). The copied files stay owned by root, so the app can
-read its code but not change it. `PYTHONUNBUFFERED` gets log lines to the
-host as they are written.
+`Dockerfile` — `python:3.12-slim`, install `requirements.txt` (the runtime
+packages only: the test and lint tools are in `requirements-dev.txt`, which
+the image never installs), copy `app/`, `alembic/`, `alembic.ini` and
+`scripts/`, then switch to an unprivileged user, `keel` (uid 10001). The
+copied files stay owned by root, so the app can read its code but not change
+it. `PYTHONUNBUFFERED` gets log lines to the host as they are written.
 
 **Base images.** The Dockerfile's `python:3.12-slim` and the `postgres:16-alpine`
 in `docker-compose.yml`, which CI's tests also run on, come from
@@ -1610,9 +1611,13 @@ start.
 
 `ci.yml` has two independent jobs:
 
-**`lint-and-test`** — ruff; `pip-audit --strict -r requirements.txt`, which
-fails the build if any pinned dependency has a known vulnerability (or
-cannot be audited); then `alembic upgrade head` and `alembic check`
+**`lint-and-test`** — installs `requirements-dev.txt` (the runtime packages
+through its `-r requirements.txt`, plus pytest, pytest-asyncio, httpx and
+ruff); ruff;
+`pip-audit --strict -r requirements.txt -r requirements-dev.txt`, which
+fails the build if any pinned dependency, in the image or among the tools,
+has a known vulnerability (or cannot be audited); then `alembic upgrade
+head` and `alembic check`
 on a database of their own, which fails the build if the migrations and
 `app/db/schema.py` have drifted apart in any way autogenerate can see
 (the tests build their schema from `schema.py`, the app from the
@@ -1628,7 +1633,12 @@ the body is **exactly** `{"status":"ok","db":"up"}`, assert
 `alembic_version` is stamped, then drive a real flow — create two
 accounts, read their ids back from the container's database, post a
 balanced transaction, and require the balance to appear on the overview
-page. Teardown runs under `if: always()`.
+page. It also runs `pip list --format=freeze` inside the app container and
+passes it to `.github/scripts/check_image_packages.py`, which fails unless
+every pin in `requirements.txt` is installed at its exact version and
+nothing from `requirements-dev.txt` is installed at all. Both lists come
+from the files, so a tool added later is covered without a change to the
+check. Teardown runs under `if: always()`.
 
 The job sets `COMPOSE_FILE: docker-compose.yml` at job level. `checkout`
 puts `docker-compose.override.yml` on disk, and a bare `docker compose`
@@ -1675,12 +1685,14 @@ pull request that changes them. The base images are pinned the same way
 **`.github/dependabot.yml`** opens those pull requests. Every Monday at 09:00
 India time it checks four ecosystems:
 
-- `pip`: minor and patch updates come in two grouped pull requests,
-  `runtime` (what the image runs, fastapi and starlette always together)
-  and `dev-tools`. sqlalchemy and uvicorn are in neither: each gets its
-  own pull request, as does each major version. Their updates need a
-  closer review, of the engine and the migrations, and of the proxy-header
-  handling in `app/client_address.py` (§5.21).
+- `pip`: minor and patch updates come in two grouped pull requests, one per
+  requirements file: `runtime` (`requirements.txt`, what the image runs,
+  fastapi and starlette always together, and pyyaml, which uvicorn[standard]
+  installs anyway) and `dev-tools` (`requirements-dev.txt`). sqlalchemy and
+  uvicorn are in neither: each gets its own pull request, as does each major
+  version. Their updates need a closer review, of the engine and the
+  migrations, and of the proxy-header handling in `app/client_address.py`
+  (§5.21).
 - `docker`: the Dockerfile's python, digest updates only, so it stays on
   3.12, which setup-python must match.
 - `docker-compose`: compose's postgres, and with it CI's. It stays on 16,

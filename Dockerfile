@@ -16,6 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Runtime packages only: the test and lint tools are in requirements-dev.txt,
+# which stays out of the image (CI's docker-smoke checks).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
