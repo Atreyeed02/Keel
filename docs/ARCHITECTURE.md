@@ -1532,18 +1532,19 @@ actions and the runner image (§5.13). Dependabot opens those pull requests
 every Monday (`.github/dependabot.yml`, §5.13). It keeps Python on 3.12 and
 Postgres on 16 and proposes only new digests for those tags.
 
-**`.github/workflows/mirror-base-images.yml`** fills the mirror. Every Monday
-at 02:30 UTC, an hour before Dependabot's run, and by hand, it asks ECR
-Public for each tag's current digest and, if the mirror's tag names another,
-copies that digest with `crane` (pinned by version and checksum), every
-platform included, then fails unless the mirror's tag now has the official
-digest. Copying by digest, not by tag, means a tag that moves mid-copy can't
-mix two images. Moving the mirror's tag is what Dependabot sees; the image
-the Dockerfile and compose use changes only when its pull request merges,
-and every digest copied before stays pullable, so a rollback needs nothing
-from the workflow. It starts only on its schedule or by hand, and only
-`main`'s copy runs: its job is skipped on any other ref. Its token can read
-the repository and write packages, nothing else.
+**`.github/workflows/mirror-base-images.yml`** fills the mirror. Every
+Sunday at 02:30 UTC, a day before Dependabot's Monday run (GitHub can start
+a scheduled run hours late), and by hand, it asks ECR Public for each tag's
+current digest and, if the mirror's tag names another, copies that digest
+with `crane` (pinned by version and checksum), every platform included, then
+fails unless the mirror's tag now has the official digest. Copying by
+digest, not by tag, means a tag that moves mid-copy can't mix two images.
+Moving the mirror's tag is what Dependabot sees; the image the Dockerfile
+and compose use changes only when its pull request merges, and every digest
+copied before stays pullable, so a rollback needs nothing from the workflow.
+It starts only on its schedule or by hand, and only `main`'s copy runs: its
+job is skipped on any other ref. Its token can read the repository and write
+packages, nothing else.
 
 `test_base_images_come_from_the_ghcr_mirror_pinned_by_digest` fails if
 either image comes from anywhere else or drifts back to a bare tag;

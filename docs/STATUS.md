@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-16.** A snapshot of what is actually built, what is
+**As of 2026-10-21.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Thirty-one PRs are merged into `main`, with regular merge commits, and their
+Thirty-four PRs are merged into `main`, with regular merge commits, and their
 branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -46,10 +46,15 @@ branches deleted:
 | [#31](https://github.com/Atreyeed02/Keel/pull/31) | `chore/base-images-from-ghcr` | `5badfe2` |
 | [#32](https://github.com/Atreyeed02/Keel/pull/32) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 3 updates) | `ea13de8` |
 | [#33](https://github.com/Atreyeed02/Keel/pull/33) | `dependabot/pip/sqlalchemy-2.1.4` (Dependabot) | `82fba15` |
+| [#35](https://github.com/Atreyeed02/Keel/pull/35) | `dependabot/pip/dev-tools-…` (Dependabot: ruff) | `7e00163` |
+| [#36](https://github.com/Atreyeed02/Keel/pull/36) | `feat/transaction-missing-page` | `2c80961` |
+| [#37](https://github.com/Atreyeed02/Keel/pull/37) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 4 updates) | `cb40f57` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
-2.0.35 → 2.1.3, was closed by Dependabot, superseded by #33 (2.1.4).
+2.0.35 → 2.1.3, was closed by Dependabot, superseded by #33 (2.1.4). #34,
+pydantic 2.14.0 → 2.14.1, was closed by Dependabot when asked to rebase
+("pydantic is updatable in another way"), superseded by #37.
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -87,23 +92,84 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`feat/transaction-missing-page`** gives a transaction's page the
-account page's 404 page. An id that is no transaction's, or not an id at
-all, now gets `transaction_missing.html` with a `404` ("No such
-transaction", the reset sentence on the demo only, a link to all
-transactions) where it got FastAPI's JSON: a `404` for an unknown id, a
-`422` for a malformed one. `?already=` is unchanged: only the posting
-redirect writes it, as `1`, and anything else is still FastAPI's `422`.
-`GET /api/transactions/{id}` keeps its own error shape. The PR also pins
-the `1E-999999999` amount, which gave a 500 before #32 (the post rolled
-back; nothing was written) and has been refused since pydantic 2.14 with
-a `422`: the API test runs with no database, so the refusal comes before
-any connection, and the form's test checks that nothing is written. The
-form used to call that amount "too large", because pydantic reports a
-vanishingly small amount and a huge one as the same error (too many
-digits in total). It now says the amount "has more than two decimal
-places" whenever that is the part to fix, that is with at most 16 digits
-before the point. No migration, no host action. Checked on that branch:
+**`chore/mirror-on-sunday`** moves the "Mirror base images" workflow from
+Mondays to Sundays, still at 02:30 UTC, so it runs a day before
+Dependabot's Monday run instead of an hour before. GitHub starts a
+scheduled run late when it is busy: on 2026-10-19 the Monday 02:30 UTC run
+started at 07:58 UTC, after Dependabot's run at 03:36 UTC. Nothing new was
+copied that day, but a new official digest would have reached Dependabot a
+week late. Dependabot keeps its Monday schedule. The workflow test checks
+the triggers, not the time, and is unchanged. No migration, no host action,
+nothing under `app/` changes. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.17.0) | clean |
+| `pytest` (no database available) | 298 passed, 160 skipped |
+| `pytest` (local Postgres 16) | 458 passed |
+| Every page, `main` (`7e00163`) against the branch, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px). Identical apart from the native drop-down's text on two phone shots (the posting form, the new-account form); all 33 HTML and JSON responses byte-identical once each render's own key was masked |
+
+**#35, ruff 0.16.10 → 0.17.0** (Dependabot), merged 2026-10-21. Keel's
+config names its target (`py312`) and its rule sets (`E`, `F`, `I`, `UP`),
+so 0.17's new defaults (Python 3.11, a smaller default rule set) don't
+apply: the enabled rules were the same 108 under both versions, and
+`ruff check .` was clean, also with 0.17's changed and newly stable rules
+(F406, DTZ, ICN001, TID254, TID255, RUF071) turned on. Its first CI run
+predated #36, so Dependabot rebased it on request onto #37's merge, and CI
+passed again on the new head. The app never imports ruff, but the image
+installs all of `requirements.txt`, so the merge redeployed. Render's
+Auto-Deploy started about 13 minutes after the merge (16:21 UTC) and
+`7e00163` was live at 16:35 UTC, confirmed in Render's events and by
+`keel.css`'s `Last-Modified` (16:34:41 GMT). Auto-Deploy can take 10 to 15
+minutes to start. A GET-only check at 16:32 UTC, just before that deploy,
+passed: `/health` ok, every page as expected, the 12 static files
+identical to the commit (unchanged from `cb40f57`).
+
+**#37, the `runtime` group** (Dependabot: fastapi 0.143.0 → 0.143.1,
+starlette 1.7.0 → 1.8.0, pydantic 2.14.0 → 2.14.1, pydantic-settings
+2.15.0 → 2.16.0), merged 2026-10-21. It replaced #34 (above). The review
+read both versions' source for starlette and pydantic-settings, then
+compared behaviour on both:
+
+| Check | Result |
+|---|---|
+| CI on the PR | both checks passed, on `main` as it was after #36 |
+| `pytest` (local Postgres 16) | 458 passed |
+| Starlette, on uvicorn serving `app.main:served` as `app.serve` does | 59 requests: static files (GET, HEAD, ranges, `If-Range`, `If-None-Match`, traversal, five aborted downloads then 30 prompt GETs, keep-alive), urlencoded and multipart forms with several charsets, the body limit (`413`, `400`), `HEAD` on pages (`405`, as before), the API's `422`, the security headers on every response. Identical but one: a static file's `405` now carries `Allow: GET, HEAD` |
+| pydantic-settings, 37 configurations, each started in a fresh process | identical on both versions, error text included: every startup refusal (`DATABASE_URL` unset or the local default in any spelling, no TLS or `prefer`/`allow`/`disable`, `FORWARDED_ALLOW_IPS` of `*`, a list with `*`, empty or `" , "`, `channel_binding=require`, unknown URL parameters, out-of-range numbers), `.env` and environment precedence, lowercase names |
+| `hide_input_in_errors` | the startup traceback still shows no input, so `DATABASE_URL` stays out of the logs; with the setting off, the input appears (the check's control) |
+| `1E-999999999` and 21 other amounts | the same results and error types on pydantic 2.14.0 and 2.14.1 |
+| Every page | HTML and JSON identical, 33 responses; screenshots differed only by the native drop-down's text |
+
+The review also found an older problem, the same on starlette 1.7 and 1.8:
+a form sent without `Content-Length` that goes over the body limit gets
+FastAPI's `400` ("There was an error parsing the body") instead of the
+`413` page. It is still refused unread, and the API answers `413`. It is
+listed in §4. `cb40f57` was first served by a manual deploy at 16:13 UTC,
+then by Render's Auto-Deploy at 16:18 UTC. Live check: `/health` ok before
+and after; the overview, `/transactions`, the event log, `/learn`, the
+posting form, a transaction's page and an account's page; an unknown
+transaction's 404 page and the API's JSON `404`; the 12 static files
+identical to the commit; and an API post with the amount `1E-999999999`,
+refused with a `422` before any database access, so nothing was written.
+
+**#36, `feat/transaction-missing-page`**, merged 2026-10-19, gives a
+transaction's page the account page's 404 page. An id that is no
+transaction's, or not an id at all, now gets `transaction_missing.html` with
+a `404` ("No such transaction", the reset sentence on the demo only, a link
+to all transactions) where it got FastAPI's JSON: a `404` for an unknown id,
+a `422` for a malformed one. `?already=` is unchanged: only the posting
+redirect writes it, as `1`, and anything else is still FastAPI's `422`. `GET
+/api/transactions/{id}` keeps its own error shape. The PR also pins the
+`1E-999999999` amount, which gave a 500 before #32 (the post rolled back;
+nothing was written) and has been refused since pydantic 2.14 with a `422`:
+the API test runs with no database, so the refusal comes before any
+connection, and the form's test checks that nothing is written. The form
+used to call that amount "too large", because pydantic reports a vanishingly
+small amount and a huge one as the same error (too many digits in total). It
+now says the amount "has more than two decimal places" whenever that is the
+part to fix, that is with at most 16 digits before the point. No migration,
+no host action. Checked on that branch:
 
 | Check | Result |
 |---|---|
@@ -114,6 +180,18 @@ before the point. No migration, no host action. Checked on that branch:
 | New tests fail without their change | 12 deliberate breaks, one at a time, each failed a test: the account's template, status 200, the id parsed by FastAPI again, the reset sentence always or never shown, another link, heading, tab title or no eyebrow; the form's wording fix removed, `normalize()` (which rounds `1E-999999999` to 0), the 16-digit limit dropped |
 | Every page, `main` (`82fba15`) against the branch, same seeded data | 44 pairs, two passes. Identical apart from the native drop-down's text on three phone shots (the new-account form, the posting form and its second "Try it" step), whose HTML was byte-identical on both servers once each render's own UUIDs were masked |
 | The new page | light/dark × 1280/390 px, unknown and malformed ids: `404`, no sideways scroll, no console error or blocked style, GET requests only. On `main` the same URLs are FastAPI's JSON (`404`; `422` `uuid_parsing`) |
+
+Render marked the first deploy of `2c80961` "Failed" at about 15:14 UTC,
+yet its log showed no error: the build, the migrations and startup
+completed and the health checks answered 200. The live site served the new
+page from 15:15:30 UTC while the dashboard still showed `82fba15` as live.
+The owner redeployed the same commit by hand, and Render showed it live at
+17:52 UTC. The dashboard and the served version can disagree, so live
+checks report what the site serves, by something the PR changes. Live
+check, GET requests only, from 15:15:30 UTC: an unknown or malformed id,
+and `?already=1`, gave the new 404 page; `?already=maybe` FastAPI's `422`;
+`/api/transactions/{id}` its own JSON `404`; a real transaction's page
+200; `/health` ok; the security headers on the 404 page.
 
 **#33, sqlalchemy[asyncio] 2.0.35 → 2.1.4** (Dependabot), merged
 2026-10-17. Keel uses only SQLAlchemy Core. The review read 2.1's
@@ -170,14 +248,14 @@ live site after merging:
 | Read-only, GET requests only | 14 URLs' status and security headers as expected, the overview's 5 static files byte-identical to the commit, `/health` ok, 32 renders clean, injected style and script refused |
 
 **#30, `chore/mirror-base-images`**, adds the "Mirror base images" workflow
-(`ARCHITECTURE.md` §5.12). Every Monday at 02:30 UTC, an hour before
-Dependabot, and by hand, it copies `python:3.12-slim` and
-`postgres:16-alpine` from ECR Public to `ghcr.io/atreyeed02/keel-base` with
-`crane` (pinned by version and checksum), by digest, every platform
-included, and fails unless the copy has the official digest. Only `main`'s
-copy runs; its token can read the repository and write packages. It
-changed nothing that was built. Checked on that branch, then on `main`
-after merging:
+(`ARCHITECTURE.md` §5.12). Every Monday at 02:30 UTC (Sundays since
+`chore/mirror-on-sunday`, above), an hour before Dependabot, and by hand, it
+copies `python:3.12-slim` and `postgres:16-alpine` from ECR Public to
+`ghcr.io/atreyeed02/keel-base` with `crane` (pinned by version and
+checksum), by digest, every platform included, and fails unless the copy has
+the official digest. Only `main`'s copy runs; its token can read the
+repository and write packages. It changed nothing that was built. Checked on
+that branch, then on `main` after merging:
 
 | Check | Result |
 |---|---|
@@ -633,49 +711,47 @@ echoed as `X-Request-ID`. Posting lines carry `transaction_id`,
 
 ### Dependencies
 
-FastAPI 0.143.0 on Starlette 1.7.0 (pinned directly), uvicorn 0.54.0,
-SQLAlchemy 2.1.4, asyncpg 0.32.0, pydantic 2.14.0, pytest 9.1 with pytest-asyncio 1.4, python-dotenv 1.2.4,
-jinja2 3.1.6. Moving off
-Starlette 0.38.6 closed all 7 of its advisories and needed no
-application change. Starlette 1.x also imports `python_multipart`
-directly, so form parsing no longer goes through the deprecated
-`import multipart` shim.
+FastAPI 0.143.1 on Starlette 1.8.0 (pinned directly), uvicorn 0.54.0,
+SQLAlchemy 2.1.4, asyncpg 0.32.0, pydantic 2.14.1, pydantic-settings 2.16.0,
+pytest 9.1 with pytest-asyncio 1.4, python-dotenv 1.2.4, jinja2 3.1.6.
+Moving off Starlette 0.38.6 closed all 7 of its advisories and needed no
+application change. Starlette 1.x also imports `python_multipart` directly,
+so form parsing no longer goes through the deprecated `import multipart`
+shim.
 
 Dependabot (`.github/dependabot.yml`) proposes updates every Monday for pip,
-the Dockerfile's python, compose's postgres (which CI's tests run on, so
-the digest is written once) and the actions' commit pins. The two images'
-new digests come from the mirror, which copies Docker's official images an
-hour earlier. Updates are
-grouped, Python stays on 3.12 and Postgres on 16, and nothing merges
-without review (ARCHITECTURE §5.13, CONTRIBUTING).
+the Dockerfile's python, compose's postgres (which CI's tests run on, so the
+digest is written once) and the actions' commit pins. The two images' new
+digests come from the mirror, which copies Docker's official images a day
+earlier. Updates are grouped, Python stays on 3.12 and Postgres on 16, and
+nothing merges without review (ARCHITECTURE §5.13, CONTRIBUTING).
 
 ### CI — two jobs
 
-`lint-and-test` (ruff, `alembic check` on a freshly migrated database,
-then pytest against compose's Postgres) and
-`docker-smoke`, which is the more interesting one: it builds the image,
-waits for `/health`, asserts the exact healthy body `{"status":"ok","db":"up"}`
-(a bare 200 check would go green on a stack whose migrations failed),
-confirms `alembic_version` was actually stamped, then drives a real
-account-creation → posting → overview flow through the container. It
-pins `COMPOSE_FILE` so it cannot accidentally pick up the dev bind-mount
-and test host code instead of the image. The dev bind mount itself sets
-`create_host_path: false`, so a checkout without `./app` refuses to start
-instead of mounting an empty directory over the image.
+`lint-and-test` (ruff, `alembic check` on a freshly migrated database, then
+pytest against compose's Postgres) and `docker-smoke`, which is the more
+interesting one: it builds the image, waits for `/health`, asserts the exact
+healthy body `{"status":"ok","db":"up"}` (a bare 200 check would go green on
+a stack whose migrations failed), confirms `alembic_version` was actually
+stamped, then drives a real account-creation → posting → overview flow
+through the container. It pins `COMPOSE_FILE` so it cannot accidentally pick
+up the dev bind-mount and test host code instead of the image. The dev bind
+mount itself sets `create_host_path: false`, so a checkout without `./app`
+refuses to start instead of mounting an empty directory over the image.
 Since #5, `lint-and-test` also runs `pip-audit --strict`, and `docker-smoke`
-fails if the container runs as root. A third, scheduled workflow, "Cloudflare
-ranges", compares `app/client_address.py`'s copy of Cloudflare's address
-ranges with the published lists every Monday. A fourth, "Demo
+fails if the container runs as root. A third, scheduled workflow,
+"Cloudflare ranges", compares `app/client_address.py`'s copy of Cloudflare's
+address ranges with the published lists every Monday. A fourth, "Demo
 maintenance", resets the public demo every night (below), and a fifth,
-"Mirror base images", copies the base images to ghcr.io every Monday
-(#30). Since #13, the workflow files pin their actions by commit and run
-every job on `ubuntu-24.04`. The images both jobs pull, Python for the app
-and Postgres, are pinned by digest and come from the repository's mirror on
-ghcr.io: Docker Hub's anonymous pull limit stopped them first, and #21 moved
-them to ECR Public; then ECR Public's stopped Dependabot and a run of
-`main`'s CI, and #31 moved them to the mirror.
-Both jobs are required checks: the "Protect main" ruleset (§1) merges
-nothing into `main` until they pass.
+"Mirror base images", copies the base images to ghcr.io every Sunday (#30;
+Mondays until `chore/mirror-on-sunday`). Since #13, the workflow files pin
+their actions by commit and run every job on `ubuntu-24.04`. The images both
+jobs pull, Python for the app and Postgres, are pinned by digest and come
+from the repository's mirror on ghcr.io: Docker Hub's anonymous pull limit
+stopped them first, and #21 moved them to ECR Public; then ECR Public's
+stopped Dependabot and a run of `main`'s CI, and #31 moved them to the
+mirror. Both jobs are required checks: the "Protect main" ruleset (§1)
+merges nothing into `main` until they pass.
 
 ### Deploy readiness — merged (#5), live on Render
 
@@ -778,12 +854,18 @@ limit, caps on accounts and transactions, the demo notice and the reset
 script), all on `chore/deploy-readiness`; and, merged, stable entry order
 (each entry's submission position, stored and replayed), payload schema
 versions, `alembic check` in CI with the duplicate idempotency-key
-constraint removed, the JSON API, the
-`account.created` backfill, the account-currency rule in the database, idempotency key
-retention, UTC date filtering, the trigram search index, the
-FastAPI/Starlette upgrade, the test fixtures' guard against migrated
-databases, and a transaction's 404 page, like an account's
-(`feat/transaction-missing-page`).
+constraint removed, the JSON API, the `account.created` backfill, the
+account-currency rule in the database, idempotency key retention, UTC date
+filtering, the trigram search index, the FastAPI/Starlette upgrade, the test
+fixtures' guard against migrated databases, and a transaction's 404 page,
+like an account's (#36).
+
+**Small fix, not started:** a form sent without `Content-Length` that goes
+over the body limit should get the `413` page, as one with `Content-Length`
+does, not FastAPI's `400`. The body limit's exception is raised inside
+FastAPI's form parsing, which catches it and answers `400` itself. The
+request is still refused unread, and the API already answers `413` (found
+reviewing #37, §1).
 
 **Future work, not started:** FX handling (needs a clearing-account
 pattern plus an FX gain/loss account — see `ARCHITECTURE.md` §2.4 for why
