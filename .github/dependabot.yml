@@ -1,7 +1,7 @@
 # Weekly pull requests for everything the repository pins: Python packages,
 # the base images and the actions' commit pins. Each pull request goes
 # through CI and the "Protect main" ruleset like any other, and nothing
-# merges itself: CONTRIBUTING.md's "Reviewing Dependabot pull requests" has
+# merges itself: docs/DEVELOPMENT.md's "Reviewing Dependabot pull requests" has
 # what to check for each kind. tests/test_deploy_config.py fails if an
 # ecosystem the repository uses is missing here.
 version: 2

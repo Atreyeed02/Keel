@@ -1528,7 +1528,7 @@ of the official images (`429`, and `toomanyrequests: Data limit exceeded`
 pulling postgres in CI). Both packages are public, so pulling them needs
 no login. Each image is pinned by its index digest. The mirror copies the
 image byte for byte, so the digest is the one Docker Hub's and ECR Public's
-tags pointed to, and CONTRIBUTING has the one command that confirms a new
+tags pointed to, and DEVELOPMENT.md has the one command that confirms a new
 digest is in Docker's own repository before its bump is approved. Render
 builds this Dockerfile, so production pulls from the mirror too, and CI
 tests the base production ships. The pin trades
@@ -1676,7 +1676,7 @@ built around that:
 
 `tests/test_demo_maintenance.py` fails if any of that changes. Key pruning
 isn't scheduled: the reset empties `idempotency_keys`, so on the demo no key
-lives to 30 days. The README's "Scheduled maintenance" section covers the
+lives to 30 days. DEPLOYING.md's "Scheduled maintenance" section covers the
 setup, failure emails, GitHub's 60-day pause, and what a visitor sees
 during a reset.
 
@@ -1711,7 +1711,7 @@ mirrored images, so their digests are proposed as soon as the mirror's tag
 moves. Security
 updates get their own group and skip the cooldown. The pull requests go
 through both required checks and the ruleset like any other, and none
-merges itself; CONTRIBUTING has what to check for each kind.
+merges itself; DEVELOPMENT.md has what to check for each kind.
 `test_dependabot_covers_every_pinned_ecosystem` fails if an ecosystem goes
 missing, if Python or Postgres could jump a version, or if a pinned package
 sits in no group.
@@ -2239,7 +2239,7 @@ environment on the development database (§5.1); `python -m app.serve`,
 which migrates then serves, in an image that runs as an unprivileged user
 (§5.12); forwarded headers believed only from `FORWARDED_ALLOW_IPS`, and
 `CF-Connecting-IP` only from Cloudflare via Render's proxy (§5.21); a request body limit and security headers with a CSP that allows no inline script
-(§5.18); `pip-audit` in CI (§5.13); and a Deploying section in the README.
+(§5.18); `pip-audit` in CI (§5.13); and an operator's guide, DEPLOYING.md.
 
 **Public writes, bounded** — a per-client write rate limit with `429` and
 `Retry-After`, keyed on the forwarded client address (§5.19), and hard caps
@@ -2279,8 +2279,8 @@ behaviour it covers broken.
 
 Note that the Postgres-backed tests **skip themselves** unless
 `TEST_DATABASE_URL` is set, so a local run without a database reports
-"244 passed, 110 skipped" and is not a passing build. See the README for
-the command that runs the full suite.
+"322 passed, 161 skipped" and is not a passing build. See DEVELOPMENT.md
+("Running tests") for the command that runs the full suite.
 
 **CI** — ruff and Postgres-backed tests, plus a `docker-smoke` job that
 proves the container builds, migrates and serves a real posting flow. A
