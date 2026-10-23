@@ -32,7 +32,7 @@ take about a minute to wake up. The demo data resets every night.
 - **It runs like a real service.** Images are pinned by digest, CI checks
   are required, the server refuses to start with unsafe settings, and the
   demo resets itself every night.
-- **Tested and gated.** 450+ automated tests, required CI checks on every
+- **Tested and gated.** 480+ automated tests, required CI checks on every
   change, and a before-and-after screenshot comparison on every PR.
 
 ## Tech stack
@@ -536,7 +536,7 @@ pytest -v
 ruff check .
 ```
 
-482 tests. `requirements-dev.txt` installs everything in `requirements.txt`
+483 tests. `requirements-dev.txt` installs everything in `requirements.txt`
 (what the image runs) plus the test and lint tools, which the image never
 contains. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
@@ -546,8 +546,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 160 database-backed tests are **skipped,
-not failed**. A green run of the remaining 301 is partial coverage:
+Without `TEST_DATABASE_URL`, the 161 database-backed tests are **skipped,
+not failed**. A green run of the remaining 322 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -559,6 +559,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_ledger_pages.py` | every page, inline errors, filters (UTC day boundaries whatever the session time zone), pagination, `sequence` ordering, the search's trigram index |
 | `test_event_log_page.py` | each event in words from its own payload: a posted transaction's entries by name in their recorded order and its totals per currency, an opened account's type and normal side; the raw event folded away; the explainer, its example and the reset sentence only on the demo; the pager |
 | `test_transactions_pages.py` | the list's amount per currency (the debit total, never both sides added), its accounts by side, the filter chips, the pager's line and a page past the end, the form's empty dates; a transaction's page: what each entry does, totals and the balance per currency, the notes, the link to its event |
+| `test_account_detail.py` | an account's page as a T-account: oldest first across both sides, each column's count and total, each entry's other side, the sum that gives the balance (below zero included), paging, the 404 page for an unknown id |
 | `test_idempotency.py` | retries, 409 on key reuse, key release after rejection, concurrent duplicates and conflicts, key retention and its CLI |
 | `test_ledger_invariants.py` | every DB trigger against writes that bypass the app, atomic rollback, log ↔ read-model agreement, trial balance |
 | `test_rebuild.py` | round trip, recovery from corruption, repeatability, rebuild alongside a live posting, backfilling a legacy ledger, entry order across a rebuild, payload schema versions, both CLIs |
@@ -591,7 +592,8 @@ images every Sunday, a day before Dependabot looks for new digests.
 
 Two interfaces over the same domain layer: a **JSON API** under `/api/`
 and the **server-rendered HTML pages**. FastAPI's generated docs at
-`/docs` list every route.
+`/docs` list every route. Every `GET` route also answers `HEAD`, with the
+same status and headers and no body.
 
 ### JSON
 
@@ -668,8 +670,10 @@ from `LOG_LEVEL`). Every request gets an id, taken from a well-formed
 ```
 
 Also logged: `transaction.replayed`, `transaction.rejected`,
-`idempotency.conflict`, `ledger.full`, `account.created`, `request.completed`. There
-are no metrics and no tracing.
+`idempotency.conflict`, `ledger.full`, `account.created`, `request.completed`,
+`db.ping_failed` (with the password masked) and, at start, `db.ssl_mode_conflict`
+when `DATABASE_SSL` and the URL's `sslmode` disagree. There are no metrics
+and no tracing.
 
 ## Project layout
 
@@ -703,7 +707,7 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    482 tests; see above
+tests/                    483 tests; see above
 requirements.txt          what the image runs
 requirements-dev.txt      that, plus pytest, pytest-asyncio, httpx and ruff
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status),
