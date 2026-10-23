@@ -1,7 +1,7 @@
 # What the image runs, and nothing else. The test and lint tools are in
 # requirements-dev.txt, which the Dockerfile never installs.
 
-fastapi==0.143.1
+fastapi==0.143.2
 # Transitive via fastapi, pinned so the version that closes its advisories
 # is what gets installed, not whatever fastapi's range happens to resolve to.
 starlette==1.8.0
