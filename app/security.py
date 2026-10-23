@@ -7,7 +7,9 @@ lines is a few kilobytes. A request declaring a body over the limit is
 answered 413 before the app reads a byte, and one that does not declare its
 length (chunked) is cut off with a 413 as soon as it passes the limit. Under
 `/api/` the 413 uses the API's error shape; anywhere else it is a page that
-says so in words (`page`, given by app/main.py).
+says so in words (`page`, given by app/main.py). Once a body has passed the
+limit, the 413 is the answer whatever the app makes of the cut: FastAPI's
+form parsing catches the error and would answer 400 itself.
 
 **Security headers**, on every response:
 
@@ -152,19 +154,26 @@ class BodySizeLimitMiddleware:
 
         # Chunked, or a client sending more than it declared: count as it arrives.
         received = 0
+        over_limit = False
         response_started = False
 
         async def counting_receive() -> Message:
-            nonlocal received
+            nonlocal received, over_limit
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_bytes:
+                    over_limit = True
                     raise _BodyTooLarge
             return message
 
         async def tracking_send(message: Message) -> None:
             nonlocal response_started
+            # Past the limit, whatever the app answers is about a body it never
+            # got whole: FastAPI's form parsing catches _BodyTooLarge and
+            # answers 400. The 413 below is sent instead.
+            if over_limit and not response_started:
+                return
             if message["type"] == "http.response.start":
                 response_started = True
             await send(message)
@@ -174,4 +183,5 @@ class BodySizeLimitMiddleware:
         except _BodyTooLarge:
             if response_started:
                 raise
+        if over_limit and not response_started:
             await self._reject(scope, send, 413, too_large)

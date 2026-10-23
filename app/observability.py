@@ -155,6 +155,17 @@ def log_idempotency_conflict(idempotency_key: str) -> None:
     log.warning("idempotency.conflict", extra={"idempotency_key": idempotency_key})
 
 
+def log_ssl_mode_conflict(database_ssl: str, url_sslmode: str, *, used: str | None) -> None:
+    """
+    DATABASE_SSL and DATABASE_URL's sslmode disagree (app/config.py). The two
+    modes and the one used, never the URL: it holds the password.
+    """
+    log.warning(
+        "db.ssl_mode_conflict",
+        extra={"database_ssl": database_ssl, "url_sslmode": url_sslmode, "used": used},
+    )
+
+
 def log_ledger_full(reason: str) -> None:
     """A write refused by MAX_ACCOUNTS or MAX_TRANSACTIONS: time to reset the demo."""
     log.warning("ledger.full", extra={"reason": reason})

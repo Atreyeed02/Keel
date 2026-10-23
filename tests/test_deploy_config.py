@@ -6,7 +6,12 @@ environments, and the migrate-then-serve start command.
 No database needed.
 """
 
+import json
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from alembic.config import Config
@@ -159,6 +164,68 @@ def test_the_stricter_of_database_ssl_and_the_urls_sslmode_is_used(
     assert settings.database.ssl == used
     assert settings.database.sync_url == f"postgresql+psycopg://u:p@h/keel?sslmode={used}"
     assert "sslmode" not in settings.database.async_url
+
+
+@pytest.mark.parametrize(
+    ("database_ssl", "url_query", "conflict"),
+    [
+        ("require", "?sslmode=verify-full", ("require", "verify-full")),
+        ("verify-full", "?sslmode=disable", ("verify-full", "disable")),
+        ("require", "?channel_binding=prefer&sslmode=prefer", ("require", "prefer")),
+        # agreeing, or only one of them set: nothing to warn about
+        ("require", "?sslmode=require", None),
+        ("require", "", None),
+        (None, "?sslmode=verify-full", None),
+        (None, "", None),
+    ],
+)
+def test_database_ssl_and_the_urls_sslmode_conflict_only_when_both_are_set_and_differ(
+    clean_env, database_ssl, url_query, conflict
+):
+    settings = _settings(
+        database_url=f"postgres://u:p@h/keel{url_query}", database_ssl=database_ssl
+    )
+    assert settings.database_ssl_conflict == conflict
+
+
+def _start_log(**env: str) -> list[dict]:
+    """The `keel` log lines a fresh process writes while it loads the app."""
+    environment = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "DATABASE_SSL")}
+    environment.update(ENVIRONMENT="development", LOG_LEVEL="INFO", **env)
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.main"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return [json.loads(line) for line in result.stderr.splitlines() if line.startswith("{")]
+
+
+def test_a_conflict_is_logged_once_at_start_with_both_modes_and_never_the_url():
+    lines = _start_log(
+        DATABASE_URL="postgres://keel:start-log-secret@h/keel?sslmode=verify-full",
+        DATABASE_SSL="require",
+    )
+    warnings = [line for line in lines if line["event"] == "db.ssl_mode_conflict"]
+    assert len(warnings) == 1
+    assert warnings[0]["level"] == "WARNING"
+    assert {k: warnings[0][k] for k in ("database_ssl", "url_sslmode", "used")} == {
+        "database_ssl": "require",
+        "url_sslmode": "verify-full",
+        "used": "verify-full",
+    }
+    assert "start-log-secret" not in json.dumps(lines)
+
+
+def test_no_conflict_means_no_warning():
+    lines = _start_log(
+        DATABASE_URL="postgres://keel:start-log-secret@h/keel?sslmode=require",
+        DATABASE_SSL="require",
+    )
+    assert not [line for line in lines if line["event"] == "db.ssl_mode_conflict"]
 
 
 def test_a_bad_sslmode_in_the_url_stops_startup_even_with_database_ssl_set(clean_env):

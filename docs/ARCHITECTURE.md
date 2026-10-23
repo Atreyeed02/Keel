@@ -612,6 +612,7 @@ app/
 ├── domain/accounts.py account input validation + creation
 ├── domain/account_types.py  the closed set of account types
 ├── domain/rebuild.py  replays the event log into the read model (§3.3)
+├── head.py            HEAD on every route that answers GET (§5.22)
 ├── templates/         Jinja2 server-rendered pages
 ├── config.py          settings via pydantic-settings
 └── main.py            app wiring + all page routes
@@ -654,7 +655,10 @@ psycopg, which is libpq underneath, keeps it in the URL. `DATABASE_SSL`
 `sslmode` are both honoured: when they differ, the stricter one is used,
 so a leftover setting in one place can never weaken the other. With
 `DATABASE_SSL=require` and `?sslmode=verify-full`, the connection verifies
-the certificate and host name. A malformed URL or unknown mode stops the process at start.
+the certificate and host name. Because one of the two then loses without a
+word, the app logs a `db.ssl_mode_conflict` warning once at start, naming
+both modes and the one used (`ssl_mode_conflict()`, logged from
+`app/main.py`); never the URL, which holds the password. A malformed URL or unknown mode stops the process at start.
 
 **No other query parameters.** SQLAlchemy passes every query parameter in
 the asyncpg URL to `asyncpg.connect()` as a keyword argument, and asyncpg
@@ -1473,8 +1477,8 @@ workflow runs it every night (§5.13).
 | `test_observability.py` | partly | request ids (generated, propagated, unsafe ones replaced), the JSON formatter, ledger identifiers on posting log lines |
 | `test_schema_guard.py` | **yes** | the fixtures refuse to wipe a database alembic has migrated |
 | `test_api.py` | partly | every JSON API status code, the error shape and its scoping, string amounts, `1E-999999999` refused before the database, replays (including reformatted retries), form/API key separation, key release after a 422, concurrent duplicate and conflicting requests (§5.16) |
-| `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes, `PORT`, the production and demo guards, the start command and the dev override; the base images from the mirror, pinned by digest, and the mirror workflow copying exactly those tags, only from `main` (§5.1, §5.12) |
-| `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
+| `test_deploy_config.py` | no | `DATABASE_URL` in every host spelling, TLS modes and the warning when the two disagree, `PORT`, the production and demo guards, the start command and the dev override; the base images from the mirror, pinned by digest, and the mirror workflow copying exactly those tags, only from `main` (§5.1, §5.12) |
+| `test_hardening.py` | mostly no | the body size limit, declared and chunked, as a page for a form, a chunked form's included; security headers; the page CSP naming no other origin, with no nonce and nothing inline; every page, error re-renders and the no-JavaScript redraw included, referencing only Keel's own files, each of which exists, and having no inline scripts or styles; the stylesheet's font URLs; fonts, stylesheet and script served with their types, which `nosniff` requires (§5.8, §5.18) |
 | `test_learn.py` | mostly no | `/learn` needs no database; every glossary term has its section there, the contents list points at sections that exist, no id repeats, the quiz has one right answer; the `term` macro's button, card, description and link; every term anchors its own card in `keel.css`; each page defines its terms once, with every `popovertarget` and `aria-describedby` resolving (§5.8) |
 | `test_posting_form.py` | partly | every refusal of the posting form worded by its rule, from the domain's own errors (`1E-999999999` as too many decimal places, not too large, and nothing written); the balance panel as the server draws it, per currency; uneven or missing lines a 422; all of a form's problems at once, each marked on its line; the demo's wording; a resubmission landing on the transaction with "Already posted."; add and remove without JavaScript, not counted as writes; typed values never logged (§5.7, §5.8, §5.15) |
 | `test_event_log_page.py` | partly | each event in words from its own payload: a posted transaction's entries by name in position order, totals per currency, "Doesn't balance" on damaged data, an unknown account by id, "Untitled transaction"; an opened account's type, currency and normal side; an event type without words; the raw event as stored, folded away, old payloads' version; the explainer, its example (checked against the seed) and the reset sentence only on the demo; terms once; the pager and a page past the end; "1 event" and "No events yet." (§5.7, §5.8) |
@@ -1483,6 +1487,7 @@ workflow runs it every night (§5.13).
 | `test_account_detail.py` | partly | an account's page: oldest first across both sides, each column's count and total the whole account's on every page, each entry's one link and its other side, why the normal side for each type, the sum the right way round, a balance below zero with a minus sign and what it means, a new account with no entries, paging and past the end, the 404 page for an unknown or malformed id (the reset sentence only on the demo), the links from the chart of accounts, a transaction's page and the event log, its terms once each, its event's page of the log |
 | `test_stylesheet.py` | no | every animation in `keel.css` has a finite iteration count, and the reduced-motion block, the last `@media` in the file, stops every animation and transition; no selector is styled in two top-level rules unless listed with its reason (§5.8) |
 | `test_proxy_headers.py` | no | forwarded headers from trusted and untrusted peers; the Render chain behind Cloudflare, `CF-Connecting-IP` believed only when it can be, forged headers changing nothing; separate write limits per client, none gained by forging (§5.21) |
+| `test_head.py` | partly | `HEAD` with `GET`'s status and headers and no body, on every page and API read against Postgres and a few without it; no body below httpx either; logged as `HEAD`; `405` where there is no `GET`; static files unchanged; no `head` operations in the schema (§5.22) |
 | `test_rate_limit.py` | no | 429 with an exact `Retry-After`, the shared form/API allowance, refused writes not counted and never reaching the app, reads unlimited, per-address and per-/64 keys, the 429 logged and with security headers, `0`, idle clients forgotten (§5.19) |
 | `test_capacity.py` | mostly | both caps through both interfaces, nothing written on refusal, replays at the cap, a refused key posting once there is room, `0`, uncapped scripts (§5.20) |
 | `test_demo.py` | partly | the notice on every page only with `ENVIRONMENT=demo`; the reset script refusing outside the demo before connecting and without `--yes`, restoring exactly a fresh seed, re-enabling the append-only trigger, and rolling back whole on failure (§5.8, §5.10) |
@@ -1877,7 +1882,12 @@ Two ASGI middlewares, neither of them about the ledger.
 whose `Content-Length` is over the limit is answered `413` before the app
 runs, which is the only protection for a route that never reads its body.
 A chunked request, which declares no length, is counted as it arrives and
-cut off with a `413` once it passes the limit. Under `/api/` the 413 uses the
+cut off with a `413` once it passes the limit. Once a body has passed the
+limit, the `413` is the answer whatever the app makes of the cut: FastAPI's
+form parsing catches the middleware's error and would answer `400`
+("There was an error parsing the body") itself, so the middleware drops
+that response and sends its own, the same page a declared length gets.
+Under `/api/` the 413 uses the
 API's error shape. The middleware sits *inside* the request log, so a 413 is
 logged as an ordinary `request.completed`, not a `request.failed` with a
 traceback.
@@ -2093,6 +2103,26 @@ IPv6, and the rate limit: separate allowances for two visitors, one
 allowance however the headers are forged, and none gained by rotating a
 forged `CF-Connecting-IP` around Cloudflare. Each of step 2's three
 conditions was removed in turn, and a test failed every time.
+
+### 5.22 `app/head.py` — HEAD on every route that answers GET
+
+Starlette's own routes answer `HEAD` wherever they answer `GET`, but
+FastAPI's `@app.get` routes are `GET` only, so `HEAD /` was a `405`, and a
+host's first request to a new instance is often exactly that. Adding `HEAD`
+to each route would also add a `head` operation per route to the OpenAPI
+schema. Instead, `HeadAsGetMiddleware` runs a `HEAD` request as the `GET`
+it stands for and sends that response's status and headers,
+`Content-Length` included, with the body dropped there rather than left to
+the server. It is the innermost middleware, so everything outside it still
+sees `HEAD`: the request log shows the method that was sent, and the write
+rate limit counts it as the read it is (§5.19). `/static/` is left to
+Starlette's `StaticFiles`, which answers `HEAD` itself. A path with no `GET`
+answers `HEAD` as it answers `GET`: `HEAD /accounts` is a `405`, with
+`Allow: POST`.
+
+`tests/test_head.py` compares `HEAD` with `GET` on every page and API read,
+a `404` included, checks the bytes the app sends below httpx (which drops a
+`HEAD` body on its own), the log line, the `405` and the schema.
 
 ---
 

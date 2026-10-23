@@ -65,7 +65,8 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
     `postgres://`, `postgresql://` and `postgresql+<driver>://` are all the
     same database. `sslmode` in the URL and `ssl` (the DATABASE_SSL setting)
     are both honoured: when both are given, the stricter one is used, so
-    neither can quietly weaken the other.
+    neither can quietly weaken the other. When they differ, the app warns at
+    start (`ssl_mode_conflict`).
 
     `channel_binding` (Neon puts `require` in the URLs it hands out) reaches
     psycopg only. `disable` and `prefer` are accepted, since asyncpg not
@@ -116,6 +117,15 @@ def database_target(url: str, ssl: str | None = None) -> DatabaseTarget:
         sync_url=spelled("postgresql+psycopg", libpq_params),
         ssl=mode,
     )
+
+
+def ssl_mode_conflict(url: str, ssl: str | None) -> tuple[str, str] | None:
+    """`ssl` and the URL's sslmode when both are given and differ, else None."""
+    query = parse_qsl(urlsplit(url).query, keep_blank_values=True)
+    url_mode = next((value for key, value in query if key == "sslmode"), None)
+    if ssl is None or url_mode is None or ssl == url_mode:
+        return None
+    return ssl, url_mode
 
 
 class Settings(BaseSettings):
@@ -235,6 +245,15 @@ class Settings(BaseSettings):
     @property
     def database(self) -> DatabaseTarget:
         return database_target(self.database_url, self.database_ssl)
+
+    @property
+    def database_ssl_conflict(self) -> tuple[str, str] | None:
+        """
+        (DATABASE_SSL, the URL's sslmode) when both are set and differ. The
+        stricter one is used all the same (`database_target`); app/main.py
+        logs a warning at start so the other one does not lose unnoticed.
+        """
+        return ssl_mode_conflict(self.database_url, self.database_ssl)
 
 
 settings = Settings()
