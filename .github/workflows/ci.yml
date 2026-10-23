@@ -30,20 +30,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The runtime packages plus the test and lint tools.
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
         run: ruff check .
 
       # A pinned dependency with a known vulnerability fails the build.
-      # `-r` audits exactly what requirements.txt resolves to, not pip-audit's
-      # own dependencies; `--strict` fails too if a package could not be
-      # audited, rather than skipping it quietly.
+      # `-r` audits exactly what the two files resolve to, the image's
+      # packages and the test tools, not pip-audit's own dependencies;
+      # `--strict` fails too if a package could not be audited, rather than
+      # skipping it quietly.
       - name: Audit dependencies (pip-audit)
         run: |
           pip install pip-audit==2.10.1
-          pip-audit --strict -r requirements.txt
+          pip-audit --strict -r requirements.txt -r requirements-dev.txt
 
       # The models in app/db/schema.py and the migrations must describe the
       # same schema: the tests build theirs with metadata.create_all, the app
@@ -146,6 +148,17 @@ jobs:
             exit 1
           fi
           echo "app runs as uid $uid"
+
+      # The image installs requirements.txt only. This fails if a runtime pin
+      # is missing or at another version, or if anything from
+      # requirements-dev.txt (pytest, httpx, ruff, ...) got into the image.
+      - name: Assert the image has the runtime packages and no dev tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T app pip list --format=freeze --disable-pip-version-check \
+            > /tmp/image-packages.txt
+          python3 .github/scripts/check_image_packages.py /tmp/image-packages.txt
 
       - name: Smoke the real posting flow through the container
         shell: bash

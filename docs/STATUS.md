@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Thirty-five PRs are merged into `main`, with regular merge commits, and
+Thirty-six PRs are merged into `main`, with regular merge commits, and
 their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -50,6 +50,7 @@ their branches deleted:
 | [#36](https://github.com/Atreyeed02/Keel/pull/36) | `feat/transaction-missing-page` | `2c80961` |
 | [#37](https://github.com/Atreyeed02/Keel/pull/37) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 4 updates) | `cb40f57` |
 | [#38](https://github.com/Atreyeed02/Keel/pull/38) | `chore/mirror-on-sunday` | `4d6cfaf` |
+| [#39](https://github.com/Atreyeed02/Keel/pull/39) | `docs/readme-showcase` | `06bad85` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
@@ -93,25 +94,60 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`docs/readme-showcase`** gives the README a new top: a one-line pitch, the
-live demo's link (with the free tier's wake-up delay and the nightly reset),
-four light screenshots in a 2 × 2 grid (the overview's accounting equation,
-the posting form filled in by "Try it" step 1, the Cash account's T-account,
-the event log down to its newest event), a "What makes this interesting"
-list, the tech stack, and a short "Why I built this". The old opening
-paragraph and tech line are replaced; everything from "The guarantees" down
-is unchanged, except the test count, 447 → 458 in two places, and
-`docs/screenshots/` in the project layout. The screenshots are
+**`chore/split-requirements`** splits the requirements in two.
+`requirements.txt` is what the image runs: the twelve runtime packages and
+pyyaml, which uvicorn[standard] installs anyway and which is pinned there so
+the image gets the version CI tests and audits. `requirements-dev.txt` adds
+pytest, pytest-asyncio, httpx and ruff through `-r requirements.txt`. The
+Dockerfile already installed only `requirements.txt`, so it gains only a
+comment. CI's `lint-and-test` installs `requirements-dev.txt` and audits
+both files with `pip-audit --strict -r requirements.txt -r
+requirements-dev.txt`, the same packages as before. The "Demo maintenance"
+and "Cloudflare ranges" workflows keep installing `requirements.txt`, which
+no longer carries the test tools; the reset job holds the production secret.
+`docker-smoke` gains a step that runs `pip list --format=freeze` in the app
+container and passes it to `.github/scripts/check_image_packages.py`, which
+fails unless every runtime pin is installed at its version and nothing from
+`requirements-dev.txt` is. Dependabot's `runtime` group gains pyyaml and
+`dev-tools` loses it, so each group matches one file. Three new tests in
+`tests/test_deploy_config.py` pin the files, the groups, every install
+command and the image check; the group-coverage test reads both files.
+README, CONTRIBUTING and ARCHITECTURE §5.12–5.13 describe the split; the
+README's test counts are brought up to date (461; 160 skipped without a
+database). No migration, no host action, nothing under `app/` changes.
+Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.17.0) | clean |
+| `pytest`, from a fresh virtualenv of `requirements-dev.txt` | 461 passed on local Postgres 16; 301 passed, 160 skipped without a database |
+| 13 deliberate breaks (ruff or pyyaml in the wrong file, no `-r`, the Dockerfile, CI, the audit or either scheduled workflow installing the wrong file, the image step removed, pyyaml in no group or two, the check ignoring versions or dev tools) | each fails a test |
+| A fresh virtualenv of `requirements.txt` alone | none of the four dev tools installed; `app.main`, `app.serve` and every script import; `alembic upgrade head`, `alembic check` and the demo seed run on a scratch database (dropped after) |
+| Image built from `main` (`06bad85`) against the branch's, `pip list` | 10 packages gone, nothing added, every other version the same: pytest, pytest-asyncio, httpx, ruff and what only they need (certifi, httpcore, iniconfig, packaging, pluggy, Pygments). 387 MB → 330 MB on disk. `pip check` clean |
+| docker-smoke's new step, run through `docker compose` on a project of its own | the branch's image passes ("all 13 runtime pins installed, none of the 4 dev tools"); the same image with `requirements-dev.txt` installed on top fails on all four tools; `main`'s image fails the same way |
+| Every page, `main` (`06bad85`) against the branch, both served from the runtime-only virtualenv, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px), all identical; all 33 HTML and JSON responses byte-identical once each render's own key was masked |
+
+**#39, `docs/readme-showcase`**, merged 2026-10-22, gives the README a new
+top: a one-line pitch, the live demo's link (with the free tier's wake-up
+delay and the nightly reset), four light screenshots in a 2 × 2 grid (the
+overview's accounting equation, the posting form filled in by "Try it" step
+1, the Cash account's T-account, the event log down to its newest event), a
+"What makes this interesting" list, the tech stack, and a short "Why I built
+this". The old opening paragraph and tech line are replaced; everything from
+"The guarantees" down is unchanged, except the test count, 447 → 458 in two
+places, and `docs/screenshots/` in the project layout. The screenshots are
 `docs/screenshots/*.png`, 1280 px wide, 949 to 1,076 px tall, about 100 to
 150 KB each, taken from a local server on the seeded demo data, so they hold
 no visitor's data. The Docker image copies only `app/`, `alembic/` and
 `scripts/`, so they don't reach it. No migration, no host action, nothing
-under `app/` changes. Checked on that branch:
+under `app/` changes. Checked on that branch, then on GitHub after merging:
 
 | Check | Result |
 |---|---|
 | Every page, `main` (`4d6cfaf`) against the branch, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px). Identical apart from the native drop-down's text on two phone shots (the posting form, the new-account form); all 33 HTML and JSON responses byte-identical once each render's own key was masked |
 | The four screenshots | no console error, failed request or blocked style; GET requests only |
+| CI on the PR | both checks passed |
+| The repository's page on GitHub, after merging | in headless Chrome, GET requests only: the README's headings in order, the live link present, all four images loaded at full size (1280 px wide, shown at about 400) |
 
 **#38, `chore/mirror-on-sunday`**, merged 2026-10-22, moves the "Mirror base
 images" workflow from Mondays to Sundays, still at 02:30 UTC, so it runs a
@@ -733,13 +769,15 @@ echoed as `X-Request-ID`. Posting lines carry `transaction_id`,
 
 ### Dependencies
 
-FastAPI 0.143.1 on Starlette 1.8.0 (pinned directly), uvicorn 0.54.0,
-SQLAlchemy 2.1.4, asyncpg 0.32.0, pydantic 2.14.1, pydantic-settings 2.16.0,
-pytest 9.1 with pytest-asyncio 1.4, python-dotenv 1.2.4, jinja2 3.1.6.
-Moving off Starlette 0.38.6 closed all 7 of its advisories and needed no
-application change. Starlette 1.x also imports `python_multipart` directly,
-so form parsing no longer goes through the deprecated `import multipart`
-shim.
+In `requirements.txt`, what the image runs: FastAPI 0.143.1 on Starlette
+1.8.0 (pinned directly), uvicorn 0.54.0, SQLAlchemy 2.1.4, asyncpg 0.32.0,
+pydantic 2.14.1, pydantic-settings 2.16.0, python-dotenv 1.2.4, jinja2
+3.1.6, and pyyaml 6.0.3, which uvicorn[standard] brings in. In
+`requirements-dev.txt`, on top of those: pytest 9.1 with pytest-asyncio 1.4,
+httpx 0.28 and ruff 0.17. Moving off Starlette 0.38.6 closed all 7 of its
+advisories and needed no application change. Starlette 1.x also imports
+`python_multipart` directly, so form parsing no longer goes through the
+deprecated `import multipart` shim.
 
 Dependabot (`.github/dependabot.yml`) proposes updates every Monday for pip,
 the Dockerfile's python, compose's postgres (which CI's tests run on, so the
@@ -761,19 +799,20 @@ up the dev bind-mount and test host code instead of the image. The dev bind
 mount itself sets `create_host_path: false`, so a checkout without `./app`
 refuses to start instead of mounting an empty directory over the image.
 Since #5, `lint-and-test` also runs `pip-audit --strict`, and `docker-smoke`
-fails if the container runs as root. A third, scheduled workflow,
-"Cloudflare ranges", compares `app/client_address.py`'s copy of Cloudflare's
-address ranges with the published lists every Monday. A fourth, "Demo
-maintenance", resets the public demo every night (below), and a fifth,
-"Mirror base images", copies the base images to ghcr.io every Sunday (#30;
-Mondays until #38). Since #13, the workflow files pin their actions by
-commit and run every job on `ubuntu-24.04`. The images both jobs pull,
-Python for the app and Postgres, are pinned by digest and come from the
-repository's mirror on ghcr.io: Docker Hub's anonymous pull limit stopped
-them first, and #21 moved them to ECR Public; then ECR Public's stopped
-Dependabot and a run of `main`'s CI, and #31 moved them to the mirror. Both
-jobs are required checks: the "Protect main" ruleset (§1) merges nothing
-into `main` until they pass.
+fails if the container runs as root; since `chore/split-requirements`, also
+if the image is missing a runtime pin or contains a dev tool. A third,
+scheduled workflow, "Cloudflare ranges", compares `app/client_address.py`'s
+copy of Cloudflare's address ranges with the published lists every Monday. A
+fourth, "Demo maintenance", resets the public demo every night (below), and
+a fifth, "Mirror base images", copies the base images to ghcr.io every
+Sunday (#30; Mondays until #38). Since #13, the workflow files pin their
+actions by commit and run every job on `ubuntu-24.04`. The images both jobs
+pull, Python for the app and Postgres, are pinned by digest and come from
+the repository's mirror on ghcr.io: Docker Hub's anonymous pull limit
+stopped them first, and #21 moved them to ECR Public; then ECR Public's
+stopped Dependabot and a run of `main`'s CI, and #31 moved them to the
+mirror. Both jobs are required checks: the "Protect main" ruleset (§1)
+merges nothing into `main` until they pass.
 
 ### Deploy readiness — merged (#5), live on Render
 
@@ -879,8 +918,9 @@ versions, `alembic check` in CI with the duplicate idempotency-key
 constraint removed, the JSON API, the `account.created` backfill, the
 account-currency rule in the database, idempotency key retention, UTC date
 filtering, the trigram search index, the FastAPI/Starlette upgrade, the test
-fixtures' guard against migrated databases, and a transaction's 404 page,
-like an account's (#36).
+fixtures' guard against migrated databases, a transaction's 404 page, like
+an account's (#36), the README showcase (#39), and the split of the runtime
+and test requirements (`chore/split-requirements`).
 
 **Small fix, not started:** a form sent without `Content-Length` that goes
 over the body limit should get the `413` page, as one with `Content-Length`
@@ -888,6 +928,14 @@ does, not FastAPI's `400`. The body limit's exception is raised inside
 FastAPI's form parsing, which catches it and answers `400` itself. The
 request is still refused unread, and the API already answers `413` (found
 reviewing #37, §1).
+
+**Dependency pinning, not started:** a lock or constraints file. Only the
+packages named in `requirements.txt` are pinned; their own dependencies
+(uvloop, httptools, watchfiles, anyio and the rest) are resolved at build
+time, so two builds of the same commit can install different versions, and
+`pip-audit` checks whatever resolved that day. A constraints file generated
+from the image, or a lock file, would pin all of them, with Dependabot
+keeping it current.
 
 **Future work, not started:** FX handling (needs a clearing-account
 pattern plus an FX gain/loss account — see `ARCHITECTURE.md` §2.4 for why

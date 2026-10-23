@@ -528,7 +528,7 @@ branch `main`, or `gh workflow run demo-maintenance.yml --ref main` and then
 ## Running tests
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 docker compose up -d db
 docker compose exec db createdb -U ledger ledger_test
 export TEST_DATABASE_URL=postgresql+asyncpg://ledger:ledger@localhost:5432/ledger_test
@@ -536,7 +536,9 @@ pytest -v
 ruff check .
 ```
 
-458 tests. Point `TEST_DATABASE_URL` at a scratch database, not the one the
+461 tests. `requirements-dev.txt` installs everything in `requirements.txt`
+(what the image runs) plus the test and lint tools, which the image never
+contains. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
 with `metadata.create_all()`, so no migrations need to be applied first.
 They refuse to run on a database alembic has migrated (one with an
@@ -544,8 +546,8 @@ They refuse to run on a database alembic has migrated (one with an
 stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
-Without `TEST_DATABASE_URL`, the 143 database-backed tests are **skipped,
-not failed**. A green run of the remaining 277 is partial coverage:
+Without `TEST_DATABASE_URL`, the 160 database-backed tests are **skipped,
+not failed**. A green run of the remaining 301 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -699,7 +701,9 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    458 tests; see above
+tests/                    461 tests; see above
+requirements.txt          what the image runs
+requirements-dev.txt      that, plus pytest, pytest-asyncio, httpx and ruff
 docs/                     ARCHITECTURE.md (full walkthrough), STATUS.md (build status),
                           screenshots/ (the README's)
 ```

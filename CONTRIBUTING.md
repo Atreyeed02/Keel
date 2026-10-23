@@ -9,8 +9,9 @@ keep that safe. The README covers how to run Keel and its tests, and
 
 1. Work on a branch and open a pull request against `main`. Nobody pushes
    to `main` directly.
-2. Before opening it, run `ruff check .` and the full test suite against a
-   scratch Postgres database, with `TEST_DATABASE_URL` set as the README's
+2. Before opening it, install `requirements-dev.txt` (the runtime packages
+   plus the test and lint tools), then run `ruff check .` and the full test
+   suite against a scratch Postgres database, with `TEST_DATABASE_URL` set as the README's
    "Running tests" section shows. Without that variable, about a third of
    the tests are skipped, so a green run means less than it looks.
 3. A pull request is merged only when CI is green (both `lint-and-test` and
@@ -30,10 +31,10 @@ merges itself. Remember that merging one deploys, like any merge.
 | `actions` group | CI green | nothing more |
 | compose's postgres digest | CI green; the new digest is Docker's (below) | nothing more |
 | The Dockerfile's python digest | CI green; `docker-smoke` boots the new image; the new digest is Docker's (below) | `/health` and the pages on the live site |
-| pip `runtime` group, or a runtime major version | CI green, including `pip-audit`; the changelogs, especially for a major; every page compared with `main`, since jinja2, starlette or fastapi can change what a page renders | `/health` and the pages on the live site |
+| pip `runtime` group (`requirements.txt`, including pyyaml, which uvicorn[standard] installs anyway), or a runtime major version | CI green, including `pip-audit`; the changelogs, especially for a major; every page compared with `main`, since jinja2, starlette or fastapi can change what a page renders | `/health` and the pages on the live site |
 | uvicorn, on its own | as for the `runtime` group, and its changelog for anything about proxy headers, `forwarded_allow_ips`, `ProxyHeadersMiddleware` or access logging, which `app/client_address.py` depends on | as for the `runtime` group, and the forged-header check ("Check it after a deploy", in the README's `FORWARDED_ALLOW_IPS` section) |
 | sqlalchemy, on its own | as for the `runtime` group, and its changelog for anything affecting the async engine, the queries or Alembic | `/health` and the pages on the live site |
-| pip `dev-tools` group | CI green. If a new ruff flags existing code, fix it in a pull request of its own first | nothing more |
+| pip `dev-tools` group (`requirements-dev.txt`; none of it is in the image) | CI green. If a new ruff flags existing code, fix it in a pull request of its own first | nothing more |
 
 **Is a base image's new digest Docker's?** Both base images come from this
 repository's mirror on ghcr.io, which the "Mirror base images" workflow

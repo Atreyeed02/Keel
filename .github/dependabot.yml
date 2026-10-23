@@ -22,8 +22,10 @@ updates:
       prefix: chore
       include: scope
     groups:
-      # What the image runs. fastapi and starlette are in one group so a bump
-      # never splits them and leaves starlette outside fastapi's range.
+      # What the image runs: requirements.txt. fastapi and starlette are in
+      # one group so a bump never splits them and leaves starlette outside
+      # fastapi's range. pyyaml comes in through uvicorn[standard] and is
+      # pinned so the image gets the tested version.
       # sqlalchemy and uvicorn are left out on purpose: each gets a pull
       # request of its own, because their updates need a closer review
       # (the engine and the migrations; the proxy-header handling in
@@ -40,15 +42,15 @@ updates:
           - python-dotenv
           - jinja2
           - python-multipart
+          - pyyaml
         update-types: [minor, patch]
-      # Tests and lint only; none of these is installed differently in production.
+      # Tests and lint: requirements-dev.txt. None of these is in the image.
       dev-tools:
         patterns:
           - pytest
           - pytest-asyncio
           - httpx
           - ruff
-          - pyyaml
         update-types: [minor, patch]
       security:
         applies-to: security-updates

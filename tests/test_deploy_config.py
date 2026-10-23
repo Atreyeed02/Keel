@@ -538,11 +538,7 @@ def test_dependabot_covers_every_pinned_ecosystem():
     # sqlalchemy and uvicorn get pull requests of their own; every other
     # pinned requirement belongs to exactly one version-update group
     alone = {"sqlalchemy", "uvicorn"}
-    names = [
-        re.match(r"[A-Za-z0-9_.-]+", line).group(0).lower()
-        for line in (root / "requirements.txt").read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
+    names = _requirement_names("requirements.txt") + _requirement_names("requirements-dev.txt")
     groups = [
         set(group["patterns"])
         for group in updates["pip"]["groups"].values()
@@ -551,3 +547,114 @@ def test_dependabot_covers_every_pinned_ecosystem():
     assert alone <= set(names)
     for name in names:
         assert sum(name in group for group in groups) == (0 if name in alone else 1), name
+
+
+def _requirement_names(filename):
+    """The package names a requirements file pins, lowercased; skips `-r` lines."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    return [
+        re.match(r"[A-Za-z0-9_.-]+", line).group(0).lower()
+        for line in (root / filename).read_text().splitlines()
+        if line.strip() and not line.startswith(("#", "-"))
+    ]
+
+
+DEV_TOOLS = {"pytest", "pytest-asyncio", "httpx", "ruff"}
+
+
+def test_the_test_tools_are_in_their_own_file_and_its_own_dependabot_group():
+    """requirements.txt is what the image runs; requirements-dev.txt adds the tools."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    runtime = _requirement_names("requirements.txt")
+    dev = _requirement_names("requirements-dev.txt")
+    assert set(dev) == DEV_TOOLS
+    assert not set(runtime) & set(dev)
+    # pyyaml arrives through uvicorn[standard] anyway; pinned with the runtime
+    assert "pyyaml" in runtime
+    # one install gives a complete test environment
+    lines = (root / "requirements-dev.txt").read_text().splitlines()
+    first = next(line for line in lines if line.strip() and not line.startswith("#"))
+    assert first == "-r requirements.txt"
+    # the Dependabot groups follow the files
+    config = yaml.safe_load((root / ".github" / "dependabot.yml").read_text())
+    (pip,) = [u for u in config["updates"] if u["package-ecosystem"] == "pip"]
+    assert set(pip["groups"]["runtime"]["patterns"]) <= set(runtime)
+    assert set(pip["groups"]["dev-tools"]["patterns"]) == set(dev)
+
+
+def test_only_ci_installs_the_test_tools():
+    """The image and the jobs holding secrets install requirements.txt and nothing more."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    dockerfile = (root / "Dockerfile").read_text()
+    instructions = [line for line in dockerfile.splitlines() if not line.startswith("#")]
+    assert not any("requirements-dev" in line for line in instructions)
+    assert re.findall(r"^RUN pip install .*$", dockerfile, re.M) == [
+        "RUN pip install --no-cache-dir -r requirements.txt"
+    ]
+
+    def steps(workflow, job):
+        path = root / ".github" / "workflows" / workflow
+        return yaml.safe_load(path.read_text())["jobs"][job]["steps"]
+
+    def installs(workflow, job):
+        return [s["run"] for s in steps(workflow, job) if "pip install" in s.get("run", "")]
+
+    lint_and_test = installs("ci.yml", "lint-and-test")
+    assert lint_and_test[0] == "pip install -r requirements-dev.txt"
+    # the audit covers both files, the image's packages and the tools
+    (audit,) = [run for run in lint_and_test if "pip-audit --strict" in run]
+    assert "pip-audit --strict -r requirements.txt -r requirements-dev.txt" in audit
+    assert installs("demo-maintenance.yml", "reset") == ["pip install -r requirements.txt"]
+    assert installs("cloudflare-ranges.yml", "compare") == ["pip install -r requirements.txt"]
+    # docker-smoke checks what actually got into the image
+    runs = [s.get("run", "") for s in steps("ci.yml", "docker-smoke")]
+    assert any("python3 .github/scripts/check_image_packages.py" in run for run in runs)
+
+
+def _image_check():
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    path = root / ".github" / "scripts" / "check_image_packages.py"
+    spec = importlib.util.spec_from_file_location("check_image_packages", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_image_check_passes_the_runtime_pins_and_nothing_else():
+    """What docker-smoke runs on `pip list --format=freeze` from inside the image."""
+    check = _image_check()
+    runtime = check.pins(check.ROOT / "requirements.txt")
+    # pip spells some names differently from the file: PyYAML, python_multipart
+    spelled = {"pyyaml": "PyYAML", "python-multipart": "python_multipart"}
+    freeze = "".join(f"{spelled.get(n, n)}=={v}\n" for n, v in runtime.items())
+    freeze += "anyio==4.11.0\nuvloop==0.22.1\n"  # unpinned transitive ones are fine
+    assert check.problems(freeze) == []
+    # a dev tool in the image
+    assert check.problems(freeze + "pytest==9.1.1\n") == ["dev tool pytest is installed (9.1.1)"]
+    assert check.problems(freeze + "Pytest_Asyncio==1.4.0\n") == [
+        "dev tool pytest-asyncio is installed (1.4.0)"
+    ]
+    # a runtime pin missing, or at another version
+    without = "".join(
+        line + "\n" for line in freeze.splitlines() if not line.startswith("asyncpg==")
+    )
+    assert check.problems(without) == [
+        f"asyncpg=={runtime['asyncpg']} is not installed (found: nothing)"
+    ]
+    other = freeze.replace(f"fastapi=={runtime['fastapi']}", "fastapi==0.1.0")
+    assert check.problems(other) == [
+        f"fastapi=={runtime['fastapi']} is not installed (found: 0.1.0)"
+    ]

@@ -28,6 +28,7 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The image's packages only; the check needs no test tools.
       - name: Install dependencies
         run: pip install -r requirements.txt
 

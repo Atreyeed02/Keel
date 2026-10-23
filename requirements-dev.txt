@@ -1,0 +1,9 @@
+# Tests and lint, on top of everything the image runs. CI's lint-and-test
+# installs this file; the Dockerfile installs only requirements.txt, and
+# docker-smoke fails if any package below is found in the image.
+-r requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+ruff==0.17.0
