@@ -1,7 +1,7 @@
 name: Demo maintenance
 
 # Resets the public demo every day: deletes everything visitors wrote and
-# restores the demo data (scripts/reset_demo_data.py). The README's
+# restores the demo data (scripts/reset_demo_data.py). docs/DEPLOYING.md's
 # "Scheduled maintenance" section has the setup, why key pruning is not
 # scheduled here, and what a visitor sees during a reset.
 #

@@ -40,7 +40,7 @@ services:
     # Asserts the same thing CI does: a 200 from /health whose body reports a
     # live database, so a container whose migrations failed is never reported
     # healthy. Uses python rather than curl/wget because the image is
-    # python:3.12-slim, which ships neither (see the README's dev-mode section).
+    # python:3.12-slim, which ships neither (see docs/DEVELOPMENT.md's dev-mode section).
     # start_period covers `alembic upgrade head` running before uvicorn binds.
     healthcheck:
       test:

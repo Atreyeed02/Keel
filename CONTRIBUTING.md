@@ -1,126 +1,43 @@
 # Contributing to Keel
 
-`main` is production. Every commit merged into it deploys automatically to
-the public demo on Render, with no manual step in between. These guidelines
-keep that safe. The README covers how to run Keel and its tests, and
-`docs/ARCHITECTURE.md` explains how it works.
+`main` is production: every commit merged into it deploys automatically to
+the public demo on Render, with no manual step in between. These rules keep
+that safe. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) has each of them in
+full, with the tests, the project layout and how to review Dependabot's
+pull requests.
 
 ## How a change lands
 
 1. Work on a branch and open a pull request against `main`. Nobody pushes
    to `main` directly.
-2. Before opening it, install `requirements-dev.txt` (the runtime packages
-   plus the test and lint tools), then run `ruff check .` and the full test
-   suite against a scratch Postgres database, with `TEST_DATABASE_URL` set as the README's
-   "Running tests" section shows. Without that variable, about a third of
-   the tests are skipped, so a green run means less than it looks.
-3. A pull request is merged only when CI is green (both `lint-and-test` and
+2. Install `requirements-dev.txt`, then run `ruff check .` and the full test
+   suite with `TEST_DATABASE_URL` pointing at a scratch Postgres
+   ([Running tests](docs/DEVELOPMENT.md#running-tests)). Without it, about a
+   third of the tests are skipped.
+3. A pull request is merged only when CI is green (`lint-and-test` and
    `docker-smoke`) and a maintainer has approved it.
-4. In the description, say what changed, why, and how you checked it. Put
-   any host action needed (see "Deployment constraints", rule 4) at the very
-   top. If there is none, say so.
+4. In the description, say what changed, why, and how you checked it, with
+   any host action (rule 4 below) at the very top, or say there is none.
 
-## Reviewing Dependabot pull requests
+## Key rules
 
-Dependabot (`.github/dependabot.yml`) opens pull requests every Monday. They
-go through the same checks and the same approval as any other, and none
-merges itself. Remember that merging one deploys, like any merge.
+1. **Migrations work with the previous version of the code**, which is
+   still serving while they run. Rename or drop in two pull requests.
+2. **One instance only.** Startup migrations and the in-memory rate limit
+   assume it.
+3. **Keep the startup contract:** `python -m app.serve`, `$PORT` on
+   `0.0.0.0`, `GET /health`, the `Dockerfile` at the root, the unprivileged
+   `keel` user.
+4. **Call out host configuration changes** at the top of the description:
+   **"Render action needed: set X before merging"**.
+5. **Stay within 512 MB of memory.**
+6. **Remove temporary diagnostics completely**, never behind a flag.
+7. **Dependabot pull requests** get the same checks and approval; never
+   push to their branches.
+   ([What to check for each](docs/DEVELOPMENT.md#reviewing-dependabot-pull-requests))
+8. **No secrets and no real personal data** in code, tests, docs, commits or
+   pull requests. Use the reserved documentation values (`192.0.2.0/24`,
+   `2001:db8::/32`, `example.com`).
+   ([In full](docs/DEVELOPMENT.md#secrets-and-personal-data))
 
-| Pull request | Check before approving | After merging |
-|---|---|---|
-| `actions` group | CI green | nothing more |
-| compose's postgres digest | CI green; the new digest is Docker's (below) | nothing more |
-| The Dockerfile's python digest | CI green; `docker-smoke` boots the new image; the new digest is Docker's (below) | `/health` and the pages on the live site |
-| pip `runtime` group (`requirements.txt`, including pyyaml, which uvicorn[standard] installs anyway), or a runtime major version | CI green, including `pip-audit`; the changelogs, especially for a major; every page compared with `main`, since jinja2, starlette or fastapi can change what a page renders | `/health` and the pages on the live site |
-| uvicorn, on its own | as for the `runtime` group, and its changelog for anything about proxy headers, `forwarded_allow_ips`, `ProxyHeadersMiddleware` or access logging, which `app/client_address.py` depends on | as for the `runtime` group, and the forged-header check ("Check it after a deploy", in the README's `FORWARDED_ALLOW_IPS` section) |
-| sqlalchemy, on its own | as for the `runtime` group, and its changelog for anything affecting the async engine, the queries or Alembic | `/health` and the pages on the live site |
-| pip `dev-tools` group (`requirements-dev.txt`; none of it is in the image) | CI green. If a new ruff flags existing code, fix it in a pull request of its own first | nothing more |
-
-**Is a base image's new digest Docker's?** Both base images come from this
-repository's mirror on ghcr.io, which the "Mirror base images" workflow
-fills from Docker's official images (`docs/ARCHITECTURE.md` §5.12). Before
-approving a digest bump, ask Docker Hub for that digest in Docker's own
-repository, `library/python` or `library/postgres`. It needs Docker with
-Buildx, but not a running Docker engine:
-
-```bash
-d=sha256:<the new digest from the pull request>
-docker buildx imagetools inspect "docker.io/library/python@$d" --format "{{.Manifest.Digest}}"
-```
-
-For compose's postgres, use `library/postgres`. If the image is Docker's,
-it prints the same digest. If it isn't, the command fails with `not found`:
-don't approve, and find out how the mirror came to hold it.
-
-Pushing a commit to a Dependabot branch stops Dependabot from rebasing it,
-so make fixes in a separate pull request and let Dependabot rebase its own.
-
-## Deployment constraints
-
-Every rule below exists because of how the live demo runs: one container on
-a small instance, migrating its own database when it starts, redeployed on
-every merge.
-
-1. **Migrations must work with the previous version of the code.**
-   Migrations run when the new version starts, while the previous version
-   is still serving requests. Adding a table, a column or an index is fine.
-   Renaming or dropping something, or adding `NOT NULL` to an existing
-   column without a default, must be split across two pull requests: the
-   first stops using the old shape, and a later one removes it. If a
-   migration can't be made backward compatible, raise it in an issue or a
-   draft pull request before writing it.
-2. **One instance only.** Startup migrations and the in-memory write rate
-   limit (`app/ratelimit.py`) both assume exactly one running instance.
-   Don't add anything that assumes several. If a change would need more
-   than one instance, raise it before building it.
-3. **Keep the startup contract.**
-   - The image starts with `python -m app.serve`.
-   - The app binds to `$PORT` on `0.0.0.0` and serves `GET /health` at
-     exactly `/health`.
-   - The `Dockerfile` stays at the repository root, with every `COPY` path
-     relative to the root.
-   - The app runs as the unprivileged `keel` user.
-
-   The host's build and health check depend on each of these.
-4. **Call out host configuration changes.** A new required environment
-   variable, a change to the startup safety checks
-   (`Settings.refuse_unsafe_hosted_config` in `app/config.py`), or a change
-   to what an existing variable must contain goes at the top of the pull
-   request description as **"Render action needed: set X before
-   merging"**. Otherwise the deploy that follows the merge refuses to
-   start.
-5. **Stay within 512 MB of memory.** Say so in the pull request when a new
-   dependency or feature noticeably increases memory use or startup time.
-6. **Remove temporary diagnostics completely.** When a diagnostic has served
-   its purpose, delete its code, setting and tests. Don't leave it behind a
-   flag. This matters most for anything that touches who the client is, TLS
-   or authentication. A second implementation that only runs occasionally
-   is likely to break without anyone noticing.
-
-## Secrets and personal data
-
-- **Never commit secrets.** `DATABASE_URL` and any other credentials live
-  only in the host's settings. `.env` is ignored by git; `.env.example`
-  holds placeholders only.
-- **Never put real personal data from live testing into the repository.**
-  That covers real IP addresses, email addresses, tokens, request
-  identifiers tied to a person, and anything else that identifies someone.
-  It applies to code, tests, docs, commit messages, and pull request
-  titles, descriptions and comments. Use the reserved documentation values
-  instead:
-
-  | Kind | Use |
-  |---|---|
-  | IPv4 addresses | `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (RFC 5737) |
-  | IPv6 addresses | `2001:db8::/32` (RFC 3849) |
-  | Hostnames and email addresses | `example.com`, `example.org`, `example.net` (RFC 2606) |
-  | Tokens and passwords | an obvious placeholder, such as `<token>` |
-
-  When you paste log output into a pull request or a test, replace the real
-  values first. For a test, choose replacements that keep what it depends
-  on. For example, an address standing in for a visitor must not be private
-  or in a proxy's published ranges.
-- **If something slips through,** replace it in the files with a follow-up
-  pull request, and edit any pull request description that contains it.
-  Rewriting `main`'s history is a separate decision, for a maintainer to
-  make.
+Rules 1–6 in full: [Deployment constraints](docs/DEVELOPMENT.md#deployment-constraints).

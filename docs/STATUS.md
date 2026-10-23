@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Forty PRs are merged into `main`, with regular merge commits, and
+Forty-one PRs are merged into `main`, with regular merge commits, and
 their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -55,6 +55,7 @@ their branches deleted:
 | [#42](https://github.com/Atreyeed02/Keel/pull/42) | `dependabot/pip/dev-tools-…` (Dependabot: ruff) | `961a60a` |
 | [#41](https://github.com/Atreyeed02/Keel/pull/41) | `dependabot/pip/runtime-…` (Dependabot: fastapi) | `14ce483` |
 | [#43](https://github.com/Atreyeed02/Keel/pull/43) | `fix/head-413-ssl-warning` | `e06dc63` |
+| [#44](https://github.com/Atreyeed02/Keel/pull/44) | `docs/changelog-v1` | `36381e8` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
@@ -98,7 +99,38 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`docs/changelog-v1`** prepares v1.0.0. It adds `CHANGELOG.md`, whose
+**`docs/readme-contributing-polish`** shortens the README and
+CONTRIBUTING and moves their reference sections into `docs/`, verbatim.
+The README keeps its top (the pitch, the live demo, the screenshots, what
+makes Keel interesting, the tech stack, why it was built) and adds a short
+quick start, a "How it's built" overview with links, and a table of the
+documentation: 746 lines → 117. CONTRIBUTING keeps how a change lands and
+the key rules on one screen, with links for the rest: 126 lines → 43. Four
+new files take the rest:
+
+| File | What moved there |
+|---|---|
+| `docs/HOW-IT-WORKS.md` | the guarantees and where each is enforced, why event sourcing, why double-entry, how idempotency works, how replay and rebuild work, the architecture, the database model, the limitations and future work |
+| `docs/API.md` | the JSON API and the HTML routes |
+| `docs/DEPLOYING.md` | deploying, the environment variables, the caps, `FORWARDED_ALLOW_IPS` and the forged-header check, scheduled and one-off jobs, the nightly demo reset, the pre-deploy checklist, and the logs (the README's "Observability") |
+| `docs/DEVELOPMENT.md` | running locally and dev mode, running the tests and the per-file test table, the project layout, and CONTRIBUTING's deployment constraints, Dependabot review table with the digest check, and secrets and personal data, in full |
+
+Pointers that named a README or CONTRIBUTING section now name the new file:
+ARCHITECTURE §5.12, §5.13 and §7; this file's §2 and §4; and
+comments in `.github/dependabot.yml`, the "Demo maintenance" workflow and
+`docker-compose.yml`. ARCHITECTURE's stale "244 passed, 110 skipped" now
+reads 322 and 161. Dated records above keep their wording, which was true
+when written. No code or test changes; no migration, no host action.
+Checked on that branch:
+
+| Check | Result |
+|---|---|
+| Nothing lost: every non-blank line of the old README and CONTRIBUTING (734) looked up in the new files, link paths aside | 716 found verbatim. The other 18 were changed on purpose: two headings (the README's "Deploying" is now `DEPLOYING.md`'s title; "Observability" is now "Logs"), the project layout's `docs/` lines, which now list the new files, the Dependabot table's pointer to the forged-header check, now a link, and CONTRIBUTING's opening and steps 2–4 of "How a change lands", condensed (their details are in `DEVELOPMENT.md`'s "Running tests") |
+| Every link resolves: every relative link and `#anchor` in every Markdown file, by GitHub's heading rules | `main`: 20 links, none broken; the branch: 47 links, none broken. A deliberately bad anchor and a missing file were both caught. The release notes' links point at files as of `v1.0.0`, which can't change |
+| `ruff check .` and `pytest` | clean; 483 passed on Postgres 16 (a throwaway container, removed after); 322 passed, 161 skipped without a database. No test reads the README or CONTRIBUTING |
+| Every page, `main` (`36381e8`) against the branch, same seeded data | all 15 HTML and JSON responses byte-identical once the posting form's key was masked; 48 screenshot pairs, one differing: the posting form's step 2, light, phone, by the native drop-down's text, the known rendering noise |
+
+**#44, `docs/changelog-v1`**, merged 2026-10-23, prepares v1.0.0. It adds `CHANGELOG.md`, whose
 1.0.0 entry (2026-10-23) sums up what Keel v1 includes for a reader new to
 the project, by area: ledger and data integrity, event log, API and forms,
 educational UI, security and hardening, deployment and operations, testing
@@ -120,6 +152,15 @@ No migration, no host action. Checked on that branch:
 | `pytest` | 483 passed on Postgres 16 (a throwaway container, removed after); 322 passed, 161 skipped without a database |
 | The version test with the app's version set to `0.9.9` | fails |
 | Every page, `main` (`e06dc63`) against the branch, same seeded data | all 15 HTML and JSON responses byte-identical once the posting form's key was masked, except `/openapi.json`'s version (`0.1.0` → `1.0.0`). 48 screenshot pairs: 5 phone shots differed by anti-aliasing and the native drop-down's text; a control run of `main` against itself differed on 6 phone shots in the same way and by the same pixel counts, so it is rendering noise |
+
+After merging, as `36381e8` at 11:01:03 UTC, and the release:
+
+| Check | Result |
+|---|---|
+| Deploy | `/openapi.json` reported `1.0.0` from 11:02:01 UTC, a minute after the merge (keel.css `Last-Modified` 11:01:16 UTC); CI green on the merge commit |
+| Live, GET and `HEAD` requests only, 11:02:34–11:02:44 UTC | `/health` ok, the five pages, a transaction's and an account's page, the HTML and JSON `404`s; the 12 static files byte-identical to the commit; `HEAD` on `/`, `/health` and `/api/accounts` a `200` with no body |
+| Tag | `v1.0.0`, annotated, on the merge commit `36381e8` |
+| Release | [Keel v1.0.0](https://github.com/Atreyeed02/Keel/releases/tag/v1.0.0), published 11:03:19 UTC, the latest release. Its notes are the CHANGELOG's 1.0.0 entry, with the links to the README and ARCHITECTURE pointing at those files as of the tag. As first published, the notes had `…` and `−` garbled in three lines (the entry was read through a Windows text pipe); they were replaced within minutes, and the stored notes now match the entry |
 
 **#43, `fix/head-413-ssl-warning`**, merged 2026-10-23, makes three small fixes.
 
@@ -230,7 +271,9 @@ all four jobs passed, and the pip job read both files, checking pytest,
 pytest-asyncio, httpx and ruff from `requirements-dev.txt` as well as the
 runtime pins, sqlalchemy and uvicorn each on their own. It opened #41 and
 #42 (above). The first scheduled "Demo maintenance" run since the split is
-not checked yet.
+due the night of 2026-10-23 (21:43 UTC; GitHub has started these runs 1.5 to
+5 hours late), and is not checked yet. All 19 scheduled runs before it, for
+2026-10-04 to 2026-10-22, passed.
 
 **#39, `docs/readme-showcase`**, merged 2026-10-22, gives the README a new
 top: a one-line pitch, the live demo's link (with the free tier's wake-up
@@ -889,7 +932,7 @@ the Dockerfile's python, compose's postgres (which CI's tests run on, so the
 digest is written once) and the actions' commit pins. The two images' new
 digests come from the mirror, which copies Docker's official images a day
 earlier. Updates are grouped, Python stays on 3.12 and Postgres on 16, and
-nothing merges without review (ARCHITECTURE §5.13, CONTRIBUTING).
+nothing merges without review (ARCHITECTURE §5.13, DEVELOPMENT.md).
 
 ### CI — two jobs
 
@@ -921,8 +964,8 @@ merges nothing into `main` until they pass.
 
 ### Deploy readiness — merged (#5), live on Render
 
-What a public demo on a container host needs, with the README's
-"Deploying" section as the operator's guide:
+What a public demo on a container host needs, with `docs/DEPLOYING.md`
+as the operator's guide:
 
 - **Configuration a host can supply.** `DATABASE_URL` in any Postgres
   spelling, TLS via `sslmode` or `DATABASE_SSL`, `PORT`. `ENVIRONMENT=production`
@@ -964,7 +1007,7 @@ What a public demo on a container host needs, with the README's
   the `production-demo` environment, after
   `python -m scripts.check_database_host` confirms the host is the live
   endpoint. Key pruning isn't scheduled on the demo: the reset empties the
-  keys. The README's "Scheduled maintenance" section has the setup.
+  keys. DEPLOYING.md's "Scheduled maintenance" section has the setup.
 
 ---
 
@@ -997,8 +1040,8 @@ Ordered so that earlier items unblock or de-risk later ones.
 Keel is live on Render + Neon (§1). What is left:
 
 - keep the repository active, or GitHub pauses the nightly reset and the
-  base-image mirror after 60 days without activity (README, "Scheduled
-  maintenance"). The reset itself
+  base-image mirror after 60 days without activity (DEPLOYING.md,
+  "Scheduled maintenance"). The reset itself
   is set up and verified on the live database (§1);
 - try `sslmode=verify-full` with Neon, which needs a CA bundle both drivers
   can find in `python:3.12-slim`;
@@ -1028,7 +1071,8 @@ an account's (#36), the README showcase (#39), the split of the runtime
 and test requirements (#40), and `HEAD` on every route that answers `GET`,
 the `413` for an over-limit form sent without `Content-Length`, and the
 warning when `DATABASE_SSL` and the URL's `sslmode` disagree
-(#43).
+(#43), the v1.0.0 release (#44), and a shorter README and CONTRIBUTING,
+their reference sections moved into `docs/` (`docs/readme-contributing-polish`).
 
 **Small fix, not started:** an accurate `Allow` header on a `405`.
 Starlette takes it from the first route that matches the path, so a
