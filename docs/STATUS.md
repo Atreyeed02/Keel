@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Thirty-nine PRs are merged into `main`, with regular merge commits, and
+Forty PRs are merged into `main`, with regular merge commits, and
 their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -54,6 +54,7 @@ their branches deleted:
 | [#40](https://github.com/Atreyeed02/Keel/pull/40) | `chore/split-requirements` | `a67cd55` |
 | [#42](https://github.com/Atreyeed02/Keel/pull/42) | `dependabot/pip/dev-tools-…` (Dependabot: ruff) | `961a60a` |
 | [#41](https://github.com/Atreyeed02/Keel/pull/41) | `dependabot/pip/runtime-…` (Dependabot: fastapi) | `14ce483` |
+| [#43](https://github.com/Atreyeed02/Keel/pull/43) | `fix/head-413-ssl-warning` | `e06dc63` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
@@ -97,7 +98,30 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`fix/head-413-ssl-warning`** makes three small fixes.
+**`docs/changelog-v1`** prepares v1.0.0. It adds `CHANGELOG.md`, whose
+1.0.0 entry (2026-10-23) sums up what Keel v1 includes for a reader new to
+the project, by area: ledger and data integrity, event log, API and forms,
+educational UI, security and hardening, deployment and operations, testing
+and CI. The app reports version `1.0.0` in `/docs` and `/openapi.json`
+(it said `0.1.0`), and a new test in `tests/test_deploy_config.py` fails
+unless that matches the newest release in `CHANGELOG.md`. The README's
+facts are brought up to date: the tests run without a database (321, now
+322 with the new test; 161 skipped), "480+" tests, `test_account_detail.py`
+in its test table, `db.ping_failed` and `db.ssl_mode_conflict` among the
+logged events, and `HEAD` on every `GET` route. Its versions (Python 3.12,
+SQLAlchemy 2.1, PostgreSQL 16) were already current. #43's entry below gets
+its merge and live check. After merging and deploying, the merge commit is
+tagged `v1.0.0`, with a GitHub release whose notes are the 1.0.0 entry.
+No migration, no host action. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.17.1) | clean |
+| `pytest` | 483 passed on Postgres 16 (a throwaway container, removed after); 322 passed, 161 skipped without a database |
+| The version test with the app's version set to `0.9.9` | fails |
+| Every page, `main` (`e06dc63`) against the branch, same seeded data | all 15 HTML and JSON responses byte-identical once the posting form's key was masked, except `/openapi.json`'s version (`0.1.0` → `1.0.0`). 48 screenshot pairs: 5 phone shots differed by anti-aliasing and the native drop-down's text; a control run of `main` against itself differed on 6 phone shots in the same way and by the same pixel counts, so it is rendering noise |
+
+**#43, `fix/head-413-ssl-warning`**, merged 2026-10-23, makes three small fixes.
 
 - **`HEAD` on every route that answers `GET`.** FastAPI's `@app.get` routes
   answered `HEAD` with `405` (Render's first request to a new instance was
@@ -130,6 +154,16 @@ no host action. Checked on that branch:
 | 8 deliberate breaks (the `HEAD` middleware not added, added outermost, or keeping the body; the app's own answer to an over-limit body not replaced, or the limit never recorded; no warning at start, a warning for agreeing modes, the URL in the warning) | each fails a test |
 | Behaviour on uvicorn serving `app.main:served` as `app.serve` does, `main` (`14ce483`) against the branch, same seeded data: 72 cases (static files with ranges, conditionals and aborted downloads, forms and multipart, the body limit, `HEAD` on 17 paths, headers) | the only differences are the intended ones: 13 `HEAD` routes from `405` to their `GET`'s status and headers with an empty body (`404` for an unknown transaction, page or API), and the two chunked over-limit forms from `400` JSON to the `413` page. `HEAD` on `/accounts` (`405`, `Allow: POST`), `/openapi.json`, `/docs` and an unknown path, the declared-length `413`s, the chunked API `413` and the bad `Content-Length` `400` are unchanged. Static files differed only in `ETag` and `Last-Modified`, from the two checkouts' file times |
 | Every page, `main` against the branch, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px), all identical; a second run differed only in the native drop-down's text on two phone shots (the new-account form, the posting form's step 2), the known rendering flicker; all 15 HTML and JSON responses byte-identical once the posting form's key was masked |
+
+After merging, as `e06dc63` at 10:19:19 UTC: live a minute later (`HEAD /`
+a `200` from 10:20:16 UTC; keel.css `Last-Modified` 10:19:26 UTC). Live
+check:
+
+| Check | Result |
+|---|---|
+| GET requests, 10:20:54–10:21:06 UTC | `/health` ok, the five pages, a transaction's and an account's page, the HTML and JSON `404`s; the 12 static files byte-identical to the commit |
+| `HEAD` on `/`, `/health`, `/api/accounts`, a transaction from the API, an unknown one | `200`, `200`, `200`, `200`, `404`, each with no body. Through Cloudflare a `HEAD` response carries no `Content-Length` (the app sends one; the edge drops it), and `GET` responses arrive gzipped and chunked |
+| One form `POST` to `/post-transaction`, sent at 10:21:24.007 UTC over HTTP/1.1 with `Transfer-Encoding: chunked`: 1,000,012 bytes, sent at 100 KB/s | `413`, the "Not saved" page (65,536-byte limit), with the security headers; nothing written. The response's first byte came at 9.96 s, once the whole body was sent. Render's log has its `request.completed` at 10:21:33 UTC, about 9.5 s after the send, taking 3.0 ms: a proxy in front of the app held the whole body and passed it on with a declared length, so on the live service such a request takes the declared-length path, not the chunked one #43 fixed. That fix still covers a chunked body that reaches the app, as it does with no proxy or a streaming one |
 
 **#42 and #41**, Dependabot, merged 2026-10-23 in that order, each on
 `a67cd55` with both checks green (461 passed, `pip-audit` clean, the image
@@ -274,7 +308,7 @@ The review also found an older problem, the same on starlette 1.7 and 1.8:
 a form sent without `Content-Length` that goes over the body limit gets
 FastAPI's `400` ("There was an error parsing the body") instead of the
 `413` page. It is still refused unread, and the API answers `413`. It is
-fixed on `fix/head-413-ssl-warning` (above). `cb40f57` was first served by a manual deploy at 16:13 UTC,
+fixed by #43 (above). `cb40f57` was first served by a manual deploy at 16:13 UTC,
 then by Render's Auto-Deploy at 16:18 UTC. Live check: `/health` ok before
 and after; the overview, `/transactions`, the event log, `/learn`, the
 posting form, a transaction's page and an account's page; an unknown
@@ -994,7 +1028,7 @@ an account's (#36), the README showcase (#39), the split of the runtime
 and test requirements (#40), and `HEAD` on every route that answers `GET`,
 the `413` for an over-limit form sent without `Content-Length`, and the
 warning when `DATABASE_SSL` and the URL's `sslmode` disagree
-(`fix/head-413-ssl-warning`).
+(#43).
 
 **Small fix, not started:** an accurate `Allow` header on a `405`.
 Starlette takes it from the first route that matches the path, so a

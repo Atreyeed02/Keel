@@ -102,7 +102,8 @@ if conflict := settings.database_ssl_conflict:
 app = FastAPI(
     title=settings.app_name,
     description="Event-sourced, double-entry ledger service.",
-    version="0.1.0",
+    # The release, as in CHANGELOG.md; shown in /docs and /openapi.json.
+    version="1.0.0",
 )
 # One per process: the counts are in memory (app/ratelimit.py).
 write_limiter = RateLimiter(settings.write_rate_limit, settings.write_rate_window_seconds)

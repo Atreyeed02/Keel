@@ -725,3 +725,12 @@ def test_the_image_check_passes_the_runtime_pins_and_nothing_else():
     assert check.problems(other) == [
         f"fastapi=={runtime['fastapi']} is not installed (found: 0.1.0)"
     ]
+
+
+def test_the_app_reports_the_newest_release_in_the_changelog():
+    """/docs and /openapi.json show the version; a release bumps both together."""
+    from app.main import app
+
+    changelog = (Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text("utf-8")
+    newest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", changelog, re.MULTILINE).group(1)
+    assert app.version == newest
