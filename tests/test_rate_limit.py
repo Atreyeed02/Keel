@@ -174,6 +174,7 @@ async def test_reads_are_not_limited(clock, no_database):
         reads = [(await client.get("/accounts/new")).status_code for _ in range(50)]
         reads += [(await client.get("/openapi.json")).status_code for _ in range(50)]
         reads.append((await client.head("/openapi.json")).status_code)
+        reads += [(await client.head("/accounts/new")).status_code for _ in range(50)]
         still_refused = await _api_write(client)
 
     assert set(reads) == {200}

@@ -128,6 +128,52 @@ async def test_a_chunked_body_is_cut_off_once_it_passes_the_limit(no_database):
     assert response.json()["error"]["code"] == "payload_too_large"
 
 
+def _chunked(body: bytes):
+    """`body` as a stream, so httpx sends it chunked, with no Content-Length."""
+
+    async def chunks():
+        for start in range(0, len(body), 1024):
+            yield body[start : start + 1024]
+
+    return chunks()
+
+
+@pytest.mark.parametrize("path", ["/post-transaction", "/accounts"])
+async def test_a_chunked_form_over_the_limit_gets_the_413_page_not_fastapis_400(
+    no_database, captured, path
+):
+    """
+    FastAPI's form parsing catches the limit's error and answers 400 itself;
+    the middleware answers 413 instead, the same page a declared length gets.
+    """
+    async with _client() as client:
+        response = await client.post(
+            path,
+            content=_chunked(b"x" * (LIMIT + 1)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 413
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.headers["connection"] == "close"
+    assert f"That&#39;s more than Keel accepts in one request ({LIMIT} bytes)." in response.text
+    assert response.headers["x-frame-options"] == "DENY"
+    statuses = [line["status"] for line in captured if line["event"] == "request.completed"]
+    assert statuses == [413]
+
+
+async def test_a_chunked_body_within_the_limit_is_untouched(no_database):
+    async with _client() as client:
+        response = await client.post(
+            "/api/accounts",
+            content=_chunked(b" " * (LIMIT - 2) + b"{}"),
+            headers={"Content-Type": "application/json"},
+        )
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
 async def test_a_body_within_the_limit_is_untouched(no_database):
     """Just under the limit reaches the route, which rejects it for its own reason."""
     body = b" " * (LIMIT - 2) + b"{}"

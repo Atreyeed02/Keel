@@ -53,11 +53,13 @@ from app.domain.reads import (
 )
 from app.event_log import REVERSAL_EXAMPLE, account_ids, describe
 from app.glossary import GLOSSARY
+from app.head import HeadAsGetMiddleware
 from app.observability import (
     configure_logging,
     log_account_created,
     log_idempotency_conflict,
     log_ledger_full,
+    log_ssl_mode_conflict,
     log_transaction,
     log_transaction_rejected,
     request_context_middleware,
@@ -92,6 +94,10 @@ from app.transactions_view import (
 )
 
 configure_logging(settings.log_level)
+# Once per start: the stricter mode is used, but the other setting should not
+# lose without a word.
+if conflict := settings.database_ssl_conflict:
+    log_ssl_mode_conflict(*conflict, used=settings.database.ssl)
 
 app = FastAPI(
     title=settings.app_name,
@@ -117,7 +123,9 @@ def _refusal_page(scope: Scope, refused: str, numbers: dict[str, float]) -> byte
 # limit sit inside the request log, so a 429 or a 413 is logged like any other
 # response; the rate limit comes first, so a client over it is refused before
 # its body is looked at. The security headers sit outside everything, so every
-# response gets them, a 413 or a 429 included.
+# response gets them, a 413 or a 429 included. HEAD becomes GET innermost, so
+# everything outside it still sees the HEAD that was sent.
+app.add_middleware(HeadAsGetMiddleware)
 app.add_middleware(
     BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes, page=_refusal_page
 )

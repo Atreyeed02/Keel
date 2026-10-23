@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-22.** A snapshot of what is actually built, what is
+**As of 2026-10-23.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Thirty-six PRs are merged into `main`, with regular merge commits, and
+Thirty-nine PRs are merged into `main`, with regular merge commits, and
 their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -51,6 +51,9 @@ their branches deleted:
 | [#37](https://github.com/Atreyeed02/Keel/pull/37) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 4 updates) | `cb40f57` |
 | [#38](https://github.com/Atreyeed02/Keel/pull/38) | `chore/mirror-on-sunday` | `4d6cfaf` |
 | [#39](https://github.com/Atreyeed02/Keel/pull/39) | `docs/readme-showcase` | `06bad85` |
+| [#40](https://github.com/Atreyeed02/Keel/pull/40) | `chore/split-requirements` | `a67cd55` |
+| [#42](https://github.com/Atreyeed02/Keel/pull/42) | `dependabot/pip/dev-tools-…` (Dependabot: ruff) | `961a60a` |
+| [#41](https://github.com/Atreyeed02/Keel/pull/41) | `dependabot/pip/runtime-…` (Dependabot: fastapi) | `14ce483` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
@@ -94,7 +97,62 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`chore/split-requirements`** splits the requirements in two.
+**`fix/head-413-ssl-warning`** makes three small fixes.
+
+- **`HEAD` on every route that answers `GET`.** FastAPI's `@app.get` routes
+  answered `HEAD` with `405` (Render's first request to a new instance was
+  `HEAD /`). A new innermost middleware, `app/head.py`, runs a `HEAD` as
+  its `GET` and sends that status and those headers, `Content-Length`
+  included, with no body. The log still shows `HEAD`, the rate limit still
+  counts it as a read, `/static/` keeps `StaticFiles`' own `HEAD`, and the
+  OpenAPI schema gains no `head` operations (ARCHITECTURE §5.22).
+- **A form sent without `Content-Length` over the body limit gets the
+  `413` page**, as one with `Content-Length` does, not FastAPI's `400`
+  JSON. FastAPI's form parsing caught the body limit's error and answered
+  `400` itself; `BodySizeLimitMiddleware` now records that the limit was
+  passed, drops whatever the app answers, and sends its `413` (§5.18). Both
+  form routes, `/post-transaction` and `/accounts`, had the problem.
+- **A startup warning when `DATABASE_SSL` and the URL's `sslmode`
+  disagree.** The stricter one is still used; `app/main.py` now logs
+  `db.ssl_mode_conflict` once at start with both modes and the one used,
+  never the URL.
+
+New tests: `tests/test_head.py`, and in `test_hardening.py`,
+`test_deploy_config.py` (a fresh process importing the app, with and
+without a conflict) and `test_rate_limit.py`. README and ARCHITECTURE
+§5.1, §5.18, §5.22 and the test tables describe the changes. No migration,
+no host action. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.17.1) | clean |
+| `pytest` | 482 passed on Postgres 16 (a throwaway container, removed after); 321 passed, 161 skipped without a database |
+| 8 deliberate breaks (the `HEAD` middleware not added, added outermost, or keeping the body; the app's own answer to an over-limit body not replaced, or the limit never recorded; no warning at start, a warning for agreeing modes, the URL in the warning) | each fails a test |
+| Behaviour on uvicorn serving `app.main:served` as `app.serve` does, `main` (`14ce483`) against the branch, same seeded data: 72 cases (static files with ranges, conditionals and aborted downloads, forms and multipart, the body limit, `HEAD` on 17 paths, headers) | the only differences are the intended ones: 13 `HEAD` routes from `405` to their `GET`'s status and headers with an empty body (`404` for an unknown transaction, page or API), and the two chunked over-limit forms from `400` JSON to the `413` page. `HEAD` on `/accounts` (`405`, `Allow: POST`), `/openapi.json`, `/docs` and an unknown path, the declared-length `413`s, the chunked API `413` and the bad `Content-Length` `400` are unchanged. Static files differed only in `ETag` and `Last-Modified`, from the two checkouts' file times |
+| Every page, `main` against the branch, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px), all identical; a second run differed only in the native drop-down's text on two phone shots (the new-account form, the posting form's step 2), the known rendering flicker; all 15 HTML and JSON responses byte-identical once the posting form's key was masked |
+
+**#42 and #41**, Dependabot, merged 2026-10-23 in that order, each on
+`a67cd55` with both checks green (461 passed, `pip-audit` clean, the image
+holding all 13 runtime pins and none of the dev tools).
+
+- **#42, ruff 0.17.0 → 0.17.1** (`dev-tools`, `requirements-dev.txt`),
+  merged as `961a60a`. Keel selects E, F, I and UP with preview off; the
+  108 enabled rules are the same in both versions, `ruff check` is clean
+  on both, and `ruff format --diff` is byte-identical. The release's
+  E271–E274 change is preview-only, and its other fixes are in rules Keel
+  doesn't select. Not in the image.
+- **#41, fastapi 0.143.1 → 0.143.2** (`runtime`, `requirements.txt`),
+  merged as `14ce483`. The two wheels differ only in the version and in
+  `_FrontendStaticFiles._fallback_file_exists`, which now checks the file
+  in a thread; that class serves `app.frontend(...)`, which Keel doesn't
+  use (it mounts Starlette's `StaticFiles`). Dependencies unchanged. Live
+  seven seconds after the merge (keel.css `Last-Modified` 04:59:34 UTC,
+  first served at 05:00:26). Live check, GET requests only, at 05:01 UTC:
+  `/health` ok, the five pages, a transaction's and an account's page,
+  the HTML and JSON `404`s, and the 12 static files byte-identical to the
+  commit.
+
+**#40, `chore/split-requirements`**, merged 2026-10-23, splits the requirements in two.
 `requirements.txt` is what the image runs: the twelve runtime packages and
 pyyaml, which uvicorn[standard] installs anyway and which is pinned there so
 the image gets the version CI tests and audits. `requirements-dev.txt` adds
@@ -126,6 +184,19 @@ Checked on that branch:
 | Image built from `main` (`06bad85`) against the branch's, `pip list` | 10 packages gone, nothing added, every other version the same: pytest, pytest-asyncio, httpx, ruff and what only they need (certifi, httpcore, iniconfig, packaging, pluggy, Pygments). 387 MB → 330 MB on disk. `pip check` clean |
 | docker-smoke's new step, run through `docker compose` on a project of its own | the branch's image passes ("all 13 runtime pins installed, none of the 4 dev tools"); the same image with `requirements-dev.txt` installed on top fails on all four tools; `main`'s image fails the same way |
 | Every page, `main` (`06bad85`) against the branch, both served from the runtime-only virtualenv, same seeded data | 48 pairs (12 pages, light/dark × 1280/390 px), all identical; all 33 HTML and JSON responses byte-identical once each render's own key was masked |
+
+After merging, as `a67cd55` at 04:51:12 UTC: live about a minute later
+(keel.css `Last-Modified` 04:51:24 UTC). Live check, GET requests only:
+`/health` ok, the five pages, a transaction's and an account's page, the
+HTML and JSON `404`s, and the 12 static files byte-identical to the commit.
+"Cloudflare ranges", run by hand on `main`, passed with 0 annotations,
+installing `requirements.txt` only ("matches Cloudflare's 22 published
+ranges"). The merge changed `dependabot.yml`, so Dependabot ran at once:
+all four jobs passed, and the pip job read both files, checking pytest,
+pytest-asyncio, httpx and ruff from `requirements-dev.txt` as well as the
+runtime pins, sqlalchemy and uvicorn each on their own. It opened #41 and
+#42 (above). The first scheduled "Demo maintenance" run since the split is
+not checked yet.
 
 **#39, `docs/readme-showcase`**, merged 2026-10-22, gives the README a new
 top: a one-line pitch, the live demo's link (with the free tier's wake-up
@@ -203,7 +274,7 @@ The review also found an older problem, the same on starlette 1.7 and 1.8:
 a form sent without `Content-Length` that goes over the body limit gets
 FastAPI's `400` ("There was an error parsing the body") instead of the
 `413` page. It is still refused unread, and the API answers `413`. It is
-listed in §4. `cb40f57` was first served by a manual deploy at 16:13 UTC,
+fixed on `fix/head-413-ssl-warning` (above). `cb40f57` was first served by a manual deploy at 16:13 UTC,
 then by Render's Auto-Deploy at 16:18 UTC. Live check: `/health` ok before
 and after; the overview, `/transactions`, the event log, `/learn`, the
 posting form, a transaction's page and an account's page; an unknown
@@ -919,15 +990,16 @@ constraint removed, the JSON API, the `account.created` backfill, the
 account-currency rule in the database, idempotency key retention, UTC date
 filtering, the trigram search index, the FastAPI/Starlette upgrade, the test
 fixtures' guard against migrated databases, a transaction's 404 page, like
-an account's (#36), the README showcase (#39), and the split of the runtime
-and test requirements (`chore/split-requirements`).
+an account's (#36), the README showcase (#39), the split of the runtime
+and test requirements (#40), and `HEAD` on every route that answers `GET`,
+the `413` for an over-limit form sent without `Content-Length`, and the
+warning when `DATABASE_SSL` and the URL's `sslmode` disagree
+(`fix/head-413-ssl-warning`).
 
-**Small fix, not started:** a form sent without `Content-Length` that goes
-over the body limit should get the `413` page, as one with `Content-Length`
-does, not FastAPI's `400`. The body limit's exception is raised inside
-FastAPI's form parsing, which catches it and answers `400` itself. The
-request is still refused unread, and the API already answers `413` (found
-reviewing #37, §1).
+**Small fix, not started:** an accurate `Allow` header on a `405`.
+Starlette takes it from the first route that matches the path, so a
+`DELETE /api/accounts` gets `Allow: POST`, though `GET /api/accounts`
+exists too.
 
 **Dependency pinning, not started:** a lock or constraints file. Only the
 packages named in `requirements.txt` are pinned; their own dependencies
