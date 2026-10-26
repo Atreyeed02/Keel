@@ -7,7 +7,7 @@
 # weekly when the mirror's tag moves (.github/dependabot.yml);
 # docker-compose.yml pins postgres the same way. Render builds this file,
 # so it pulls from here too.
-FROM ghcr.io/atreyeed02/keel-base/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM ghcr.io/atreyeed02/keel-base/python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 
 # No .pyc files (the code is read-only to the app's user), and unbuffered
 # output, so JSON log lines reach the host's log collector as they happen.
