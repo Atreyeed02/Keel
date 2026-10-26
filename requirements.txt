@@ -1,10 +1,10 @@
 # What the image runs, and nothing else. The test and lint tools are in
 # requirements-dev.txt, which the Dockerfile never installs.
 
-fastapi==0.143.2
+fastapi==0.146.0
 # Transitive via fastapi, pinned so the version that closes its advisories
 # is what gets installed, not whatever fastapi's range happens to resolve to.
-starlette==1.8.0
+starlette==1.9.0
 uvicorn[standard]==0.54.0
 sqlalchemy[asyncio]==2.1.4
 alembic==1.20.0
