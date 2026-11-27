@@ -13,7 +13,7 @@ services:
     # only place the image is pinned; see the Dockerfile for why it comes
     # from the ghcr.io mirror and is pinned. Dependabot proposes digest bumps
     # (.github/dependabot.yml).
-    image: ghcr.io/atreyeed02/keel-base/postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
+    image: ghcr.io/atreyeed02/keel-base/postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
     environment:
       POSTGRES_USER: ledger
       POSTGRES_PASSWORD: ledger
