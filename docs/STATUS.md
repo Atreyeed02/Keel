@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Forty-eight PRs are merged into `main`, with regular merge commits, and
+Fifty-one PRs are merged into `main`, with regular merge commits, and
 their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -63,6 +63,9 @@ their branches deleted:
 | [#55](https://github.com/Atreyeed02/Keel/pull/55) | `dependabot/pip/dev-tools-…` (Dependabot: pytest, pytest-asyncio, ruff) | `ef13c93` |
 | [#47](https://github.com/Atreyeed02/Keel/pull/47) | `dependabot/docker_compose/…/postgres-16-alpine` (Dependabot: compose's postgres digest) | `2ec009d` |
 | [#46](https://github.com/Atreyeed02/Keel/pull/46) | `dependabot/docker/…/python-…` (Dependabot: the Dockerfile's python digest) | `d9f7f72` |
+| [#60](https://github.com/Atreyeed02/Keel/pull/60) | `dependabot/pip/dev-tools-…` (Dependabot: pytest-asyncio, ruff) | `84e9909` |
+| [#58](https://github.com/Atreyeed02/Keel/pull/58) | `dependabot/docker_compose/…/postgres-16-alpine` (Dependabot: compose's postgres digest) | `e5746f3` |
+| [#59](https://github.com/Atreyeed02/Keel/pull/59) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 3 updates) | `b363933` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
@@ -145,6 +148,37 @@ tests) pins the workflow. No migration, no Render action, nothing under
 | `shellcheck` on every `run:` block | clean |
 | The two PATCH bodies, from the workflow's own `jq` filters on a container shaped like Azure's | image and command changed, `args` dropped, env vars, secret reference and resources unchanged; only the app's sets target port 8000 |
 | Every page, `main` against the branch | not compared: nothing the app serves changed (`app/`, `alembic/`, `scripts/`, `requirements.txt` and the `Dockerfile` are identical to `main`) |
+
+**#60, #58 and #59**, Dependabot, merged 2026-11-27 in that order, each
+on `d9f7f72` with both checks green (483 passed, `pip-audit` clean), and CI
+green on each merge commit.
+
+- **#60, the `dev-tools` group**, merged as `84e9909` at 19:00:30 UTC:
+  pytest-asyncio 1.4.1.post1 → 1.5.0, ruff 0.17.4 → 0.17.5. ruff 0.17.5
+  enables the same 108 rules with Keel's configuration, `ruff check` is
+  clean, and `ruff format --diff` is byte-identical to 0.17.4's.
+  pytest-asyncio's new `fixture-scope` value doesn't apply: Keel sets
+  `asyncio_default_fixture_loop_scope = "function"`. Not in the image.
+- **#58, compose's postgres digest** `f377d590…` → `f2f98726…`, merged as
+  `e5746f3` at 19:02:36 UTC. Dependabot opened it after the mirror's
+  2026-11-22 run, which moved the tag to that digest, so it needed no
+  recreate. The digest is Docker's own `postgres:16-alpine`, the same
+  PostgreSQL 16.16 on Alpine 3.24.4, rebuilt.
+- **#59, the `runtime` group**, merged as `b363933` at 19:04:38 UTC:
+  fastapi 0.162.2 → 0.163.1, psycopg 3.3.8 → 3.3.9, pydantic-settings
+  2.16.2 → 2.16.3. The review read the changelogs and diffed fastapi's
+  wheels. 0.163's `Depends(max_concurrency=...)` and its shielded cleanup of
+  `yield` dependencies don't reach Keel, which declares no `Depends`.
+  psycopg only drives Alembic's migrations, which are plain DDL.
+  pydantic-settings' security fix is in the secrets-directory source, which
+  Keel doesn't use. Two compose stacks, `main`'s and #59's, built from their
+  own images and seeded alike, gave identical answers to 98 requests once
+  ids, times and the form's key were masked: every page, the 404s and 405s,
+  `HEAD`, `/health`, the API, and refused and accepted writes. keel.css's
+  `Last-Modified` moved to 19:04:46 UTC, 8 s after the merge. Live check,
+  GET and `HEAD` requests only, at 19:06 UTC: `/health` ok, `/openapi.json`
+  at `1.0.0`, `HEAD /` a `200` with no body, the five pages, a transaction's
+  and an account's page, and the HTML and JSON `404`s.
 
 **#57, #56, #50, #55, #47 and #46**, Dependabot, merged 2026-11-19 in that
 order, each reviewed first: CI green (483 passed, `pip-audit` clean), the
@@ -1157,7 +1191,8 @@ the `413` for an over-limit form sent without `Content-Length`, and the
 warning when `DATABASE_SSL` and the URL's `sslmode` disagree
 (#43), the v1.0.0 release (#44), and a shorter README and CONTRIBUTING,
 their reference sections moved into `docs/` (#45), Dependabot's round of
-2026-11-19 (#46 to #57), and the Azure deploy workflow
+2026-11-19 (#46 to #57) and of 2026-11-27 (#58 to #60), and the Azure
+deploy workflow
 (`chore/deploy-azure`).
 
 **Small fix, not started:** an accurate `Allow` header on a `405`.
