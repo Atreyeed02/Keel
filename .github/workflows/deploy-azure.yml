@@ -1,0 +1,295 @@
+name: Deploy to Azure
+
+# Builds the image from main, pushes it to ghcr.io/atreyeed02/keel, runs the
+# migrations with the Container Apps Job keel-migrate, then points the
+# Container App keel at the same image and waits until /health reports a
+# live database. docs/DEPLOYING.md's "Azure Container Apps" section has the
+# setup, how to run it by hand and how to roll back.
+#
+# Render keeps serving the live site from main until the cutover; this
+# deploys a second copy beside it, against the same Neon database.
+#
+# How the job reaches Azure:
+# - OIDC only. azure/login trades this run's GitHub token for an Entra token,
+#   so there is no password or certificate to leak. The Entra app
+#   keel-github-deploy trusts exactly the subject
+#   repo:Atreyeed02/Keel:environment:production-azure, so only a job in that
+#   environment can log in, and the environment admits main only.
+# - That app is a Contributor on the resource group rg-keel and nothing else.
+# - The database URL never passes through GitHub. It is the Container Apps
+#   secret database-url, set by hand, which the app and the job read as
+#   DATABASE_URL=secretref:database-url.
+# tests/test_deploy_azure.py fails CI if any of that changes.
+on:
+  push:
+    branches: ["main"]
+    # What the image is built from: everything the Dockerfile COPYs, the
+    # Dockerfile itself, and .dockerignore, which decides what the build
+    # sees. A merge that changes only docs, tests or other workflows builds
+    # nothing new, so it deploys nothing. A change to this file alone is
+    # deployed by running it by hand.
+    paths:
+      - "app/**"
+      - "alembic/**"
+      - "alembic.ini"
+      - "scripts/**"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".dockerignore"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Push the image to ghcr.io with this run's GITHUB_TOKEN.
+  packages: write
+  # Ask GitHub for the OIDC token that azure/login trades for an Entra token.
+  id-token: write
+
+# One deploy at a time, never cancelled part-way: stopping between the
+# migration and the app update would leave the old code serving on the new
+# schema. Migrations allow that (docs/DEVELOPMENT.md, rule 1), but nothing
+# should rely on it for long. A run that is still waiting is replaced by a
+# newer one, which deploys a newer main anyway.
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # A fork that turns Actions on has neither the environment nor Azure's
+    # trust, so don't fail there on every push.
+    if: github.repository == 'Atreyeed02/Keel'
+    # Pinned, so the runner image changes only when this file does. The
+    # runner image also provides the Azure CLI, docker and jq.
+    runs-on: ubuntu-24.04
+    # The build takes a few minutes, the migration up to 10, the app's new
+    # revision and /health up to 8.
+    timeout-minutes: 30
+    environment:
+      name: production-azure
+      url: ${{ steps.health.outputs.url }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      IMAGE: ghcr.io/atreyeed02/keel
+      RESOURCE_GROUP: rg-keel
+      APP: keel
+      JOB: keel-migrate
+      # The Container Apps REST API version for the two PATCHes below, a GA
+      # version that has Jobs.
+      API_VERSION: "2024-03-01"
+    steps:
+      # Actions pinned to a commit: this job can change the Azure resources.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Plain docker rather than more actions: fewer third-party steps in a
+      # job that holds Azure credentials. The token only reaches docker's
+      # stdin.
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+
+      # Tagged with the commit, so any deploy can be found again and rolled
+      # back to, and with `main`, the newest build. What gets deployed is the
+      # digest the registry reports for the commit's tag: a tag can be moved,
+      # a digest can't. --provenance=false keeps the pushed image a single
+      # manifest, with no attestation entries beside it.
+      - name: Build and push the image
+        id: image
+        run: |
+          set -euo pipefail
+          docker build --provenance=false \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE}:${GITHUB_SHA}" --tag "${IMAGE}:main" .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:main"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${GITHUB_SHA}" --format '{{.Manifest.Digest}}')"
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the registry gave no digest for ${IMAGE}:${GITHUB_SHA} (got '${digest}')"
+            exit 1
+          fi
+          docker logout ghcr.io
+          echo "${IMAGE}:${GITHUB_SHA} is ${IMAGE}@${digest}"
+          echo "ref=${IMAGE}@${digest}" >> "$GITHUB_OUTPUT"
+
+      # The Container App and the Job pull with no registry login, so the
+      # package must be public. GitHub makes a new package private, and only
+      # the package's settings page can change that. So the first run stops
+      # here, before anything in Azure changes, until it has been made public.
+      # An empty DOCKER_CONFIG is a client with no login at all.
+      - name: Check the image can be pulled without a login
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if ! DOCKER_CONFIG="$(mktemp -d)" docker buildx imagetools inspect "$REF" > /dev/null; then
+            echo "::error::${IMAGE} can't be pulled without a login. Make the package public (docs/DEPLOYING.md, \"Azure Container Apps\"), then re-run this job."
+            exit 1
+          fi
+          echo "pullable without a login: ${REF}"
+
+      - name: Log in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Image, command and arguments change through the REST API's merge
+      # PATCH, not `az containerapp job update`: az refuses a --command or
+      # --args value that starts with a dash ("-m"). The PATCH sends the job's
+      # one container as Azure has it, with those three fields changed, so
+      # its env vars, secret reference and resources stay as they are.
+      # `python -m alembic upgrade head` is the first half of the image's own
+      # start command (app/serve.py), run on its own.
+      - name: Point keel-migrate at the image
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          id="$(az containerapp job show -n "$JOB" -g "$RESOURCE_GROUP" --query id -o tsv)"
+          body="$(az containerapp job show -n "$JOB" -g "$RESOURCE_GROUP" --query 'properties.template.containers[0]' -o json \
+            | jq -c --arg image "$REF" '{properties: {template: {containers: [
+                . + {image: $image, command: ["python", "-m", "alembic", "upgrade", "head"]} | del(.args)
+              ]}}}')"
+          az rest --method patch --url "${id}?api-version=${API_VERSION}" --body "$body" --output none
+          # The PATCH returns before Azure has applied it.
+          deadline=$((SECONDS + 300))
+          while :; do
+            now="$(az containerapp job show -n "$JOB" -g "$RESOURCE_GROUP" -o json \
+              --query "{state: properties.provisioningState, image: properties.template.containers[0].image}")"
+            state="$(jq -r .state <<< "$now")"
+            image="$(jq -r .image <<< "$now")"
+            if [ "$state" = "Succeeded" ] && [ "$image" = "$REF" ]; then
+              break
+            fi
+            if [ "$state" = "Failed" ] || [ "$state" = "Canceled" ]; then
+              echo "::error::updating ${JOB} ended ${state}"
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::${JOB} wasn't on the new image within 5 minutes (state ${state})"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "${JOB} runs ${REF}"
+
+      # The app is only updated once this has succeeded. Migrations work with
+      # the previous code (docs/DEVELOPMENT.md, rule 1), so the old app keeps
+      # serving meanwhile. The Job's replica timeout is also 600 seconds.
+      - name: Run the migrations
+        run: |
+          set -euo pipefail
+          execution="$(az containerapp job start -n "$JOB" -g "$RESOURCE_GROUP" --query name -o tsv)"
+          echo "started ${execution}"
+          deadline=$((SECONDS + 600))
+          while :; do
+            status="$(az containerapp job execution show -n "$JOB" -g "$RESOURCE_GROUP" \
+              --job-execution-name "$execution" --query properties.status -o tsv)"
+            case "$status" in
+              Succeeded)
+                echo "${execution}: Succeeded"
+                break
+                ;;
+              Failed | Stopped | Degraded)
+                echo "::error::the migration ${execution} ended ${status}; the app was not updated"
+                exit 1
+                ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::the migration ${execution} didn't finish within 10 minutes (${status}); the app was not updated"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      # The same PATCH as the Job's, plus the ingress target port: the
+      # placeholder image listened on 80, Keel listens on $PORT, default 8000.
+      # One PATCH, so one new revision has the image, the command and the port.
+      # `--no-migrate`: the Job above has migrated, and uvicorn starts at once.
+      - name: Point keel at the image
+        id: app
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          id="$(az containerapp show -n "$APP" -g "$RESOURCE_GROUP" --query id -o tsv)"
+          body="$(az containerapp show -n "$APP" -g "$RESOURCE_GROUP" --query 'properties.template.containers[0]' -o json \
+            | jq -c --arg image "$REF" '{properties: {
+                configuration: {ingress: {targetPort: 8000}},
+                template: {containers: [
+                  . + {image: $image, command: ["python", "-m", "app.serve", "--no-migrate"]} | del(.args)
+                ]}
+              }}')"
+          az rest --method patch --url "${id}?api-version=${API_VERSION}" --body "$body" --output none
+          # Wait until the newest revision runs this image. A run that
+          # changes nothing (the same image again) makes no new revision, and
+          # passes at once.
+          deadline=$((SECONDS + 300))
+          while :; do
+            now="$(az containerapp show -n "$APP" -g "$RESOURCE_GROUP" -o json \
+              --query "{state: properties.provisioningState, revision: properties.latestRevisionName}")"
+            state="$(jq -r .state <<< "$now")"
+            revision="$(jq -r .revision <<< "$now")"
+            if [ "$state" = "Failed" ] || [ "$state" = "Canceled" ]; then
+              echo "::error::updating ${APP} ended ${state}"
+              exit 1
+            fi
+            if [ "$state" = "Succeeded" ]; then
+              image="$(az containerapp revision show -n "$APP" -g "$RESOURCE_GROUP" --revision "$revision" \
+                --query 'properties.template.containers[0].image' -o tsv)"
+              if [ "$image" = "$REF" ]; then
+                break
+              fi
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::${APP} had no revision on the new image within 5 minutes (state ${state})"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "${APP}'s revision ${revision} runs ${REF}"
+          echo "revision=${revision}" >> "$GITHUB_OUTPUT"
+
+      # /health answers 200 even when the database is down, so only the exact
+      # body counts. The previous revision answers it too, so the new
+      # revision must also be the latest ready one: with one active revision,
+      # that's the one serving. With no replica running (min 0), the first
+      # request starts one. The address comes from Azure, not from this file.
+      - name: Wait for /health to report a live database
+        id: health
+        env:
+          REVISION: ${{ steps.app.outputs.revision }}
+        run: |
+          set -uo pipefail
+          fqdn="$(az containerapp show -n "$APP" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          if [ -z "$fqdn" ]; then
+            echo "::error::${APP} has no ingress address"
+            exit 1
+          fi
+          url="https://${fqdn}"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          expected='{"status":"ok","db":"up"}'
+          deadline=$((SECONDS + 180))
+          while :; do
+            body="$(curl -s --max-time 30 "${url}/health" || true)"
+            if [ "$body" = "$expected" ]; then
+              ready="$(az containerapp show -n "$APP" -g "$RESOURCE_GROUP" --query properties.latestReadyRevisionName -o tsv)"
+              if [ "$ready" = "$REVISION" ]; then
+                echo "${url}/health: ${body} from ${REVISION}"
+                exit 0
+              fi
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::${url}/health didn't answer ${expected} from ${REVISION} within 3 minutes; last answer: ${body:0:200}"
+              exit 1
+            fi
+            sleep 5
+          done

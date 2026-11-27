@@ -92,7 +92,7 @@ updates:
       - dependency-name: "*postgres"
         update-types: [version-update:semver-major]
 
-  # The actions in all three workflows, kept pinned by commit with the
+  # The actions in every workflow, kept pinned by commit with the
   # version in the trailing comment.
   - package-ecosystem: github-actions
     directory: /

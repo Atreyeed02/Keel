@@ -51,7 +51,7 @@ pytest -v
 ruff check .
 ```
 
-483 tests. `requirements-dev.txt` installs everything in `requirements.txt`
+493 tests. `requirements-dev.txt` installs everything in `requirements.txt`
 (what the image runs) plus the test and lint tools, which the image never
 contains. Point `TEST_DATABASE_URL` at a scratch database, not the one the
 app runs on: the fixtures drop and recreate every table around each test,
@@ -62,7 +62,7 @@ stamped "at head" with nothing in it, and `alembic upgrade head` would then
 do nothing.
 
 Without `TEST_DATABASE_URL`, the 161 database-backed tests are **skipped,
-not failed**. A green run of the remaining 322 is partial coverage:
+not failed**. A green run of the remaining 332 is partial coverage:
 
 ```
 SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL page integration tests
@@ -94,6 +94,7 @@ SKIPPED [1] tests/test_ledger_pages.py: set TEST_DATABASE_URL to run PostgreSQL 
 | `test_capacity.py` | the account and transaction caps through both interfaces, replays at the cap, uncapped scripts |
 | `test_demo.py` | the demo notice on every page, and the reset script's refusals, restore and rollback |
 | `test_demo_maintenance.py` | the database host check, and the scheduled reset's workflow: its triggers, permissions, secret handling, step order, pinned actions and Python version |
+| `test_deploy_azure.py` | the Azure deploy's workflow: a push path for everything the image is built from, its permissions and environment, where its credentials go, pinned actions, the pushed digest deployed only once it can be pulled without a login, the migration finishing before the app moves, and only the exact healthy body from the new revision passing |
 
 CI (`.github/workflows/ci.yml`) runs ruff and the full suite against
 `docker-compose.yml`'s PostgreSQL. A separate `docker-smoke` job builds the
@@ -102,6 +103,10 @@ creation → posting → overview over HTTP. Both pull their base images from
 the repository's mirror on ghcr.io, which the "Mirror base images" workflow
 (`.github/workflows/mirror-base-images.yml`) fills from Docker's official
 images every Sunday, a day before Dependabot looks for new digests.
+On `main`, the "Deploy to Azure" workflow
+(`.github/workflows/deploy-azure.yml`) builds the image and deploys it to
+Azure Container Apps whenever what it's built from changes
+([DEPLOYING.md](DEPLOYING.md#azure-container-apps)).
 
 ## Project layout
 
@@ -135,7 +140,7 @@ alembic/versions/         10 migrations
 scripts/                  seed_demo_data.py, reset_demo_data.py, rebuild_read_model.py,
                           backfill_account_events.py, prune_idempotency_keys.py,
                           check_cloudflare_ranges.py, check_database_host.py
-tests/                    483 tests; see above
+tests/                    493 tests; see above
 requirements.txt          what the image runs
 requirements-dev.txt      that, plus pytest, pytest-asyncio, httpx and ruff
 docs/                     HOW-IT-WORKS.md (the design in brief), ARCHITECTURE.md (full
@@ -178,7 +183,9 @@ every merge.
    to what an existing variable must contain goes at the top of the pull
    request description as **"Render action needed: set X before
    merging"**. Otherwise the deploy that follows the merge refuses to
-   start.
+   start. While the Azure copy runs, it needs the same setting on its
+   Container App and Job
+   ([DEPLOYING.md](DEPLOYING.md#azure-container-apps)).
 5. **Stay within 512 MB of memory.** Say so in the pull request when a new
    dependency or feature noticeably increases memory use or startup time.
 6. **Remove temporary diagnostics completely.** When a diagnostic has served
@@ -218,6 +225,15 @@ docker buildx imagetools inspect "docker.io/library/python@$d" --format "{{.Mani
 For compose's postgres, use `library/postgres`. If the image is Docker's,
 it prints the same digest. If it isn't, the command fails with `not found`:
 don't approve, and find out how the mirror came to hold it.
+
+**Recreate a digest pull request older than the mirror's latest run** before
+checking its digest. It names the digest the mirror's tag held when it was
+opened, and a later run may have moved the tag since; #46 and #47 had sat
+for weeks with stale digests. Compare its opening time with the latest run
+under **Actions → Mirror base images**. If the run is newer, comment
+`@dependabot recreate`, wait for Dependabot's new commit, and check the
+digest that commit proposes. Recreating resolves everything again, so
+compare the new diff with what you reviewed.
 
 Pushing a commit to a Dependabot branch stops Dependabot from rebasing it,
 so make fixes in a separate pull request and let Dependabot rebase its own.
