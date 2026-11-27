@@ -1,7 +1,7 @@
 # What the image runs, and nothing else. The test and lint tools are in
 # requirements-dev.txt, which the Dockerfile never installs.
 
-fastapi==0.163.1
+fastapi==0.165.0
 # Transitive via fastapi, pinned so the version that closes its advisories
 # is what gets installed, not whatever fastapi's range happens to resolve to.
 starlette==1.10.0
@@ -10,11 +10,11 @@ sqlalchemy[asyncio]==2.1.8
 alembic==1.20.1
 asyncpg==0.32.0
 psycopg[binary]==3.3.9
-pydantic==2.14.3
+pydantic==2.14.4
 pydantic-settings==2.16.3
 python-dotenv==1.2.4
 jinja2==3.1.6
-python-multipart==0.0.33
+python-multipart==0.0.34
 # Transitive via uvicorn[standard], so it is in the image either way; pinned
 # here so the image gets the version CI tests and pip-audit checks. The tests
 # also read the workflows with it.
