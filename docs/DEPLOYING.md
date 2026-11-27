@@ -251,6 +251,163 @@ locking the five ledger tables. Until it commits:
 branch `main`, or `gh workflow run demo-maintenance.yml --ref main` and then
 `gh run watch`. It resets the live demo, exactly as the nightly run does.
 
+## Azure Container Apps
+
+A second copy of Keel runs on Azure Container Apps, ready to take over from
+Render. Until that cutover, **Render stays the live site**. Both run from
+`main`, against the same Neon database. The "Deploy to Azure" workflow
+(`.github/workflows/deploy-azure.yml`) deploys the Azure copy;
+`tests/test_deploy_azure.py` fails CI if its triggers, permissions,
+credentials, step order or health check change.
+
+### What's there
+
+Set up by hand, once:
+
+| Resource | Settings |
+|---|---|
+| Resource group `rg-keel` | Central India (`centralindia`). The subscription's policy allows only a few regions, and Southeast Asia isn't one of them. |
+| Environment `cae-keel` | Consumption only (`--environment-mode ConsumptionOnly`), logs destination `none`. Not an Express environment: Express environments can't run Jobs. |
+| Container App `keel` | External ingress: HTTPS, with HTTP redirected. Target port 8000, Keel's default `PORT`. 0.25 CPU, 0.5 GiB. Single revision mode. Min 0 replicas, so the first request after it has been idle starts one, as on Render's free tier. Max 1 replica: Keel must run as a single instance (above). Command `python -m app.serve --no-migrate`. |
+| Job `keel-migrate` | Manual trigger, replica timeout 600 s, no retries, the same image and resources. Command `python -m alembic upgrade head`. |
+| On both | Secret `database-url`, and env vars `ENVIRONMENT=demo`, `DATABASE_SSL=require` and `DATABASE_URL=secretref:database-url`. `FORWARDED_ALLOW_IPS` isn't set yet (open items, below). |
+| Entra app `keel-github-deploy` | No secret or certificate, only one federated credential, for the subject `repo:Atreyeed02/Keel:environment:production-azure`. Contributor on `rg-keel` and nowhere else. |
+| GitHub environment `production-azure` | Deployment branches: `main` only. No required reviewers and no wait timer. Secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`: identifiers, not passwords, kept as secrets so they stay out of the logs. |
+| Package `ghcr.io/atreyeed02/keel` | Public, like `keel-base`, so the app and the job pull with no registry login. |
+
+**The database URL** is the same one Render uses: Neon's direct endpoint,
+with `sslmode=require` and without `channel_binding=require`. It is stored
+only as the Container Apps secret `database-url`; it never passes through
+GitHub. When the database password changes, update it on Render, in the
+`production-demo` environment and on both of these, from a shell where
+`DATABASE_URL` holds the new URL:
+
+```bash
+az containerapp secret set -n keel -g rg-keel --secrets "database-url=$DATABASE_URL"
+az containerapp job secret set -n keel-migrate -g rg-keel --secrets "database-url=$DATABASE_URL"
+az containerapp revision restart -n keel -g rg-keel \
+  --revision "$(az containerapp show -n keel -g rg-keel --query properties.latestRevisionName -o tsv)"
+```
+
+The app reads the secret when it starts, hence the restart. The job reads it
+at every run.
+
+**A new required environment variable**, or a change to what one must hold,
+goes on the Container App and the Job as well as Render, before the merge
+that needs it.
+
+**The package's visibility.** GitHub makes a new package private, and only
+its settings page can change that: no API can. So the workflow's first run
+pushes the image, finds that it can't pull it without a login, and stops
+before anything in Azure changes. Then, once:
+
+1. On GitHub, open the profile's **Packages** tab, then `keel`, then
+   **Package settings**.
+2. Under **Danger Zone**, **Change visibility** to **Public**.
+3. Re-run the failed job: open the run, then **Re-run jobs → Re-run failed
+   jobs**.
+
+Every later push keeps it public.
+
+### The deploy workflow
+
+It runs on every push to `main` that changes what the image is built from:
+`app/`, `alembic/`, `alembic.ini`, `scripts/`, `requirements.txt`, the
+`Dockerfile` or `.dockerignore`. A Dependabot bump of the base image or of a
+runtime package deploys too. A change to docs, tests or other workflows
+deploys nothing, and neither does a change to the workflow itself: run it by
+hand for that (below). One deploy runs at a time, and none is cancelled
+part-way.
+
+1. **Build and push.** Builds the `Dockerfile` and pushes it to
+   `ghcr.io/atreyeed02/keel`, tagged with the commit's SHA and `main`,
+   logging in with the run's `GITHUB_TOKEN`. What it deploys is the digest
+   the registry reports for the SHA tag, so a moved tag can't change what
+   runs.
+2. **Pull check.** Fails unless the image can be pulled with no login (the
+   package's visibility, above).
+3. **Azure login.** `azure/login` with OIDC: GitHub vouches for the job's
+   environment, and Entra trusts that one subject. Nothing that can be
+   leaked is stored.
+4. **Migrate.** Points `keel-migrate` at the image with the command
+   `python -m alembic upgrade head`, starts it, and waits for that run to
+   succeed. Any other outcome, or more than 10 minutes, fails the workflow
+   and leaves the app as it was. Alembic runs the whole upgrade in one
+   transaction, so a failed run changes nothing.
+5. **Update the app.** Points `keel` at the same image with
+   `python -m app.serve --no-migrate` and target port 8000, then waits for a
+   revision running that image. In single revision mode the previous
+   revision keeps serving until the new one is ready.
+6. **Health.** Polls `https://<keel's address>/health` for up to 3 minutes
+   until the body is exactly `{"status":"ok","db":"up"}` and the new revision
+   is the one serving. The address comes from Azure. Container Apps' own
+   probes can't read a response body, so nothing checks it between deploys.
+
+Steps 4 and 5 change the image and command through the REST API's PATCH
+(`az rest`), because `az containerapp update` refuses a command argument that
+starts with a dash, such as `-m`. The PATCH sends back the container as Azure
+has it with only those fields changed, so its env vars, secret reference and
+resources stay as they are.
+
+**When a run fails**, GitHub emails whoever triggered it: the person who
+merged, or who started it by hand. Open the run and read the failed step.
+
+### Running it by hand
+
+**Actions → Deploy to Azure → Run workflow**, with branch `main`, or
+`gh workflow run deploy-azure.yml --ref main` and then `gh run watch`. It
+builds `main` as it is now and deploys it, migrations included. A run from
+any other branch stops before its first step: the environment admits `main`
+only.
+
+### Rolling back
+
+**The usual way:** revert the change on `main` with a pull request. Its
+merge deploys the reverted code, here as on Render.
+
+**Faster, while that pull request waits:** point the app at an earlier
+build. Every build is tagged with its commit's SHA:
+
+```bash
+az containerapp update -n keel -g rg-keel --image ghcr.io/atreyeed02/keel:<earlier commit's full SHA>
+curl -s https://<keel's address>/health
+```
+
+That changes the image only; the command, port and env vars stay. The
+earlier tags are on the package's page on GitHub, and each deploy's run
+shows the commit it built. `main` still holds the bad change, so the next
+deploy brings it back unless it has been reverted.
+
+**Don't downgrade the schema.** Migrations work with the previous version of
+the code (`docs/DEVELOPMENT.md`, rule 1), so an earlier image runs on the
+current schema. `alembic downgrade` isn't part of a rollback.
+
+### Open items
+
+- **`FORWARDED_ALLOW_IPS` is still to be measured.** It isn't set, so the
+  default, `127.0.0.1`, applies. Container Apps' ingress is a different
+  chain from Render's: no Cloudflare, and a proxy whose address hasn't been
+  observed. Until it is set, every visitor may share one write allowance and
+  log line address, and `scheme` may read `http`. Redirects are relative,
+  so they're unaffected. Observe the chain on the deployed app, set the
+  variable on the Container App, then run the forged-header check
+  ("Check it after a deploy", above) against the app's address, reading
+  the `request.completed` line from
+  `az containerapp logs show -n keel -g rg-keel --follow` while it runs
+  (below). Never `*`: the app refuses it.
+- **Render remains live until the cutover**, and both copies use the same
+  database. The nightly reset resets it for both.
+- **Don't merge a migration while both run against Neon.** The merge starts
+  Render's deploy, which migrates when it starts, and this workflow's
+  migration at about the same time. Alembic takes no lock, so both could
+  apply the same migration at once. Hold pull requests with migrations
+  until the cutover.
+- **No logs are kept.** With logs destination `none`, a container's output
+  goes nowhere once it stops: a failed migration shows only its status.
+  `az containerapp logs show -n keel -g rg-keel --follow` streams a running
+  replica's output. Keeping logs needs a Log Analytics workspace, which
+  costs money.
+
 ## Pre-deploy checklist
 
 - [ ] `ENVIRONMENT=production` (or `demo` for the public demo) and `DATABASE_URL` set on the host.

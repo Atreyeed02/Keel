@@ -1,6 +1,6 @@
 # Keel — Build Status & Handoff
 
-**As of 2026-10-23.** A snapshot of what is actually built, what is
+**As of 2026-11-27.** A snapshot of what is actually built, what is
 verified, and where the next piece of work starts. For the *why* behind
 the design — the accounting concepts, the event-sourcing rationale, a
 file-by-file walkthrough — read `ARCHITECTURE.md` first; this document
@@ -10,7 +10,7 @@ does not repeat it.
 
 ## 1. Verified state, right now
 
-Forty-one PRs are merged into `main`, with regular merge commits, and
+Forty-eight PRs are merged into `main`, with regular merge commits, and
 their branches deleted:
 
 | PR | Branch | Merge commit on `main` |
@@ -56,12 +56,22 @@ their branches deleted:
 | [#41](https://github.com/Atreyeed02/Keel/pull/41) | `dependabot/pip/runtime-…` (Dependabot: fastapi) | `14ce483` |
 | [#43](https://github.com/Atreyeed02/Keel/pull/43) | `fix/head-413-ssl-warning` | `e06dc63` |
 | [#44](https://github.com/Atreyeed02/Keel/pull/44) | `docs/changelog-v1` | `36381e8` |
+| [#45](https://github.com/Atreyeed02/Keel/pull/45) | `docs/readme-contributing-polish` | `6a2e18e` |
+| [#57](https://github.com/Atreyeed02/Keel/pull/57) | `dependabot/pip/runtime-…` (Dependabot: the `runtime` group, 7 updates) | `a9dd0bf` |
+| [#56](https://github.com/Atreyeed02/Keel/pull/56) | `dependabot/pip/sqlalchemy-2.1.8` (Dependabot) | `b35871a` |
+| [#50](https://github.com/Atreyeed02/Keel/pull/50) | `dependabot/github_actions/actions-…` (Dependabot: actions/setup-python) | `626f01b` |
+| [#55](https://github.com/Atreyeed02/Keel/pull/55) | `dependabot/pip/dev-tools-…` (Dependabot: pytest, pytest-asyncio, ruff) | `ef13c93` |
+| [#47](https://github.com/Atreyeed02/Keel/pull/47) | `dependabot/docker_compose/…/postgres-16-alpine` (Dependabot: compose's postgres digest) | `2ec009d` |
+| [#46](https://github.com/Atreyeed02/Keel/pull/46) | `dependabot/docker/…/python-…` (Dependabot: the Dockerfile's python digest) | `d9f7f72` |
 
 Dependabot's first `runtime` pull request, #24, was closed unmerged: it
 needed #26 first, and Dependabot replaced it with #27. #28, sqlalchemy
 2.0.35 → 2.1.3, was closed by Dependabot, superseded by #33 (2.1.4). #34,
 pydantic 2.14.0 → 2.14.1, was closed by Dependabot when asked to rebase
-("pydantic is updatable in another way"), superseded by #37.
+("pydantic is updatable in another way"), superseded by #37. Dependabot
+closed #48, #49 and #51 to #54 itself between 2026-11-02 and 2026-11-16,
+each replaced by the next week's pull request for the same group or
+package; #57, #56 and #55 are the last of them.
 
 One commit reached `main` without a PR: `7bf196e`, "Update README.md"
 (2026-10-07), an edit saved in GitHub's web editor that changed no file.
@@ -99,7 +109,71 @@ and 10 transactions, and the live site showed both currencies balanced.
 So on Neon the app's database role can disable the append-only trigger,
 which the reset needs.
 
-**`docs/readme-contributing-polish`** shortens the README and
+**`chore/deploy-azure`** adds automatic deployment to Azure Container
+Apps, where a second copy of Keel is being prepared to take over from
+Render. The new "Deploy to Azure" workflow
+(`.github/workflows/deploy-azure.yml`) runs on a push to `main` that
+changes what the image is built from, and by hand. It builds the image and
+pushes it to `ghcr.io/atreyeed02/keel` (tagged with the commit and `main`),
+checks it can be pulled with no login, logs in to Azure with OIDC in the
+`production-azure` environment, runs `python -m alembic upgrade head` as
+the Container Apps Job `keel-migrate` and waits up to 10 minutes for it to
+succeed, then moves the Container App `keel` to the same digest with
+`python -m app.serve --no-migrate` on port 8000, and waits up to 3 minutes
+for `/health` to answer exactly `{"status":"ok","db":"up"}` from the new
+revision. The image itself doesn't change: `app/serve.py` already had
+`--no-migrate`, and Render keeps running the image's own
+`python -m app.serve`. `az containerapp update` refuses a command argument
+that starts with a dash, so the job's and the app's commands are set
+through the REST API's PATCH. The Azure resources were set up by hand
+beforehand; on 2026-11-27 the environment was recreated in Consumption-only
+mode, because Express environments can't run Jobs. `docs/DEPLOYING.md`
+gains an "Azure Container Apps" section (the setup, the workflow, a manual
+run, rolling back, and the open items: `FORWARDED_ALLOW_IPS` still to be
+measured, Render live until the cutover, no migrations merged while both
+run against Neon, no logs kept). `docs/DEVELOPMENT.md`'s Dependabot section
+says to recreate a base-image digest pull request older than the mirror's
+latest run before checking its digest. `tests/test_deploy_azure.py` (10
+tests) pins the workflow. No migration, no Render action, nothing under
+`app/` changes. Checked on that branch:
+
+| Check | Result |
+|---|---|
+| `ruff check .` (0.17.4) | clean |
+| `pytest`, from a fresh virtualenv of `requirements-dev.txt` | 493 passed on local Postgres 16 (a scratch database, dropped after); 332 passed, 161 skipped without a database |
+| 18 deliberate breaks (a source the Dockerfile copies missing from the push paths, a `pull_request` trigger, a cancellable deploy, job-level permissions, a secret in a `run:` line or on docker's command line, `azure/login` on a tag, the app migrating on start, port 80, the app updated before the migration, a 20-minute migration, a failed migration ignored, any `/health` body accepted, the old revision accepted, a tag deployed instead of the digest, a hard-coded address, the pull check skipped) | each fails a test |
+| `shellcheck` on every `run:` block | clean |
+| The two PATCH bodies, from the workflow's own `jq` filters on a container shaped like Azure's | image and command changed, `args` dropped, env vars, secret reference and resources unchanged; only the app's sets target port 8000 |
+| Every page, `main` against the branch | not compared: nothing the app serves changed (`app/`, `alembic/`, `scripts/`, `requirements.txt` and the `Dockerfile` are identical to `main`) |
+
+**#57, #56, #50, #55, #47 and #46**, Dependabot, merged 2026-11-19 in that
+order, each reviewed first: CI green (483 passed, `pip-audit` clean), the
+packages run from a clean virtualenv, sqlalchemy's changelog read, and all
+14 pages identical on `main`, #57 and #56 once ids and times were masked.
+
+- **#57, the `runtime` group**, merged as `a9dd0bf` at 15:35:39 UTC:
+  fastapi 0.143.2 → 0.162.2, starlette 1.8.0 → 1.10.0, pydantic 2.14.1 →
+  2.14.3, pydantic-settings 2.16.0 → 2.16.2, alembic 1.20.0 → 1.20.1,
+  psycopg 3.3.6 → 3.3.8, python-multipart 0.0.32 → 0.0.33. Live at
+  15:37 UTC; a 12-request GET check of the live site passed.
+- **#56, sqlalchemy 2.1.4 → 2.1.8**, merged as `b35871a` at 15:40:03 UTC.
+  Live at 15:41 UTC; the same check passed.
+- **#50, actions/setup-python 7.0.0 → 7.1.0** in the three workflows that
+  use it, merged as `626f01b` at 15:45:35 UTC.
+- **#55, the `dev-tools` group**, merged as `ef13c93` at 16:07:20 UTC:
+  pytest 9.1.1 → 9.2.0, pytest-asyncio 1.4.0 → 1.4.1.post1, ruff 0.17.1 →
+  0.17.4. `@dependabot rebase` was ignored on it, and `@dependabot
+  recreate` moved ruff from the reviewed 0.17.3 to 0.17.4; CI's lint
+  passed on it. Not in the image.
+- **#47, compose's postgres digest** `721873c3…` → `f377d590…`, merged as
+  `2ec009d` at 16:34:25 UTC, and **#46, the Dockerfile's python digest**
+  `a6e34c59…` → `5e2bdb1b…`, merged as `d9f7f72` at 16:38:10 UTC. Both had
+  waited since 2026-10-26 with digests the mirror had since moved past;
+  `@dependabot recreate` brought them to the mirror's current tags, and
+  each new digest is Docker's own. #46 was live at 16:39 UTC, and the same
+  check passed.
+
+**#45, `docs/readme-contributing-polish`**, merged 2026-10-23, shortens the README and
 CONTRIBUTING and moves their reference sections into `docs/`, verbatim.
 The README keeps its top (the pitch, the live demo, the screenshots, what
 makes Keel interesting, the tech stack, why it was built) and adds a short
@@ -129,6 +203,10 @@ Checked on that branch:
 | Every link resolves: every relative link and `#anchor` in every Markdown file, by GitHub's heading rules | `main`: 20 links, none broken; the branch: 47 links, none broken. A deliberately bad anchor and a missing file were both caught. The release notes' links point at files as of `v1.0.0`, which can't change |
 | `ruff check .` and `pytest` | clean; 483 passed on Postgres 16 (a throwaway container, removed after); 322 passed, 161 skipped without a database. No test reads the README or CONTRIBUTING |
 | Every page, `main` (`36381e8`) against the branch, same seeded data | all 15 HTML and JSON responses byte-identical once the posting form's key was masked; 48 screenshot pairs, one differing: the posting form's step 2, light, phone, by the native drop-down's text, the known rendering noise |
+
+After merging, as `6a2e18e` at 11:28:22 UTC: on GitHub, the README, the
+four new files and CONTRIBUTING rendered, every page answered 200, and no
+link, anchor or image was broken.
 
 **#44, `docs/changelog-v1`**, merged 2026-10-23, prepares v1.0.0. It adds `CHANGELOG.md`, whose
 1.0.0 entry (2026-10-23) sums up what Keel v1 includes for a reader new to
@@ -953,7 +1031,9 @@ scheduled workflow, "Cloudflare ranges", compares `app/client_address.py`'s
 copy of Cloudflare's address ranges with the published lists every Monday. A
 fourth, "Demo maintenance", resets the public demo every night (below), and
 a fifth, "Mirror base images", copies the base images to ghcr.io every
-Sunday (#30; Mondays until #38). Since #13, the workflow files pin their
+Sunday (#30; Mondays until #38). A sixth, "Deploy to Azure"
+(`chore/deploy-azure`), deploys the image to Azure Container Apps when a
+merge changes it. Since #13, the workflow files pin their
 actions by commit and run every job on `ubuntu-24.04`. The images both jobs
 pull, Python for the app and Postgres, are pinned by digest and come from
 the repository's mirror on ghcr.io: Docker Hub's anonymous pull limit
@@ -1046,6 +1126,10 @@ Keel is live on Render + Neon (§1). What is left:
 - try `sslmode=verify-full` with Neon, which needs a CA bundle both drivers
   can find in `python:3.12-slim`;
 - optionally, a `render.yaml` blueprint matching the live settings;
+- the move to Azure Container Apps (DEPLOYING.md, "Azure Container Apps"):
+  the first deploy, once the image's package is public; measuring
+  `FORWARDED_ALLOW_IPS` there; then the cutover from Render. Until then,
+  no migration merges while both copies run against Neon;
 - stay on one instance, which both migrate-on-start and the in-memory rate
   limit assume.
 
@@ -1072,7 +1156,9 @@ and test requirements (#40), and `HEAD` on every route that answers `GET`,
 the `413` for an over-limit form sent without `Content-Length`, and the
 warning when `DATABASE_SSL` and the URL's `sslmode` disagree
 (#43), the v1.0.0 release (#44), and a shorter README and CONTRIBUTING,
-their reference sections moved into `docs/` (`docs/readme-contributing-polish`).
+their reference sections moved into `docs/` (#45), Dependabot's round of
+2026-11-19 (#46 to #57), and the Azure deploy workflow
+(`chore/deploy-azure`).
 
 **Small fix, not started:** an accurate `Allow` header on a `405`.
 Starlette takes it from the first route that matches the path, so a
